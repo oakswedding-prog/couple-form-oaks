@@ -39,7 +39,6 @@ export function useSpeechRecognition({
   const currentDictationRef = useRef<string>("");
   const latestInterimRef = useRef<string>("");
   const lastProcessedIndexRef = useRef<number>(-1);
-  const restartTimerRef = useRef<any>(null);
 
   // Check support on mount
   useEffect(() => {
@@ -68,7 +67,7 @@ export function useSpeechRecognition({
     committedBaseRef.current = text;
   }, []);
 
-  // Stop session internally
+  // Stop session internally (invoked by Done ✓, Cancel ✕, or page hidden)
   const stopSessionInternal = useCallback(
     (keepCaptured: boolean, statusNotice?: string) => {
       if (!isListeningRef.current && !recognitionRef.current) {
@@ -79,10 +78,6 @@ export function useSpeechRecognition({
       }
 
       isListeningRef.current = false;
-      if (restartTimerRef.current) {
-        clearTimeout(restartTimerRef.current);
-        restartTimerRef.current = null;
-      }
 
       // Stop & clean up speech recognition instance
       if (recognitionRef.current) {
@@ -150,166 +145,11 @@ export function useSpeechRecognition({
     [stopSessionInternal]
   );
 
-  // Cycle recognition instances for continuous listening across mobile platforms
-  const startRecognitionCycle = useCallback(() => {
-    if (!isListeningRef.current) return;
-
-    const SpeechClass =
-      (typeof window !== "undefined" &&
-        ((window as any).SpeechRecognition ||
-          (window as any).webkitSpeechRecognition)) ||
-      null;
-
-    if (!SpeechClass) {
-      stopSessionInternal(true);
-      setFriendlyError(
-        "Voice dictation is unavailable in this browser. Please type your answer."
-      );
-      return;
-    }
-
-    // Clean up any existing instance cleanly before creating a new one
-    if (recognitionRef.current) {
-      try {
-        const prev = recognitionRef.current;
-        recognitionRef.current = null;
-        prev.onstart = null;
-        prev.onresult = null;
-        prev.onerror = null;
-        prev.onend = null;
-        prev.abort();
-      } catch {
-        // ignore
-      }
-    }
-
-    // CRITICAL FIX: Reset the result index counter for this new recognition instance.
-    // In Android Chrome, when onend fires on silence, the new recognition session starts
-    // from result index 0. If this counter is not reset, all new words have index <= previous
-    // count and are silently dropped.
-    lastProcessedIndexRef.current = -1;
-
-    try {
-      const recognition = new SpeechClass();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = languageRef.current || "en-IN";
-      recognition.maxAlternatives = 1;
-
-      recognition.onstart = () => {
-        if (isListeningRef.current) {
-          setIsListening(true);
-          setFriendlyError(null);
-        }
-      };
-
-      recognition.onresult = (event: any) => {
-        if (!isListeningRef.current) return;
-
-        let sessionFinalTranscript = "";
-        let currentInterim = "";
-
-        for (let i = 0; i < event.results.length; i++) {
-          const res = event.results[i];
-          const transcript = res[0]?.transcript || "";
-          if (res.isFinal) {
-            if (i > lastProcessedIndexRef.current) {
-              lastProcessedIndexRef.current = i;
-              sessionFinalTranscript = deduplicateTranscript(
-                sessionFinalTranscript,
-                transcript
-              );
-            }
-          } else {
-            currentInterim += transcript;
-          }
-        }
-
-        if (sessionFinalTranscript) {
-          currentDictationRef.current = deduplicateTranscript(
-            currentDictationRef.current,
-            sessionFinalTranscript
-          );
-          const combinedSoFar = committedBaseRef.current
-            ? `${committedBaseRef.current.trim()} ${currentDictationRef.current.trim()}`
-            : currentDictationRef.current.trim();
-          onCommitRef.current(cleanSentenceText(combinedSoFar));
-          latestInterimRef.current = "";
-        }
-
-        const trimmedInterim = currentInterim.trim();
-        latestInterimRef.current = trimmedInterim;
-        setInterimText(trimmedInterim);
-      };
-
-      recognition.onerror = (event: any) => {
-        const error = event?.error;
-        if (error === "no-speech" || error === "aborted") {
-          // Non-fatal: on Android, no-speech is emitted when the user pauses.
-          // We let onend cycle to the next recognition pass.
-          return;
-        }
-
-        if (error === "not-allowed" || error === "service-not-allowed") {
-          stopSessionInternal(true);
-          setFriendlyError(
-            "Microphone access blocked. Please allow microphone in browser settings, or type your answer."
-          );
-          return;
-        }
-
-        // For other network/audio glitches, keep calm and let onend recover
-        console.warn("Speech recognition notice:", error);
-      };
-
-      recognition.onend = () => {
-        // If the user hasn't explicitly stopped listening, seamlessly restart.
-        if (isListeningRef.current) {
-          // If there was any pending interim text when silence ended, commit it
-          const pending = latestInterimRef.current.trim();
-          if (pending) {
-            currentDictationRef.current = deduplicateTranscript(
-              currentDictationRef.current,
-              pending
-            );
-            latestInterimRef.current = "";
-            setInterimText("");
-            const combinedSoFar = committedBaseRef.current
-              ? `${committedBaseRef.current.trim()} ${currentDictationRef.current.trim()}`
-              : currentDictationRef.current.trim();
-            onCommitRef.current(cleanSentenceText(combinedSoFar));
-          }
-
-          if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
-          // Brief pause (50ms) to allow the mobile audio subsystem to release cleanly
-          restartTimerRef.current = setTimeout(() => {
-            if (isListeningRef.current) {
-              startRecognitionCycle();
-            }
-          }, 50);
-        }
-      };
-
-      recognitionRef.current = recognition;
-      recognition.start();
-    } catch (err: any) {
-      console.warn("Speech recognition start failed:", err);
-      if (isListeningRef.current) {
-        if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
-        restartTimerRef.current = setTimeout(() => {
-          if (isListeningRef.current) {
-            startRecognitionCycle();
-          }
-        }, 200);
-      }
-    }
-  }, [stopSessionInternal]);
-
   // Stop listening when tab is hidden (phone locked or switched app)
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.hidden && isListeningRef.current) {
-        stopSessionInternal(true, "Tap the mic to continue speaking");
+        stopSessionInternal(true);
       }
     };
 
@@ -322,9 +162,6 @@ export function useSpeechRecognition({
   // Clean up on component unmount
   useEffect(() => {
     return () => {
-      if (restartTimerRef.current) {
-        clearTimeout(restartTimerRef.current);
-      }
       if (isListeningRef.current) {
         stopSessionInternal(true);
       }
@@ -340,6 +177,21 @@ export function useSpeechRecognition({
       }
       activeSessionStopper = () => stopSessionInternal(true);
 
+      const SpeechClass =
+        (typeof window !== "undefined" &&
+          ((window as any).SpeechRecognition ||
+            (window as any).webkitSpeechRecognition)) ||
+        null;
+
+      if (!SpeechClass) {
+        setIsListening(false);
+        isListeningRef.current = false;
+        setFriendlyError(
+          "Voice dictation is unavailable in this browser. Please type your answer."
+        );
+        return;
+      }
+
       setFriendlyError(null);
       setInterimText("");
       committedBaseRef.current = initialValue || "";
@@ -347,14 +199,145 @@ export function useSpeechRecognition({
       latestInterimRef.current = "";
       lastProcessedIndexRef.current = -1;
 
-      // Mark listening immediately so the wave animation and action buttons appear instantly
-      isListeningRef.current = true;
-      setIsListening(true);
-      triggerHaptic(40);
+      // Clean up previous instance if still attached
+      if (recognitionRef.current) {
+        try {
+          const prev = recognitionRef.current;
+          recognitionRef.current = null;
+          prev.onstart = null;
+          prev.onresult = null;
+          prev.onerror = null;
+          prev.onend = null;
+          prev.abort();
+        } catch {
+          // ignore
+        }
+      }
 
-      startRecognitionCycle();
+      try {
+        const recognition = new SpeechClass();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = languageRef.current || "en-IN";
+        recognition.maxAlternatives = 1;
+
+        recognition.onstart = () => {
+          if (isListeningRef.current) {
+            setIsListening(true);
+            setFriendlyError(null);
+          }
+        };
+
+        // Real-time live transcribing: words stream into UI as spoken
+        recognition.onresult = (event: any) => {
+          if (!isListeningRef.current) return;
+
+          let sessionFinalTranscript = "";
+          let currentInterim = "";
+
+          for (let i = 0; i < event.results.length; i++) {
+            const res = event.results[i];
+            const transcript = res[0]?.transcript || "";
+            if (res.isFinal) {
+              if (i > lastProcessedIndexRef.current) {
+                lastProcessedIndexRef.current = i;
+                sessionFinalTranscript = deduplicateTranscript(
+                  sessionFinalTranscript,
+                  transcript
+                );
+              }
+            } else {
+              currentInterim += transcript;
+            }
+          }
+
+          if (sessionFinalTranscript) {
+            currentDictationRef.current = deduplicateTranscript(
+              currentDictationRef.current,
+              sessionFinalTranscript
+            );
+            const combinedSoFar = committedBaseRef.current
+              ? `${committedBaseRef.current.trim()} ${currentDictationRef.current.trim()}`
+              : currentDictationRef.current.trim();
+            onCommitRef.current(cleanSentenceText(combinedSoFar));
+            latestInterimRef.current = "";
+          }
+
+          const trimmedInterim = currentInterim.trim();
+          latestInterimRef.current = trimmedInterim;
+          setInterimText(trimmedInterim);
+        };
+
+        recognition.onerror = (event: any) => {
+          const error = event?.error;
+          if (error === "no-speech" || error === "aborted") {
+            // Non-fatal speech silence event
+            return;
+          }
+
+          if (error === "not-allowed" || error === "service-not-allowed") {
+            stopSessionInternal(true);
+            setFriendlyError(
+              "Microphone access blocked. Please allow microphone in browser settings, or type your answer."
+            );
+            return;
+          }
+
+          console.warn("Speech recognition notice:", error);
+        };
+
+        // Natural pause completion:
+        // When speech finishes and pauses, conclude cleanly with NO restart loop.
+        // This eliminates the repeated "ding ding, Ting Ting" chime sounds completely!
+        recognition.onend = () => {
+          if (!isListeningRef.current) return;
+
+          // Commit any trailing in-flight interim text
+          const pending = latestInterimRef.current.trim();
+          if (pending) {
+            currentDictationRef.current = deduplicateTranscript(
+              currentDictationRef.current,
+              pending
+            );
+            latestInterimRef.current = "";
+            setInterimText("");
+          }
+
+          const combined = currentDictationRef.current
+            ? committedBaseRef.current
+              ? `${committedBaseRef.current.trim()} ${currentDictationRef.current.trim()}`
+              : currentDictationRef.current.trim()
+            : committedBaseRef.current;
+          const cleaned = cleanSentenceText(combined);
+          onCommitRef.current(cleaned);
+
+          // Return to idle state cleanly with zero chime loops
+          isListeningRef.current = false;
+          recognitionRef.current = null;
+          setIsListening(false);
+          setInterimText("");
+          latestInterimRef.current = "";
+
+          if (activeSessionStopper === stopSessionInternal) {
+            activeSessionStopper = null;
+          }
+        };
+
+        isListeningRef.current = true;
+        setIsListening(true);
+        triggerHaptic(40);
+
+        recognitionRef.current = recognition;
+        recognition.start();
+      } catch (err: any) {
+        console.warn("Could not start speech recognition:", err);
+        stopSessionInternal(true);
+        setFriendlyError(
+          "Microphone unavailable. Please allow microphone permissions, or type your answer."
+        );
+      }
     },
-    [stopSessionInternal, triggerHaptic, startRecognitionCycle]
+    [stopSessionInternal, triggerHaptic]
   );
 
   return {
