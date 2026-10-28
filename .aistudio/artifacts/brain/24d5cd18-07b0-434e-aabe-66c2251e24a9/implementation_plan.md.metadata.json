@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan to restore real-time live speech transcription on mobile devices, typing words out live on screen as spoken, while ending cleanly on natural pause to eliminate repeated chime sounds.",
-  "updatedAt":  "2026-10-28T06:47:56.488759350Z",
+  "summary":  "Implementation plan to ensure the microphone remains continuously active through pauses, transcribing live as the user speaks, until the checkmark or cancel button is explicitly tapped.",
+  "updatedAt":  "2026-10-28T07:46:38.776833371Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

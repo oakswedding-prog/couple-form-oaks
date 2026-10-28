@@ -1,61 +1,51 @@
-# Real-Time Live Mobile Voice Dictation
+# Continuous Voice Dictation Until Explicitly Stopped
 
-Restore instant, word-by-word real-time transcription on mobile devices (identical to the desktop experience) while ending cleanly upon natural speech pauses to eliminate repeated Android system chime sounds.
+Keep the microphone active and listening continuously across all speech pauses, transcribing live in real time until the user explicitly taps the checkmark (Done ✓) or cancel (✕) button.
 
 ### User Review & Critical Decisions
 
 > [!IMPORTANT]
-> - **Live Real-Time Transcription Restored**: Remove the delayed audio recording pipeline and restore the browser's native speech recognition on mobile so words transcribe and appear on screen immediately as you speak.
-> - **Confirmed User Choice**: Dictation streams live in real time and concludes cleanly when you naturally finish speaking and pause. This permanently prevents the rapid auto-restart loop that caused repeated *"ding ding / Ting Ting"* sounds on Android.
-> - **Preserved Mobile Improvements**: Keep the virtual keyboard hidden during voice dictation so the screen never jumps, and ensure seamless cumulative sentence appending across multiple speech turns.
+> - **Continuous Listening Guaranteed**: The microphone will **never turn off on speech pauses**. The listening waveform and control buttons (Done ✓ and Cancel ✕) will stay on screen continuously.
+> - **Live Real-Time Transcribing Maintained**: As the user speaks, words transcribe live onto the screen.
+> - **Explicit User Control Only**: The microphone session only finishes and closes when the user explicitly clicks the **Done (✓)** or **Cancel (✕)** button.
 
 ---
 
 ### 1. Overview & Core Concept
 
-- **What It Does**:
-  - Tapping **"Tap to speak"** activates the speech recognition engine immediately.
-  - As the user speaks, words transcribe live on screen with zero lag, showing both real-time interim speech and committed text.
-  - The gold audio waveform animates while the user is talking.
-  - When the user finishes speaking and pauses naturally, the session finalizes cleanly, formatting punctuation and capitalization automatically, and returns to the idle state.
-  - If the user taps the mic again, additional sentences append smoothly without overwriting existing thoughts.
-  - Manual stop controls (Done ✓ and Cancel ✕) remain available if the user wants to end or revert manually at any point.
-
-- **Unified Cross-Platform Experience**:
-  - Both mobile phones (Android, iOS) and laptops (Mac, Windows) share the exact same responsive, real-time live transcribing experience.
+- **User Interaction**:
+  - The couple taps **"Tap to speak"**.
+  - The gold listening waveform activates and stays active.
+  - As they speak, words transcribe onto the screen in real time.
+  - The couple can pause for 2 seconds, 10 seconds, or longer to think; **the mic remains on and listening**.
+  - When they resume speaking, the next words transcribe and append seamlessly.
+  - The session ONLY closes when the couple clicks the black **Done (✓)** button to save, or the **Cancel (✕)** button to discard.
 
 ---
 
 ### 2. User Experience & Visual Design
 
-1. **Tap to Speak**:
-   - User taps the subtle gold mic button.
-   - The microphone activates with a single initial cue; the waveform displays "Listening... speak naturally".
-2. **Real-Time Live Dictation**:
-   - Spoken words stream onto the screen in real-time beneath or inside the textarea.
-   - The on-screen keyboard remains hidden, leaving full view of the question and transcription.
-3. **Clean Natural Pause & Completion**:
-   - When the user finishes their sentence and pauses, the speech service finalizes the sentence cleanly.
-   - Capitalization is automatically corrected, and the text is auto-saved into the questionnaire state.
-   - No rapid restart loop fires, so there are **zero repeated chime sounds**.
-4. **Subsequent Thoughts**:
-   - Tapping "Tap to speak" again appends the next sentence with proper spacing and capitalization.
+1. **Start Listening**:
+   - Tapping "Tap to speak" displays the active dictation bar: the animated gold waveform, "Listening...", and the Done (✓) / Cancel (✕) buttons.
+2. **Speaking & Pausing**:
+   - Words appear live as spoken.
+   - Pausing does **not** dismiss the mic or change the UI state. The waveform stays active, signaling that the app is waiting for their next thought.
+   - The virtual keyboard stays hidden so the screen remains steady.
+3. **Finish Dictation**:
+   - Clicking **Done (✓)** finalizes all text with automatic sentence capitalization and returns to the resting state.
+   - Clicking **Cancel (✕)** aborts and restores the original text.
 
 ---
 
 ### 3. Key Product Decisions & Trade-Offs
 
-- **Decision 1: Direct Web Speech API for Real-Time Streaming on All Devices**
-  - *Chosen Approach*: Unify mobile and desktop under `useSpeechRecognition.ts` using the browser's native real-time Web Speech engine.
-  - *Why*: Delivers the instant, live word-by-word streaming the user expects without external API latency or failed network blobs.
+- **Decision 1: Persistent Application-Level Listening State**
+  - *Chosen Approach*: Decouple the user-facing `isListening` state from OS-level silence timeouts. If Android's speech service ends on silence while `isListeningRef.current === true`, automatically re-arm a fresh recognition instance with reset index counters while keeping the UI in continuous listening mode.
+  - *Why*: Ensures the microphone remains ready and active until the user decides they are done.
 
-- **Decision 2: Elimination of the Auto-Restart Loop on Mobile Silence**
-  - *Chosen Approach*: When a user pauses and Android triggers `onend`, conclude that speech turn cleanly rather than firing an instant 50ms restart loop.
-  - *Why*: Eliminates the non-stop "ding-ting" chime spam on Android while keeping the transcribed text 100% intact.
-
-- **Decision 3: Seamless Cumulative Text Concatenation**
-  - *Chosen Approach*: Preserve all previously committed text when the user starts speaking again, automatically trimming and deduplicating word boundaries.
-  - *Why*: Couples can speak in comfortable, bite-sized thoughts without losing previous sentences.
+- **Decision 2: Seamless Chunk Concatenation with Index Reset**
+  - *Chosen Approach*: On every silence cycle, commit any in-flight phrase to the cumulative buffer, reset the internal result index counter (`lastProcessedIndexRef.current = -1`), and keep listening so subsequent words are never dropped.
+  - *Why*: Prevents word dropouts while supporting long, thoughtful pauses.
 
 ---
 
@@ -64,35 +54,37 @@ Restore instant, word-by-word real-time transcription on mobile devices (identic
 ```
 ┌────────────────────────────────────────────────────────┐
 │                   VoiceTextarea                        │
-│  - Textarea: Shows committed sentences                 │
-│  - Interim overlay: Displays live in-flight words      │
-│  - Control bar: Language selector + Waveform + Actions │
+│  - Textarea: displays committed text                   │
+│  - Active Bar: Waveform + "Listening..." + ✓ and ✕     │
+│  - Stays active continuously through all pauses        │
 └───────────────────────────┬────────────────────────────┘
                             │
                             ▼
 ┌────────────────────────────────────────────────────────┐
 │               useSpeechRecognition Hook                │
 │                                                        │
-│  - isListening: boolean                                │
-│  - interimText: string (real-time in-flight speech)    │
-│  - committedBaseRef: preserves existing text           │
+│  - isListening: stays true until stopSession() is called│
+│  - committedBaseRef + currentDictationRef              │
 │                                                        │
-│  [Speech Events]                                       │
-│    ├─► onresult: Streams live text to UI instantly     │
-│    │             Appends final words as recognized     │
+│  [Speech Recognition Events]                           │
+│    ├─► onresult: Stream words live to screen           │
 │    │                                                   │
-│    └─► onend:    Finalizes current speech turn cleanly │
-│                  Applies sentence capitalization       │
-│                  Ends session with NO restart loop     │
-│                  (Eliminating all repeated chimes!)    │
+│    ├─► onend (silence pause):                          │
+│    │   If isListeningRef === true:                     │
+│    │   1. Commit current phrase to buffer              │
+│    │   2. Reset session index tracker to -1            │
+│    │   3. Re-arm fresh recognition instance cleanly    │
+│    │   4. Keep isListening UI state TRUE               │
+│    │                                                   │
+│    └─► User Clicks Done (✓) or Cancel (✕):             │
+│        1. isListeningRef = false                       │
+│        2. Destroy recognition instance                 │
+│        3. Finalize text formatting                     │
+│        4. Set isListening UI state FALSE               │
 └────────────────────────────────────────────────────────┘
 ```
 
 #### Files to Modify:
 1. `src/hooks/useSpeechRecognition.ts`:
-   - Remove the rapid `onend` auto-restart loop that was causing repeated system chime sounds on Android.
-   - Ensure clean session conclusion on natural speech pause while capturing all final speech tokens.
-   - Ensure cumulative text is preserved and seamlessly appended when the mic is clicked again.
-2. `src/components/VoiceTextarea.tsx`:
-   - Use `useSpeechRecognition` directly on both mobile and desktop so real-time live transcribing works everywhere.
-   - Remove unused `useAudioRecorder` mobile branching.
+   - In `onend`, check `isListeningRef.current`: if true, commit the accumulated text, reset `lastProcessedIndexRef.current = -1`, and immediately re-arm a clean `SpeechRecognition` instance so the mic stays on across pauses.
+   - Only terminate when `stopSessionInternal()` is explicitly triggered by the user clicking Done (✓) or Cancel (✕).
