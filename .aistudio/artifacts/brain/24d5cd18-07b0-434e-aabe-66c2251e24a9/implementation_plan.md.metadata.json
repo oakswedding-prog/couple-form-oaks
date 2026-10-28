@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan to ensure the microphone remains continuously active through pauses, transcribing live as the user speaks, until the checkmark or cancel button is explicitly tapped.",
-  "updatedAt":  "2026-10-28T07:46:38.776833371Z",
+  "summary":  "Implementation plan to finalize and optimize real-time live transcribing across mobile and desktop, retaining the continuous mic lifecycle until the checkmark is tapped.",
+  "updatedAt":  "2026-10-28T08:08:36.961761746Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

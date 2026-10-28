@@ -1,90 +1,39 @@
-# Continuous Voice Dictation Until Explicitly Stopped
+# Finalize Continuous Live Voice Transcribing
 
-Keep the microphone active and listening continuously across all speech pauses, transcribing live in real time until the user explicitly taps the checkmark (Done ✓) or cancel (✕) button.
+Ensure real-time live voice transcription remains fast, continuous, and reliable across both mobile and desktop, with smooth sentence appending and clean session management until the checkmark button is tapped.
 
 ### User Review & Critical Decisions
 
 > [!IMPORTANT]
-> - **Continuous Listening Guaranteed**: The microphone will **never turn off on speech pauses**. The listening waveform and control buttons (Done ✓ and Cancel ✕) will stay on screen continuously.
-> - **Live Real-Time Transcribing Maintained**: As the user speaks, words transcribe live onto the screen.
-> - **Explicit User Control Only**: The microphone session only finishes and closes when the user explicitly clicks the **Done (✓)** or **Cancel (✕)** button.
+> - **Confirmed User Choice**: Retain the fast, real-time live transcribing experience on Android mobile devices with the continuous microphone state, understanding that the brief sound on pauses is Android OS's built-in microphone service tone.
+> - **Continuous Dictation Preserved**: The microphone and waveform remain active and listening across all pauses until the user explicitly taps the **Done (✓)** or **Cancel (✕)** button.
+> - **Zero-Disruption Mobile UI**: The on-screen keyboard remains retracted during speech so the screen stays steady.
 
 ---
 
 ### 1. Overview & Core Concept
 
-- **User Interaction**:
-  - The couple taps **"Tap to speak"**.
-  - The gold listening waveform activates and stays active.
-  - As they speak, words transcribe onto the screen in real time.
-  - The couple can pause for 2 seconds, 10 seconds, or longer to think; **the mic remains on and listening**.
-  - When they resume speaking, the next words transcribe and append seamlessly.
-  - The session ONLY closes when the couple clicks the black **Done (✓)** button to save, or the **Cancel (✕)** button to discard.
+- **What It Delivers**:
+  - Couples can tap **"Tap to speak"** on any smartphone (Android/iOS) or computer (Mac/Windows).
+  - Words appear live on screen in real time as they are spoken.
+  - The couple can pause to think, breathe, and gather their thoughts without the microphone closing.
+  - When they resume speaking, the next words continue transcribing and appending seamlessly.
+  - When finished, tapping **Done (✓)** finalizes all punctuation and capitalization, auto-saves to the questionnaire, and closes the microphone session.
 
 ---
 
-### 2. User Experience & Visual Design
+### 2. Technical Refinements & Optimizations
 
-1. **Start Listening**:
-   - Tapping "Tap to speak" displays the active dictation bar: the animated gold waveform, "Listening...", and the Done (✓) / Cancel (✕) buttons.
-2. **Speaking & Pausing**:
-   - Words appear live as spoken.
-   - Pausing does **not** dismiss the mic or change the UI state. The waveform stays active, signaling that the app is waiting for their next thought.
-   - The virtual keyboard stays hidden so the screen remains steady.
-3. **Finish Dictation**:
-   - Clicking **Done (✓)** finalizes all text with automatic sentence capitalization and returns to the resting state.
-   - Clicking **Cancel (✕)** aborts and restores the original text.
+1. **Ultra-Fast Instance Re-Arming**:
+   - Maintain the instant 60–80ms cycle when Android's speech service pauses on silence, ensuring the next words spoken are captured immediately without latency or clipping.
+2. **Robust Multi-Language Speech Processing**:
+   - Ensure clean word boundary deduplication and automatic sentence capitalization across all supported languages (English, Malayalam, Hindi, US English).
+3. **Pristine Build & Cleanliness**:
+   - Verify that all Vercel deployment configurations (`.npmrc`, `tsconfig.json`, `vercel.json`) build cleanly with zero warnings or errors.
 
 ---
 
-### 3. Key Product Decisions & Trade-Offs
+### 3. Verification & Testing
 
-- **Decision 1: Persistent Application-Level Listening State**
-  - *Chosen Approach*: Decouple the user-facing `isListening` state from OS-level silence timeouts. If Android's speech service ends on silence while `isListeningRef.current === true`, automatically re-arm a fresh recognition instance with reset index counters while keeping the UI in continuous listening mode.
-  - *Why*: Ensures the microphone remains ready and active until the user decides they are done.
-
-- **Decision 2: Seamless Chunk Concatenation with Index Reset**
-  - *Chosen Approach*: On every silence cycle, commit any in-flight phrase to the cumulative buffer, reset the internal result index counter (`lastProcessedIndexRef.current = -1`), and keep listening so subsequent words are never dropped.
-  - *Why*: Prevents word dropouts while supporting long, thoughtful pauses.
-
----
-
-### 4. Technical Architecture & Component Mapping
-
-```
-┌────────────────────────────────────────────────────────┐
-│                   VoiceTextarea                        │
-│  - Textarea: displays committed text                   │
-│  - Active Bar: Waveform + "Listening..." + ✓ and ✕     │
-│  - Stays active continuously through all pauses        │
-└───────────────────────────┬────────────────────────────┘
-                            │
-                            ▼
-┌────────────────────────────────────────────────────────┐
-│               useSpeechRecognition Hook                │
-│                                                        │
-│  - isListening: stays true until stopSession() is called│
-│  - committedBaseRef + currentDictationRef              │
-│                                                        │
-│  [Speech Recognition Events]                           │
-│    ├─► onresult: Stream words live to screen           │
-│    │                                                   │
-│    ├─► onend (silence pause):                          │
-│    │   If isListeningRef === true:                     │
-│    │   1. Commit current phrase to buffer              │
-│    │   2. Reset session index tracker to -1            │
-│    │   3. Re-arm fresh recognition instance cleanly    │
-│    │   4. Keep isListening UI state TRUE               │
-│    │                                                   │
-│    └─► User Clicks Done (✓) or Cancel (✕):             │
-│        1. isListeningRef = false                       │
-│        2. Destroy recognition instance                 │
-│        3. Finalize text formatting                     │
-│        4. Set isListening UI state FALSE               │
-└────────────────────────────────────────────────────────┘
-```
-
-#### Files to Modify:
-1. `src/hooks/useSpeechRecognition.ts`:
-   - In `onend`, check `isListeningRef.current`: if true, commit the accumulated text, reset `lastProcessedIndexRef.current = -1`, and immediately re-arm a clean `SpeechRecognition` instance so the mic stays on across pauses.
-   - Only terminate when `stopSessionInternal()` is explicitly triggered by the user clicking Done (✓) or Cancel (✕).
+- Verify that `npx tsc --noEmit` and `npm run build` execute cleanly.
+- Confirm dev server runs smoothly on port 3000.
