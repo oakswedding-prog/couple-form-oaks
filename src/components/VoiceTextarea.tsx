@@ -75,15 +75,6 @@ export const VoiceTextarea: React.FC<VoiceTextareaProps> = ({
     language,
     onCommit: (newText) => {
       onChange(newText);
-      // Place cursor at end after commit
-      setTimeout(() => {
-        if (textareaRef.current) {
-          textareaRef.current.focus();
-          const len = textareaRef.current.value.length;
-          textareaRef.current.selectionStart = len;
-          textareaRef.current.selectionEnd = len;
-        }
-      }, 50);
     },
   });
 
@@ -116,22 +107,11 @@ export const VoiceTextarea: React.FC<VoiceTextareaProps> = ({
   const handleCancel = (e: React.MouseEvent) => {
     e.stopPropagation();
     stopSession(false);
-    setTimeout(() => {
-      textareaRef.current?.focus();
-    }, 50);
   };
 
   const handleDone = (e: React.MouseEvent) => {
     e.stopPropagation();
     stopSession(true);
-    setTimeout(() => {
-      if (textareaRef.current) {
-        textareaRef.current.focus();
-        const len = textareaRef.current.value.length;
-        textareaRef.current.selectionStart = len;
-        textareaRef.current.selectionEnd = len;
-      }
-    }, 50);
   };
 
   const activeLangLabel =
