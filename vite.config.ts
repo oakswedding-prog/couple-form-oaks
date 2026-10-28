@@ -4,6 +4,8 @@ import path from 'path';
 import {defineConfig} from 'vite';
 import { GoogleGenAI } from '@google/genai';
 
+import transcribeHandler from './api/transcribe.ts';
+
 export default defineConfig(() => {
   return {
     plugins: [
@@ -12,6 +14,9 @@ export default defineConfig(() => {
       {
         name: 'live-token-api-dev',
         configureServer(server) {
+          server.middlewares.use('/api/transcribe', async (req, res) => {
+            await transcribeHandler(req, res);
+          });
           server.middlewares.use('/api/live-token', async (req, res) => {
             res.setHeader('Content-Type', 'application/json');
             res.setHeader('Access-Control-Allow-Origin', '*');

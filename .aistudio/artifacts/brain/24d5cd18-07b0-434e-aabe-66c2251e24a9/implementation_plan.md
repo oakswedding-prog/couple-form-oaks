@@ -1,95 +1,98 @@
-# Seamless Mobile Voice Dictation & Audio Lifecycle Fix
+# Silent Mobile Audio Recording & Fast Transcription
 
-Robust, continuous voice-to-text dictation across Android Chrome, iOS Safari, and desktop browsers without audio stutter, dropped words, or unwanted keyboard disruptions.
+Completely eliminate repeated Android system chime sounds ("ding ding / Ting Ting") by using silent `MediaRecorder` audio capture on mobile devices, paired with fast server-side transcription.
 
 ### User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The fixes directly address the exact issues captured in your Android screen recording:
-> 1. **Index Desynchronization**: Words were dropped after pauses because internal result index pointers weren't reset when Android Chrome restarted after silence.
-> 2. **Keyboard Popping Up**: `textareaRef.current.focus()` on each spoken chunk forced the virtual keyboard to open, stealing audio focus and shaking the screen.
-> 3. **Mic On/Off Stutter**: Reusing ended `SpeechRecognition` instances caused browser errors and microphone drops. We will use a clean, seamless instance transition.
-
-- **Confirmed Decision (Phase 1)**: Keep the virtual keyboard hidden during voice dictation so the user has an undisturbed, full-screen speaking experience until they finish and tap the checkmark.
+> - **The Core Issue**: Android's `webkitSpeechRecognition` triggers hardcoded OS-level safety chimes whenever speech starts or times out on silence.
+> - **Confirmed User Choice**: Implement **Silent audio recording with fast transcription** on mobile devices.
+> - **Desktop Preserved**: Desktop browsers (Mac / Windows laptops) will continue using instant Web Speech API streaming, which is already 100% silent and continuous.
 
 ---
 
 ### 1. Overview & Core Concept
 
-- **What It Does**: Enables couples to tap "Tap to speak" on any mobile or desktop browser and speak freely at their own pace. The microphone remains active and listening with visible wave animation until the couple explicitly taps Done (✓) or Cancel (✕).
-- **Target Audience**: Couples filling out their wedding story questionnaire on mobile smartphones (Android Chrome, iOS Safari) as well as desktop computers.
-- **Key Value**: Natural, interruption-free storytelling without losing sentences, hearing loud repeated chime beeps, or fighting an on-screen keyboard.
+- **Mobile Experience**:
+  - Tapping "Tap to speak" on Android/iOS uses the Web Audio / `MediaRecorder` API (`navigator.mediaDevices.getUserMedia`).
+  - **Zero system chimes or dings**: `getUserMedia` does not trigger Android's `SpeechRecognizer` privacy tones.
+  - The gold audio waveform animates in real time, reacting dynamically to the user's voice volume.
+  - The couple can speak, pause, breathe, and think for as long as they like with zero interruptions or timeout disconnects.
+  - When the couple taps **Done (✓)**, the audio is sent to a dedicated `/api/transcribe` endpoint powered by Gemini 2.5 Flash, which returns clean, accurate text in under 1.5 seconds.
+  - When tapping **Cancel (✕)**, the recording is discarded immediately.
+
+- **Desktop Experience**:
+  - Mac and PC laptops continue using the built-in browser Web Speech API for instantaneous, live word-by-word streaming since desktop Chrome is already completely silent and does not produce system beeps.
 
 ---
 
 ### 2. User Experience & Visual Design
 
-- **Listening State**:
-  - Tapping "Tap to speak" enters an active dictation mode.
-  - The gold audio waveform animates smoothly to give reassurance that the app is listening.
-  - The live interim transcript displays dynamically under the textarea as the speaker talks.
-  - On mobile, the textarea does **not** steal keyboard focus while listening. The on-screen keyboard stays retracted, leaving full screen visibility for the question and transcription.
-- **Completion Flow**:
-  - The user can pause, think, and resume speaking without the mic turning off or dropping words.
-  - When finished, tapping the black **Done (✓)** button finalizes the transcript, formats capitalization cleanly, updates the saved questionnaire answer, and gently focuses the input if the user wants to make manual edits.
-  - Tapping **Cancel (✕)** discards the current dictation session and safely restores the original text.
+1. **Idle State**:
+   - Clean "Tap to speak" button with the selected language indicator (English, Malayalam, Hindi, etc.).
+2. **Active Mobile Recording**:
+   - Button transitions to active state with real-time waveform animation driven by the Web Audio API audio level analyser.
+   - Status indicates "Listening... tap ✓ when done".
+   - No pop-up keyboard, no audio dings or tings.
+3. **Transcribing State**:
+   - Tapping **Done (✓)** shows a brief "Transcribing..." micro-state with subtle spinner / pulsing indicator (<1.5s).
+   - Transcribed text smoothly appends to the textarea with automatic sentence capitalization.
+4. **Error Handling & Fallbacks**:
+   - If microphone permissions are denied, a gentle inline notice appears with guidance.
+   - If offline or API key is absent, graceful notification is displayed without crashing the form.
 
 ---
 
 ### 3. Key Product Decisions & Trade-Offs
 
-- **Decision 1: Fresh SpeechRecognition Instance Cycling on Android Pauses**
-  - *Chosen Approach*: When Android Chrome fires `onend` after a quiet pause, instantiate a fresh `SpeechRecognition` object immediately and reset session index counters while preserving the cumulative dictation buffer.
-  - *Why*: Android Chrome does not allow calling `.start()` on an ended recognition instance without throwing `InvalidStateError`. Clean instance recreation ensures 100% reliable continuous listening without audio dropouts.
-  - *Alternative Considered*: Aborting recognition and forcing the user to tap the mic again after every sentence (poor user experience).
+- **Decision 1: Mobile-Specific Silent MediaRecorder vs. Desktop Web Speech API**
+  - *Chosen Approach*: Adaptive input strategy—use `MediaRecorder` on mobile to bypass Android's system chime, while keeping native Web Speech API on desktop for instant streaming.
+  - *Why*: Gives mobile users a completely silent, pause-friendly dictation experience without sacrificing the instant streaming speed that desktop users enjoy.
 
-- **Decision 2: Separation of Voice Dictation Focus vs. Keyboard Typing Focus**
-  - *Chosen Approach*: Do not call `textarea.focus()` during speech commit intervals. Only focus the textarea when the user explicitly clicks/taps into the text area to type or after closing dictation via Done.
-  - *Why*: In mobile browsers, calling `.focus()` on an input programmatically triggers the virtual keyboard to pop open, resizing the viewport and interrupting the system speech recognizer.
-
-- **Decision 3: Robust Multi-language & Deduplication Handling**
-  - *Chosen Approach*: Retain existing support for English (India), Malayalam, Hindi, and English (US), ensuring the cleaner only trims duplicate speech boundary artifacts caused by Android's speech pipeline.
+- **Decision 2: Serverless Transcription Endpoint (`/api/transcribe`)**
+  - *Chosen Approach*: An Express/Vercel serverless function using `@google/genai` (Gemini 2.5 Flash) accepting audio payloads and returning transcription in the requested language.
+  - *Why*: High-speed transcription (<1.5s), native multilingual support (English, Malayalam, Hindi, etc.), and zero client-side API key exposure.
 
 ---
 
 ### 4. Technical Architecture & Component Mapping
 
 ```
-┌────────────────────────────────────────────────────────┐
-│                   VoiceTextarea                        │
-│  - Textarea display (shows committed text)             │
-│  - Interim transcript overlay (live words as spoken)   │
-│  - Control bar: Language chip | Waveform | Done / Cancel│
-└───────────────────────────┬────────────────────────────┘
-                            │
-                            ▼
-┌────────────────────────────────────────────────────────┐
-│               useSpeechRecognition Hook                │
-│                                                        │
-│  - isListening: boolean                                │
-│  - cumulativeTextRef: stores previous sentences        │
-│  - activeSessionRef: manages active recognition object │
-│                                                        │
-│  [Android onend Event]                                 │
-│        │                                               │
-│        ├─► If isListeningRef === true:                 │
-│        │   1. Reset session index tracker to -1        │
-│        │   2. Instantiate fresh SpeechRecognition      │
-│        │   3. Resume listening instantly (<50ms)       │
-│        │   4. Keep UI in uninterrupted listening state │
-│        │                                               │
-│        └─► If user clicked Done (✓) or Cancel (✕):     │
-│            1. Stop recognition cleanly                 │
-│            2. Finalize & clean sentence formatting     │
-│            3. Commit to form state & localStorage      │
-└────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                       VoiceTextarea                         │
+│   - Desktop: WebSpeech API (real-time streaming, silent)    │
+│   - Mobile:  Silent MediaRecorder + Audio Analyser Waveform │
+└───────────────────────────────┬─────────────────────────────┘
+                                │ (On Mobile: User clicks ✓)
+                                ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Audio Blob Packaging                     │
+│   - Formats audio/webm or audio/mp4 chunk                   │
+│   - Encodes payload with target language (e.g. en-IN, ml-IN)│
+└───────────────────────────────┬─────────────────────────────┘
+                                │ POST /api/transcribe
+                                ▼
+┌─────────────────────────────────────────────────────────────┐
+│               Serverless Route (/api/transcribe)            │
+│   - Authenticates via server GEMINI_API_KEY                 │
+│   - Prompts Gemini 2.5 Flash for verbatim speech transcribe │
+│   - Returns { text: "..." }                                 │
+└───────────────────────────────┬─────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────┐
+│                      State Update                           │
+│   - Appends text to questionnaire answer & auto-saves       │
+│   - Dismisses recording bar cleanly                         │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-#### Files to Modify:
-1. `src/hooks/useSpeechRecognition.ts`:
-   - Overhaul `onresult` and `onend` handlers to reset `lastProcessedIndexRef` across session cycles.
-   - Implement clean instantiation of `SpeechRecognition` so restarts on Android do not throw `InvalidStateError` or drop tokens.
-   - Prevent redundant restart loops and ensure `recognition.abort()` / cleanup is pristine.
-2. `src/components/VoiceTextarea.tsx`:
-   - Remove automatic `textareaRef.current.focus()` inside `onCommit` during active speech.
-   - Add focus only when the user finishes dictation or manually clicks the textarea.
+#### Files to Create / Modify:
+1. `/api/transcribe.ts`:
+   - Serverless handler accepting base64 audio and language code, transcribing via Gemini 2.5 Flash.
+2. `src/hooks/useAudioRecorder.ts`:
+   - Mobile audio recording hook using `navigator.mediaDevices.getUserMedia` and `MediaRecorder` with Web Audio volume analyser.
+3. `src/hooks/useSpeechRecognition.ts` & `src/components/VoiceTextarea.tsx`:
+   - Route mobile devices to the silent audio recorder and desktop to Web Speech API.
+4. `vite.config.ts`:
+   - Mount local dev middleware for `/api/transcribe` so it works seamlessly in development and production on Vercel.

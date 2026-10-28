@@ -3,10 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useId } from "react";
-import { Mic, X, Check, Globe } from "lucide-react";
+import React, { useState, useEffect, useRef, useId, useMemo } from "react";
+import { Mic, X, Check, Globe, Loader2 } from "lucide-react";
 import { SPEECH_LANGUAGES, SpeechLanguageCode } from "../constants.ts";
 import { useSpeechRecognition } from "../hooks/useSpeechRecognition.ts";
+import { useAudioRecorder } from "../hooks/useAudioRecorder.ts";
 
 interface VoiceTextareaProps {
   id?: string;
@@ -53,6 +54,13 @@ export const VoiceTextarea: React.FC<VoiceTextareaProps> = ({
   const [showLangMenu, setShowLangMenu] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
+  const activeLangLabel = useMemo(() => {
+    return (
+      SPEECH_LANGUAGES.find((l) => l.code === language)?.label ||
+      "English (India)"
+    );
+  }, [language]);
+
   const handleLanguageChange = (newLang: SpeechLanguageCode) => {
     setLanguage(newLang);
     setShowLangMenu(false);
@@ -63,20 +71,53 @@ export const VoiceTextarea: React.FC<VoiceTextareaProps> = ({
     }
   };
 
-  const {
-    isSupported,
-    isListening,
-    interimText,
-    friendlyError,
-    startListening,
-    stopSession,
-    updateBaseText,
-  } = useSpeechRecognition({
+  // Detect mobile device to bypass Android Chrome's hardware ding-ding chime.
+  // On mobile: uses silent MediaRecorder + Gemini 2.5 Flash transcription.
+  // On desktop: uses browser Web Speech API for instantaneous word-by-word streaming.
+  const [isMobile, setIsMobile] = useState<boolean>(() => {
+    if (typeof navigator === "undefined") return false;
+    return (
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+        navigator.userAgent
+      ) ||
+      (navigator.maxTouchPoints > 1 && !/Macintosh/i.test(navigator.userAgent))
+    );
+  });
+
+  useEffect(() => {
+    const mobileCheck =
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+        navigator.userAgent
+      ) ||
+      (navigator.maxTouchPoints > 1 && !/Macintosh/i.test(navigator.userAgent));
+    setIsMobile(mobileCheck);
+  }, []);
+
+  // Desktop engine: native Web Speech API
+  const speechRecognizer = useSpeechRecognition({
     language,
     onCommit: (newText) => {
       onChange(newText);
     },
   });
+
+  // Mobile engine: silent MediaRecorder (zero chime sounds) + fast transcription
+  const audioRecorder = useAudioRecorder({
+    languageLabel: activeLangLabel,
+    onCommit: (newText) => {
+      onChange(newText);
+    },
+  });
+
+  const isListening = isMobile
+    ? audioRecorder.isRecording
+    : speechRecognizer.isListening;
+  const isTranscribing = isMobile ? audioRecorder.isTranscribing : false;
+  const interimText = isMobile ? "" : speechRecognizer.interimText;
+  const friendlyError = isMobile
+    ? audioRecorder.friendlyError
+    : speechRecognizer.friendlyError;
+  const isSupported = isMobile ? true : speechRecognizer.isSupported;
 
   // Auto-resize textarea to fit content
   useEffect(() => {
@@ -99,23 +140,31 @@ export const VoiceTextarea: React.FC<VoiceTextareaProps> = ({
 
   const handleMicClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!isListening) {
-      startListening(value ?? "");
+    if (isListening || isTranscribing) return;
+    if (isMobile) {
+      audioRecorder.startRecording(value ?? "");
+    } else {
+      speechRecognizer.startListening(value ?? "");
     }
   };
 
   const handleCancel = (e: React.MouseEvent) => {
     e.stopPropagation();
-    stopSession(false);
+    if (isMobile) {
+      audioRecorder.stopRecording(false);
+    } else {
+      speechRecognizer.stopSession(false);
+    }
   };
 
   const handleDone = (e: React.MouseEvent) => {
     e.stopPropagation();
-    stopSession(true);
+    if (isMobile) {
+      audioRecorder.stopRecording(true);
+    } else {
+      speechRecognizer.stopSession(true);
+    }
   };
-
-  const activeLangLabel =
-    SPEECH_LANGUAGES.find((l) => l.code === language)?.label || "English (India)";
 
   return (
     <div className="w-full space-y-2">
@@ -135,7 +184,7 @@ export const VoiceTextarea: React.FC<VoiceTextareaProps> = ({
           textareaRef.current?.focus();
         }}
         className={`relative w-full rounded-2xl border transition-all duration-200 bg-white cursor-text ${
-          isListening
+          isListening || isTranscribing
             ? "border-[#B08D57] ring-4 ring-[#B08D57]/20 shadow-lg"
             : "border-[#E8E8E8] hover:border-[#1A1A1A]/40 focus-within:border-[#1A1A1A] focus-within:ring-2 focus-within:ring-[#1A1A1A]/10 shadow-xs"
         }`}
@@ -149,7 +198,8 @@ export const VoiceTextarea: React.FC<VoiceTextareaProps> = ({
           onChange={(e) => {
             const val = e.target.value;
             onChange(val);
-            updateBaseText(val);
+            audioRecorder.updateBaseText(val);
+            speechRecognizer.updateBaseText(val);
           }}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
@@ -158,8 +208,8 @@ export const VoiceTextarea: React.FC<VoiceTextareaProps> = ({
           className="w-full px-5 py-4 text-[18px] leading-relaxed text-[#1A1A1A] placeholder:text-[#5F5F5F]/60 bg-transparent resize-none focus:outline-hidden rounded-2xl min-h-[58px]"
         />
 
-        {/* Live interim transcript display overlay when listening */}
-        {isListening && interimText && (
+        {/* Live interim transcript display overlay when listening on desktop */}
+        {!isMobile && isListening && interimText && (
           <div className="px-5 pb-3 text-[18px] text-[#5F5F5F]/80 italic">
             <span>{interimText}</span>
           </div>
@@ -181,7 +231,13 @@ export const VoiceTextarea: React.FC<VoiceTextareaProps> = ({
                 aria-expanded={showLangMenu}
               >
                 <Globe className="w-3.5 h-3.5 text-[#5F5F5F] shrink-0" />
-                <span className={isListening ? "hidden sm:inline" : "inline"}>
+                <span
+                  className={
+                    isListening || isTranscribing
+                      ? "hidden sm:inline"
+                      : "inline"
+                  }
+                >
                   {activeLangLabel}
                 </span>
               </button>
@@ -215,8 +271,15 @@ export const VoiceTextarea: React.FC<VoiceTextareaProps> = ({
               )}
             </div>
 
-            {/* Listening Waveform Animation & State */}
-            {isListening ? (
+            {/* Listening / Transcribing Bar */}
+            {isTranscribing ? (
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-white border border-[#B08D57]/40 rounded-full shadow-2xs">
+                <Loader2 className="w-4 h-4 text-[#B08D57] animate-spin shrink-0" />
+                <span className="text-xs sm:text-sm font-medium text-[#1A1A1A]">
+                  Transcribing...
+                </span>
+              </div>
+            ) : isListening ? (
               <div className="flex items-center gap-2 sm:gap-3 shrink-0">
                 <div className="flex items-center gap-1 px-2.5 sm:px-3 py-1 bg-white border border-[#B08D57]/40 rounded-full shadow-2xs shrink-0">
                   <div className="w-1.5 h-3 bg-[#B08D57] rounded-full animate-wave-1" />
@@ -225,7 +288,7 @@ export const VoiceTextarea: React.FC<VoiceTextareaProps> = ({
                   <div className="w-1.5 h-6 bg-[#B08D57] rounded-full animate-wave-4" />
                   <div className="w-1.5 h-2 bg-[#B08D57] rounded-full animate-wave-5" />
                   <span className="ml-1.5 text-xs font-medium text-[#1A1A1A] hidden sm:inline">
-                    Listening...
+                    {isMobile ? "Listening... tap ✓ when done" : "Listening..."}
                   </span>
                 </div>
 
