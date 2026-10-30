@@ -15,6 +15,9 @@ export interface FamilyMember {
 export interface QuestionnaireAnswers {
   partner1: string;
   partner2: string;
+  weddingDate?: string;
+  phone?: string;
+  email?: string;
   q1_calls: { aCallsB: string; bCallsA: string };
   q2_workPassion: { partnerA: string; partnerB: string };
   q3_firstMeet: string;
@@ -48,6 +51,23 @@ export interface QuestionnaireAnswers {
   q23_oneLastThing: { notes: string; images: string[] };
 }
 
+export type SubmissionStatus = "new" | "reviewed" | "shared";
+
+export interface SubmissionRecord {
+  id: string;
+  sequenceNumber: number;
+  displayId: string; // e.g. "#001"
+  submittedAt: string; // ISO string
+  status: SubmissionStatus;
+  partner1: string;
+  partner2: string;
+  weddingDate: string;
+  phone: string;
+  email: string;
+  answers: QuestionnaireAnswers;
+  privateNotes?: string;
+}
+
 export interface QuestionMeta {
   number: number;
   chapter: number;
@@ -64,3 +84,4 @@ export interface ChapterMeta {
   questionsRange: string;
   startQuestionNumber: number;
 }
+

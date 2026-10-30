@@ -1,0 +1,21 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Helper: Checks if the user is authenticated and verified in the Firestore 'admins' collection
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && firestore.exists(/databases/(default)/documents/admins/$(request.auth.token.email.lower()));
+    }
+
+    // Media for questionnaire submissions (family photos, tree photo, mood references):
+    // - Couples can create/upload images only (image/* mime-type and maximum 10MB)
+    // - Only authorized studio team members can read or delete uploaded images
+    match /submissions/{allPaths=**} {
+      allow create: if request.resource.contentType.matches('image/.*')
+                    && request.resource.size < 10 * 1024 * 1024;
+      allow read, update, delete: if isAdmin();
+    }
+  }
+}

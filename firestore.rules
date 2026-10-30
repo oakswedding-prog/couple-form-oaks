@@ -1,0 +1,35 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper: Checks if the user is signed in with a verified email present in the 'admins' collection
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && exists(/databases/$(database)/documents/admins/$(request.auth.token.email.lower()));
+    }
+
+    // Admin Allow-List:
+    // Any signed-in user can check their own email doc to verify access.
+    // Only existing admins can add or remove admin emails.
+    match /admins/{adminEmail} {
+      allow read: if request.auth != null && request.auth.token.email_verified == true;
+      allow write: if isAdmin();
+    }
+
+    // Sequential Counter:
+    // Used by transactions to assign sequential submission numbers (#001, #002...)
+    match /counters/{counterId} {
+      allow read, write: if true;
+    }
+
+    // Submissions:
+    // - Couples can ONLY create a new submission document (write-only).
+    //   Couples can never read, update, or delete any submissions.
+    // - Only verified admins can read, update status/notes, or delete.
+    match /submissions/{submissionId} {
+      allow create: if true;
+      allow read, update, delete: if isAdmin();
+    }
+  }
+}

@@ -25,10 +25,17 @@ import { ImageUploader } from "./components/ImageUploader.tsx";
 import { FamilyTreeBuilder } from "./components/FamilyTreeBuilder.tsx";
 import { ReviewScreen } from "./components/ReviewScreen.tsx";
 import { ThankYouScreen } from "./components/ThankYouScreen.tsx";
+import { AdminLogin } from "./pages/AdminLogin.tsx";
+import { AdminDashboard } from "./pages/AdminDashboard.tsx";
+import { AdminCoupleDetail } from "./pages/AdminCoupleDetail.tsx";
+import { useAdminAuth } from "./lib/auth.ts";
 
 const INITIAL_ANSWERS: QuestionnaireAnswers = {
   partner1: "",
   partner2: "",
+  weddingDate: "",
+  phone: "",
+  email: "",
   q1_calls: { aCallsB: "", bCallsA: "" },
   q2_workPassion: { partnerA: "", partnerB: "" },
   q3_firstMeet: "",
@@ -63,6 +70,9 @@ function sanitizeAnswers(raw: any): QuestionnaireAnswers {
   return {
     partner1: typeof raw.partner1 === "string" ? raw.partner1 : "",
     partner2: typeof raw.partner2 === "string" ? raw.partner2 : "",
+    weddingDate: typeof raw.weddingDate === "string" ? raw.weddingDate : "",
+    phone: typeof raw.phone === "string" ? raw.phone : "",
+    email: typeof raw.email === "string" ? raw.email : "",
     q1_calls: {
       aCallsB: typeof raw.q1_calls === "object" && raw.q1_calls ? (raw.q1_calls.aCallsB ?? "") : "",
       bCallsA: typeof raw.q1_calls === "object" && raw.q1_calls ? (raw.q1_calls.bCallsA ?? "") : "",
@@ -192,11 +202,34 @@ export default function App() {
   const [hasLoadedStorage, setHasLoadedStorage] = useState<boolean>(false);
   const [savedStepNotice, setSavedStepNotice] = useState<number>(0);
 
+  // Client-side URL Routing
+  const [currentPath, setCurrentPath] = useState<string>(
+    typeof window !== "undefined" ? window.location.pathname : "/"
+  );
+
+  useEffect(() => {
+    const onPopState = () => {
+      setCurrentPath(window.location.pathname);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  const navigateTo = (path: string) => {
+    window.history.pushState({}, "", path);
+    setCurrentPath(path);
+    window.scrollTo(0, 0);
+  };
+
+  // Admin Auth state
+  const { user, isAdmin, isLoading: authLoading, signOut } = useAdminAuth();
+
   // Link input state for Q12
   const [newLinkInput, setNewLinkInput] = useState<string>("");
 
   // Auto-advance debounce ref
   const autoAdvanceTimerRef = useRef<any>(null);
+
 
   // Load from localStorage or check autostart on mount
   useEffect(() => {
@@ -355,6 +388,49 @@ export default function App() {
     }
   };
 
+  // 1. Route Check: Couple Detail View (/admin/couple/:id)
+  if (currentPath.startsWith("/admin/couple/")) {
+    const coupleId = currentPath.replace("/admin/couple/", "").split("/")[0].split("?")[0];
+    if (authLoading) {
+      return (
+        <div className="min-h-[100dvh] bg-[#FAF8F5] flex flex-col items-center justify-center space-y-3">
+          <div className="w-8 h-8 border-2 border-[#B08D57] border-t-transparent rounded-full animate-spin" />
+          <p className="text-sm text-[#7A756D]">Verifying team access...</p>
+        </div>
+      );
+    }
+    if (!user || !isAdmin) {
+      return <AdminLogin onBackToForm={() => navigateTo("/")} />;
+    }
+    return (
+      <AdminCoupleDetail
+        submissionId={coupleId}
+        onBack={() => navigateTo("/admin")}
+      />
+    );
+  }
+
+  // 2. Route Check: Admin Dashboard (/admin)
+  if (currentPath === "/admin" || currentPath === "/admin/") {
+    if (authLoading) {
+      return (
+        <div className="min-h-[100dvh] bg-[#FAF8F5] flex flex-col items-center justify-center space-y-3">
+          <div className="w-8 h-8 border-2 border-[#B08D57] border-t-transparent rounded-full animate-spin" />
+          <p className="text-sm text-[#7A756D]">Verifying team access...</p>
+        </div>
+      );
+    }
+    if (!user || !isAdmin) {
+      return <AdminLogin onBackToForm={() => navigateTo("/")} />;
+    }
+    return (
+      <AdminDashboard
+        onSelectCouple={(id) => navigateTo(`/admin/couple/${id}`)}
+        onSignOut={signOut}
+      />
+    );
+  }
+
   // Active chapter title for header
   const currentChapter = CHAPTERS.find(
     (c) => currentStep >= c.startQ && currentStep <= c.endQ
@@ -384,12 +460,25 @@ export default function App() {
       <WelcomeScreen
         partner1={answers.partner1}
         partner2={answers.partner2}
+        weddingDate={answers.weddingDate || ""}
+        phone={answers.phone || ""}
+        email={answers.email || ""}
         onPartner1Change={(v) =>
           setAnswers((prev) => ({ ...prev, partner1: v }))
         }
         onPartner2Change={(v) =>
           setAnswers((prev) => ({ ...prev, partner2: v }))
         }
+        onWeddingDateChange={(v) =>
+          setAnswers((prev) => ({ ...prev, weddingDate: v }))
+        }
+        onPhoneChange={(v) =>
+          setAnswers((prev) => ({ ...prev, phone: v }))
+        }
+        onEmailChange={(v) =>
+          setAnswers((prev) => ({ ...prev, email: v }))
+        }
+        onOpenAdmin={() => navigateTo("/admin")}
         onBegin={handleBegin}
         hasSavedProgress={savedStepNotice > 0}
         savedStep={savedStepNotice}
@@ -397,6 +486,7 @@ export default function App() {
       />
     );
   }
+
 
   // Review Screen (Step 24)
   if (currentStep === 24) {

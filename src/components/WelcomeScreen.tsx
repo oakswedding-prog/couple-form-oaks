@@ -4,14 +4,21 @@
  */
 
 import React from "react";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Lock } from "lucide-react";
 import { STUDIO_NAME, STUDIO_LOGO_URL } from "../constants.ts";
 
 interface WelcomeScreenProps {
   partner1: string;
   partner2: string;
+  weddingDate: string;
+  phone: string;
+  email: string;
   onPartner1Change: (name: string) => void;
   onPartner2Change: (name: string) => void;
+  onWeddingDateChange: (date: string) => void;
+  onPhoneChange: (phone: string) => void;
+  onEmailChange: (email: string) => void;
+  onOpenAdmin: () => void;
   onBegin: () => void;
   hasSavedProgress: boolean;
   savedStep: number;
@@ -21,14 +28,24 @@ interface WelcomeScreenProps {
 export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   partner1,
   partner2,
+  weddingDate,
+  phone,
+  email,
   onPartner1Change,
   onPartner2Change,
+  onWeddingDateChange,
+  onPhoneChange,
+  onEmailChange,
+  onOpenAdmin,
   onBegin,
   hasSavedProgress,
   savedStep,
   onResume,
 }) => {
-  const isReady = partner1.trim().length > 0 && partner2.trim().length > 0;
+  const hasNames = partner1.trim().length > 0 && partner2.trim().length > 0;
+  const hasWeddingDate = weddingDate.trim().length > 0;
+  const hasContact = phone.trim().length > 0 || email.trim().length > 0;
+  const isReady = hasNames && hasWeddingDate && hasContact;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,7 +55,20 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   };
 
   return (
-    <div className="min-h-[100dvh] bg-white flex flex-col justify-between px-5 py-8 sm:py-12 safe-bottom safe-top max-w-[620px] mx-auto">
+    <div className="relative min-h-[100dvh] bg-white flex flex-col justify-between px-5 py-8 sm:py-12 safe-bottom safe-top max-w-[620px] mx-auto">
+      {/* Subtle Admin Button in Top-Right Corner */}
+      <div className="absolute top-4 right-4 sm:top-6 sm:right-6 z-10">
+        <button
+          type="button"
+          onClick={onOpenAdmin}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-sans text-[#7A756D]/70 hover:text-[#1A1A1A] hover:bg-[#FAF7F2] transition-colors cursor-pointer border border-transparent hover:border-[#E8DFD3]"
+          title="Studio Admin"
+        >
+          <Lock className="w-3.5 h-3.5 text-[#9A7B4F]" />
+          <span className="tracking-wider uppercase text-[10px] font-medium">Admin</span>
+        </button>
+      </div>
+
       {/* Studio Brand Header - OAKS logo only with responsive size */}
       <div className="flex flex-col items-center text-center pt-3 sm:pt-6 mb-6 sm:mb-8">
         <img
@@ -65,13 +95,13 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
           {/* Elegant gold accent divider line */}
           <div className="w-10 h-0.5 bg-[#B08D57]/70 mx-auto mt-4 mb-3 rounded-full" />
 
-          {/* Requested Tagline */}
+          {/* Tagline */}
           <p className="font-cormorant text-lg sm:text-[21px] text-[#5F5F5F] font-normal max-w-lg mx-auto leading-relaxed">
             The more we know your story, the more meaningfully we can tell it...
           </p>
         </div>
 
-        {/* 3 Luxury Pillars matching the reference card design */}
+        {/* 3 Luxury Pillars */}
         <div className="pt-2 pb-1">
           <div className="grid grid-cols-3 divide-x divide-[#E8DFD3]/80 py-2">
             {/* Pillar 1: 10 Minutes */}
@@ -171,10 +201,10 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
           </div>
         </div>
 
-        {/* Couple Name Inputs with Cormorant Serif styling */}
-        <form onSubmit={handleSubmit} className="space-y-5 max-w-md mx-auto text-left pt-2">
+        {/* Couple Inputs with Cormorant Serif styling */}
+        <form onSubmit={handleSubmit} className="space-y-4 max-w-md mx-auto text-left pt-2">
           {/* Partner 1 Input */}
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <label
               htmlFor="partner1-input"
               className="block font-cormorant tracking-[0.22em] text-xs sm:text-[13px] font-medium text-[#4A453E] uppercase"
@@ -188,12 +218,12 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
               onChange={(e) => onPartner1Change(e.target.value)}
               placeholder="e.g. Maya"
               autoComplete="given-name"
-              className="w-full px-5 py-4 font-cormorant text-[20px] sm:text-[22px] text-[#1A1A1A] placeholder:text-[#5F5F5F]/40 bg-white border border-[#E5DDD2] rounded-2xl focus:outline-hidden focus:border-[#1A1A1A] focus:ring-2 focus:ring-[#B08D57]/20 shadow-xs min-h-[58px]"
+              className="w-full px-5 py-3.5 font-cormorant text-[19px] sm:text-[21px] text-[#1A1A1A] placeholder:text-[#5F5F5F]/40 bg-white border border-[#E5DDD2] rounded-2xl focus:outline-hidden focus:border-[#1A1A1A] focus:ring-2 focus:ring-[#B08D57]/20 shadow-xs min-h-[54px]"
             />
           </div>
 
           {/* Partner 2 Input */}
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <label
               htmlFor="partner2-input"
               className="block font-cormorant tracking-[0.22em] text-xs sm:text-[13px] font-medium text-[#4A453E] uppercase"
@@ -207,16 +237,78 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
               onChange={(e) => onPartner2Change(e.target.value)}
               placeholder="e.g. Leo"
               autoComplete="off"
-              className="w-full px-5 py-4 font-cormorant text-[20px] sm:text-[22px] text-[#1A1A1A] placeholder:text-[#5F5F5F]/40 bg-white border border-[#E5DDD2] rounded-2xl focus:outline-hidden focus:border-[#1A1A1A] focus:ring-2 focus:ring-[#B08D57]/20 shadow-xs min-h-[58px]"
+              className="w-full px-5 py-3.5 font-cormorant text-[19px] sm:text-[21px] text-[#1A1A1A] placeholder:text-[#5F5F5F]/40 bg-white border border-[#E5DDD2] rounded-2xl focus:outline-hidden focus:border-[#1A1A1A] focus:ring-2 focus:ring-[#B08D57]/20 shadow-xs min-h-[54px]"
             />
           </div>
 
-          {/* Pill Action Button matching the dark luxury button in the reference image */}
-          <div className="pt-4 space-y-3">
+          {/* Wedding Date Input */}
+          <div className="space-y-1.5">
+            <label
+              htmlFor="wedding-date-input"
+              className="block font-cormorant tracking-[0.22em] text-xs sm:text-[13px] font-medium text-[#4A453E] uppercase"
+            >
+              YOUR WEDDING DATE <span className="text-[#B08D57] font-semibold">*</span>
+            </label>
+            <input
+              id="wedding-date-input"
+              type="date"
+              value={weddingDate}
+              onChange={(e) => onWeddingDateChange(e.target.value)}
+              required
+              className="w-full px-5 py-3.5 font-cormorant text-[18px] sm:text-[20px] text-[#1A1A1A] bg-white border border-[#E5DDD2] rounded-2xl focus:outline-hidden focus:border-[#1A1A1A] focus:ring-2 focus:ring-[#B08D57]/20 shadow-xs min-h-[54px]"
+            />
+          </div>
+
+          {/* Phone & Email Row */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+            {/* Phone / WhatsApp */}
+            <div className="space-y-1.5">
+              <label
+                htmlFor="phone-input"
+                className="block font-cormorant tracking-[0.2em] text-xs font-medium text-[#4A453E] uppercase"
+              >
+                PHONE / WHATSAPP <span className="text-[#B08D57] text-[11px] font-normal lowercase tracking-normal">*</span>
+              </label>
+              <input
+                id="phone-input"
+                type="tel"
+                value={phone}
+                onChange={(e) => onPhoneChange(e.target.value)}
+                placeholder="e.g. +91 98765 43210"
+                autoComplete="tel"
+                className="w-full px-4 py-3.5 font-cormorant text-[17px] sm:text-[19px] text-[#1A1A1A] placeholder:text-[#5F5F5F]/40 bg-white border border-[#E5DDD2] rounded-2xl focus:outline-hidden focus:border-[#1A1A1A] focus:ring-2 focus:ring-[#B08D57]/20 shadow-xs min-h-[54px]"
+              />
+            </div>
+
+            {/* Email */}
+            <div className="space-y-1.5">
+              <label
+                htmlFor="email-input"
+                className="block font-cormorant tracking-[0.2em] text-xs font-medium text-[#4A453E] uppercase"
+              >
+                EMAIL <span className="text-[#B08D57] text-[11px] font-normal lowercase tracking-normal">*</span>
+              </label>
+              <input
+                id="email-input"
+                type="email"
+                value={email}
+                onChange={(e) => onEmailChange(e.target.value)}
+                placeholder="e.g. maya@example.com"
+                autoComplete="email"
+                className="w-full px-4 py-3.5 font-cormorant text-[17px] sm:text-[19px] text-[#1A1A1A] placeholder:text-[#5F5F5F]/40 bg-white border border-[#E5DDD2] rounded-2xl focus:outline-hidden focus:border-[#1A1A1A] focus:ring-2 focus:ring-[#B08D57]/20 shadow-xs min-h-[54px]"
+              />
+            </div>
+          </div>
+          <p className="text-[11px] text-[#7A756D] font-sans -mt-1">
+            * Please provide at least one contact method so our team can reach you.
+          </p>
+
+          {/* Action Buttons */}
+          <div className="pt-3 space-y-3">
             <button
               type="submit"
               disabled={!isReady}
-              className={`w-full min-h-[60px] py-4 px-6 rounded-full font-cormorant text-[21px] sm:text-[23px] tracking-wide font-normal transition-all flex items-center justify-center gap-3 ${
+              className={`w-full min-h-[58px] py-4 px-6 rounded-full font-cormorant text-[20px] sm:text-[22px] tracking-wide font-normal transition-all flex items-center justify-center gap-3 ${
                 isReady
                   ? "bg-[#1A1A1A] text-[#F5F2ED] hover:bg-[#2A2A2A] active:scale-[0.99] border border-[#B08D57]/60 ring-1 ring-[#B08D57]/20 shadow-md cursor-pointer"
                   : "bg-[#FAFAFA] text-[#5F5F5F]/50 border border-[#E8E8E8] cursor-not-allowed"
@@ -231,7 +323,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
               <button
                 type="button"
                 onClick={onResume}
-                className="w-full min-h-[50px] py-3 px-4 rounded-full font-cormorant text-lg text-[#1A1A1A] hover:bg-[#FAF7F2] border border-[#E5DDD2] transition-colors"
+                className="w-full min-h-[48px] py-2.5 px-4 rounded-full font-cormorant text-[17px] text-[#1A1A1A] hover:bg-[#FAF7F2] border border-[#E5DDD2] transition-colors"
               >
                 {savedStep === 24
                   ? "Resume where you left off (Review Answers)"

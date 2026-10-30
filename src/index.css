@@ -93,3 +93,33 @@
 .animate-wave-5 {
   animation: voice-wave 1.2s ease-in-out infinite 0.2s;
 }
+
+/* Print stylesheet for Shoot Day Cheat Sheet */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 10mm 12mm;
+  }
+
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-size: 11pt;
+  }
+
+  header, nav, button, .print\:hidden {
+    display: none !important;
+  }
+
+  .cheat-sheet-root {
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+}
+

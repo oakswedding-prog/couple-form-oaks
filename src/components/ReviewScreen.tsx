@@ -5,9 +5,10 @@
 
 import React, { useState } from "react";
 import { ArrowLeft, Send, Edit3, Loader2, AlertCircle } from "lucide-react";
+import confetti from "canvas-confetti";
 import { QuestionnaireAnswers } from "../types/questionnaire.ts";
-import { STUDIO_NAME, SUBMIT_ENDPOINT, ACCENT_COLOR } from "../constants.ts";
-import { generateBriefSummary } from "../utils/briefGenerator.ts";
+import { STUDIO_NAME, ACCENT_COLOR, STORAGE_KEY } from "../constants.ts";
+import { createSubmission } from "../lib/submissions.ts";
 
 interface ReviewScreenProps {
   answers: QuestionnaireAnswers;
@@ -15,6 +16,7 @@ interface ReviewScreenProps {
   onBack: () => void;
   onSubmitted: () => void;
 }
+
 
 export const ReviewScreen: React.FC<ReviewScreenProps> = ({
   answers,
@@ -32,188 +34,39 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
     setIsSubmitting(true);
     setErrorMessage(null);
 
-    const briefText = generateBriefSummary(STUDIO_NAME, answers);
-
-    const payload = {
-      names: { partner1: p1, partner2: p2 },
-      submittedAt: new Date().toISOString(),
-      studio: STUDIO_NAME,
-      briefText,
-      answers: [
-        {
-          number: 1,
-          question: "What do you call each other?",
-          answer: {
-            [`${p1} calls ${p2}`]: answers.q1_calls.aCallsB,
-            [`${p2} calls ${p1}`]: answers.q1_calls.bCallsA,
-          },
-        },
-        {
-          number: 2,
-          question:
-            "What do you both do for living and what are you truly passionate about doing?",
-          answer: {
-            [p1]: answers.q2_workPassion.partnerA,
-            [p2]: answers.q2_workPassion.partnerB,
-          },
-        },
-        {
-          number: 3,
-          question: "How did you first meet?",
-          answer: answers.q3_firstMeet,
-        },
-        {
-          number: 4,
-          question: "What was your first impression of each other?",
-          answer: {
-            [p1]: answers.q4_firstImpression.partnerA,
-            [p2]: answers.q4_firstImpression.partnerB,
-          },
-        },
-        {
-          number: 5,
-          question:
-            "How would you describe yourselves as a couple in three words?",
-          answer: answers.q5_threeWords,
-        },
-        {
-          number: 6,
-          question: "What do you enjoy doing together?",
-          answer: answers.q6_activities,
-        },
-        {
-          number: 7,
-          question: "What do you love most about each other?",
-          answer: {
-            [p1]: answers.q7_loveMost.partnerA,
-            [p2]: answers.q7_loveMost.partnerB,
-          },
-        },
-        {
-          number: 8,
-          question:
-            "Is there a funny story, inside joke, or special moment that defines your relationship?",
-          answer: answers.q8_funnyStory,
-        },
-        {
-          number: 9,
-          question: "How did the proposal happen? (If applicable.)",
-          answer: answers.q9_proposal,
-        },
-        {
-          number: 10,
-          question:
-            "Who are the most important people you want us to capture please give a family tree?",
-          answer: answers.q10_people,
-        },
-        {
-          number: 11,
-          question:
-            "How do you want your wedding photographs and films to feel?",
-          answer: answers.q11_filmFeel,
-        },
-        {
-          number: 12,
-          question:
-            "Are there any photographers, films, or Pinterest references you love?",
-          answer: answers.q12_references,
-        },
-        {
-          number: 13,
-          question: "What tone are you expecting to set for your wedding day",
-          answer: answers.q13_tone,
-        },
-        {
-          number: 14,
-          question:
-            "What are the moments you are most looking forward to during your wedding?",
-          answer: answers.q14_moments,
-        },
-        {
-          number: 15,
-          question:
-            "Is there anything you definitely want us to capture or avoid?",
-          answer: answers.q15_captureAvoid,
-        },
-        {
-          number: 16,
-          question:
-            "Please mention your non negotiables in your films and photographs?",
-          answer: answers.q16_nonNegotiables,
-        },
-        {
-          number: 17,
-          question:
-            "Who do you think is going to be more emotional during wedding?",
-          answer: answers.q17_emotional,
-        },
-        {
-          number: 18,
-          question: "How versatile are you with the camera?",
-          answer: answers.q18_cameraVersatility,
-        },
-        {
-          number: 19,
-          question:
-            "What matters most to you when choosing a wedding photography and filmmaking team?",
-          answer: answers.q19_whatMattersMost,
-        },
-        {
-          number: 20,
-          question:
-            "How comfortable are you with being guided or directed during portraits and filming?",
-          answer: answers.q20_guidanceComfort,
-        },
-        {
-          number: 21,
-          question:
-            "Is there anything that would help you feel more comfortable in front of the camera?",
-          answer: answers.q21_comfortTips,
-        },
-        {
-          number: 22,
-          question:
-            "What do you hope to feel when you watch your wedding film years from now?",
-          answer: answers.q22_futureFeeling,
-        },
-        {
-          number: 23,
-          question:
-            "Is there anything else you would love us to know about you, your story, or your wedding?",
-          answer: answers.q23_oneLastThing,
-        },
-      ],
-    };
-
-    if (!SUBMIT_ENDPOINT) {
-      // Demo mode: simulated brief submission
-      setTimeout(() => {
-        setIsSubmitting(false);
-        onSubmitted();
-      }, 700);
-      return;
-    }
-
     try {
-      const response = await fetch(SUBMIT_ENDPOINT, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      await createSubmission(answers);
 
-      if (!response.ok) {
-        throw new Error(`Server returned ${response.status}`);
+      // Successfully saved to Firestore! Clear draft from localStorage
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+      } catch {
+        // ignore
+      }
+
+      // Celebratory luxury confetti
+      try {
+        confetti({
+          particleCount: 80,
+          spread: 70,
+          origin: { y: 0.6 },
+          colors: ["#B08D57", "#D4AF37", "#1A1A1A", "#8C7043", "#F5F2ED"],
+        });
+      } catch {
+        // ignore
       }
 
       setIsSubmitting(false);
       onSubmitted();
-    } catch {
+    } catch (err: any) {
+      console.error("Submission failed:", err);
       setIsSubmitting(false);
       setErrorMessage(
         "We could not send your answers just yet. Your words are completely safe. Please try tapping Send again."
       );
     }
   };
+
 
   return (
     <div className="max-w-[680px] mx-auto px-5 py-8 sm:py-12 safe-bottom">
