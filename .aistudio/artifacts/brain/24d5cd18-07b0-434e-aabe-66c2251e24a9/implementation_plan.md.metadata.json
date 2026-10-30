@@ -1,6 +1,6 @@
 {
-  "summary":  "Comprehensive implementation plan for the Private Admin Dashboard, Shoot Day Cheat Sheet, Firebase Authentication, Firestore submission storage with atomic sequential numbering (#001), Storage uploads, PDF/Word export, Resend email alerts, and server-enforced security rules.",
-  "updatedAt":  "2026-10-30T03:35:41.482272012Z",
+  "summary":  "Implementation plan to add Email & Password login alongside Google Sign-In on the Admin page, fix the Firebase unauthorized-domain error, and update Firestore security rules to allow Firebase Console email accounts.",
+  "updatedAt":  "2026-10-30T04:51:34.505253093Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

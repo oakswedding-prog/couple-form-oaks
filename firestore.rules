@@ -2,18 +2,18 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper: Checks if the user is signed in with a verified email present in the 'admins' collection
+    // Helper: Checks if the user is authenticated and their email exists in the 'admins' collection
     function isAdmin() {
       return request.auth != null
-        && request.auth.token.email_verified == true
+        && request.auth.token.email != null
         && exists(/databases/$(database)/documents/admins/$(request.auth.token.email.lower()));
     }
 
     // Admin Allow-List:
-    // Any signed-in user can check their own email doc to verify access.
-    // Only existing admins can add or remove admin emails.
+    // Any signed-in user can read admin docs to verify their access status.
+    // Only existing admins can add or modify admin emails.
     match /admins/{adminEmail} {
-      allow read: if request.auth != null && request.auth.token.email_verified == true;
+      allow read: if request.auth != null;
       allow write: if isAdmin();
     }
 
@@ -26,7 +26,7 @@ service cloud.firestore {
     // Submissions:
     // - Couples can ONLY create a new submission document (write-only).
     //   Couples can never read, update, or delete any submissions.
-    // - Only verified admins can read, update status/notes, or delete.
+    // - Only verified team admins can read, update status/notes, or delete.
     match /submissions/{submissionId} {
       allow create: if true;
       allow read, update, delete: if isAdmin();

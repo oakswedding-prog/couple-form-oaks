@@ -7,6 +7,7 @@ import { useState, useEffect } from "react";
 import {
   User,
   signInWithPopup,
+  signInWithEmailAndPassword,
   signOut as fbSignOut,
   onAuthStateChanged,
 } from "firebase/auth";
@@ -19,6 +20,8 @@ export interface AdminAuthState {
   isLoading: boolean;
   error: string | null;
   signIn: () => Promise<void>;
+  signInWithEmail: (email: string, password: string) => Promise<void>;
+  clearError: () => void;
   signOut: () => Promise<void>;
 }
 
@@ -87,13 +90,55 @@ export function useAdminAuth(): AdminAuthState {
         }
       }
     } catch (err: any) {
-      if (err?.code !== "auth/popup-closed-by-user") {
+      if (err?.code === "auth/unauthorized-domain") {
+        const currentHost = typeof window !== "undefined" ? window.location.hostname : "this domain";
+        setError(
+          `Domain not authorized in Firebase (${currentHost}). In Firebase Console, go to Authentication > Settings > Authorized domains and add "${currentHost}" (or use Email & Password below).`
+        );
+      } else if (err?.code !== "auth/popup-closed-by-user") {
         setError(err?.message || "Google Sign In was not completed.");
       }
     } finally {
       setIsLoading(false);
     }
   };
+
+  const signInWithEmail = async (email: string, password: string) => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const cleanEmail = email.trim();
+      const result = await signInWithEmailAndPassword(auth, cleanEmail, password);
+      if (result.user?.email) {
+        const verified = await checkIsAdmin(result.user.email);
+        setIsAdmin(verified);
+        if (!verified) {
+          setError(`Account ${result.user.email} does not have admin permissions in the database.`);
+        }
+      }
+    } catch (err: any) {
+      console.error("Email sign-in error:", err);
+      if (
+        err?.code === "auth/invalid-credential" ||
+        err?.code === "auth/wrong-password" ||
+        err?.code === "auth/user-not-found"
+      ) {
+        setError("Incorrect email or password. Please verify your credentials.");
+      } else if (err?.code === "auth/invalid-email") {
+        setError("Please enter a valid email address.");
+      } else if (err?.code === "auth/too-many-requests") {
+        setError("Too many unsuccessful attempts. Please wait a moment and try again.");
+      } else if (err?.code === "auth/unauthorized-domain") {
+        setError("Domain not authorized in Firebase. Add this domain in Firebase Console under Authentication > Settings > Authorized domains.");
+      } else {
+        setError(err?.message || "Could not sign in with email.");
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const clearError = () => setError(null);
 
   const signOut = async () => {
     setIsLoading(true);
@@ -115,6 +160,8 @@ export function useAdminAuth(): AdminAuthState {
     isLoading,
     error,
     signIn,
+    signInWithEmail,
+    clearError,
     signOut,
   };
 }

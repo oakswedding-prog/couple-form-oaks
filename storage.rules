@@ -2,10 +2,10 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
 
-    // Helper: Checks if the user is authenticated and verified in the Firestore 'admins' collection
+    // Helper: Checks if the user is authenticated and in the Firestore 'admins' collection
     function isAdmin() {
       return request.auth != null
-        && request.auth.token.email_verified == true
+        && request.auth.token.email != null
         && firestore.exists(/databases/(default)/documents/admins/$(request.auth.token.email.lower()));
     }
 
