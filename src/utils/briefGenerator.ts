@@ -125,8 +125,19 @@ export function generateBriefSummary(
   lines.push(`CHAPTER 3: THE LOOK AND FEEL`);
   lines.push(subDivider);
   lines.push(`11. How do you want your wedding photographs and films to feel?`);
-  lines.push(`   ${answers.q11_filmFeel ? answers.q11_filmFeel : '—'}`);
+  const q11Text = Array.isArray((answers.q11_filmFeel as any)?.selected)
+    ? [
+        ...((answers.q11_filmFeel as any).selected || []),
+        (answers.q11_filmFeel as any).other ? `Other: ${(answers.q11_filmFeel as any).other}` : null,
+      ]
+        .filter(Boolean)
+        .join(", ")
+    : typeof answers.q11_filmFeel === "string"
+    ? answers.q11_filmFeel
+    : "";
+  lines.push(`   ${q11Text ? q11Text : '—'}`);
   lines.push("");
+
 
   lines.push(`12. Are there any photographers, films, or Pinterest references you love?`);
   if (answers.q12_references.links?.length) {
@@ -144,7 +155,17 @@ export function generateBriefSummary(
   lines.push("");
 
   lines.push(`13. What tone are you expecting to set for your wedding day`);
-  lines.push(`   ${answers.q13_tone ? answers.q13_tone : '—'}`);
+  const q13Text = Array.isArray((answers.q13_tone as any)?.selected)
+    ? [
+        ...((answers.q13_tone as any).selected || []),
+        (answers.q13_tone as any).other ? `Other: ${(answers.q13_tone as any).other}` : null,
+      ]
+        .filter(Boolean)
+        .join(", ")
+    : typeof answers.q13_tone === "string"
+    ? answers.q13_tone
+    : "";
+  lines.push(`   ${q13Text ? q13Text : '—'}`);
   lines.push("");
 
   // CHAPTER 4

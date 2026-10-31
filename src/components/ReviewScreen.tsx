@@ -219,9 +219,28 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
         <ReviewItem
           num={11}
           question="How do you want your wedding photographs and films to feel?"
-          answer={answers.q11_filmFeel || "Skipped"}
+          answer={
+            Array.isArray(answers.q11_filmFeel?.selected) &&
+            answers.q11_filmFeel.selected.length > 0 ? (
+              <div className="space-y-1">
+                <div className="font-medium text-[#1A1A1A]">
+                  {answers.q11_filmFeel.selected.join(" · ")}
+                </div>
+                {answers.q11_filmFeel.other && (
+                  <div className="text-xs text-[#5F5F5F]">
+                    Note: {answers.q11_filmFeel.other}
+                  </div>
+                )}
+              </div>
+            ) : typeof answers.q11_filmFeel === "string" && answers.q11_filmFeel ? (
+              answers.q11_filmFeel
+            ) : (
+              "Skipped"
+            )
+          }
           onEdit={() => onEditQuestion(11)}
         />
+
         <ReviewItem
           num={12}
           question="Are there any photographers, films, or Pinterest references you love?"
@@ -252,7 +271,25 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
         <ReviewItem
           num={13}
           question="What tone are you expecting to set for your wedding day"
-          answer={answers.q13_tone || "Skipped"}
+          answer={
+            Array.isArray(answers.q13_tone?.selected) &&
+            answers.q13_tone.selected.length > 0 ? (
+              <div className="space-y-1">
+                <div className="font-medium text-[#1A1A1A]">
+                  {answers.q13_tone.selected.join(" · ")}
+                </div>
+                {answers.q13_tone.other && (
+                  <div className="text-xs text-[#5F5F5F]">
+                    Note: {answers.q13_tone.other}
+                  </div>
+                )}
+              </div>
+            ) : typeof answers.q13_tone === "string" && answers.q13_tone ? (
+              answers.q13_tone
+            ) : (
+              "Skipped"
+            )
+          }
           onEdit={() => onEditQuestion(13)}
         />
       </section>

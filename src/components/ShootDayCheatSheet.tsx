@@ -103,18 +103,45 @@ export const ShootDayCheatSheet: React.FC<ShootDayCheatSheetProps> = ({
                 </span>
               </div>
             )}
-            {answers.q11_filmFeel && (
-              <div>
-                <span className="font-semibold text-[#1A1A1A]">Film Feel:</span>{" "}
-                <span className="text-[#3A3A3A]">{answers.q11_filmFeel}</span>
-              </div>
-            )}
-            {answers.q13_tone && (
-              <div>
-                <span className="font-semibold text-[#1A1A1A]">Day's Tone:</span>{" "}
-                <span className="text-[#3A3A3A]">{answers.q13_tone}</span>
-              </div>
-            )}
+            {(() => {
+              const filmFeelText = Array.isArray((answers.q11_filmFeel as any)?.selected)
+                ? [
+                    ...((answers.q11_filmFeel as any).selected || []),
+                    (answers.q11_filmFeel as any).other,
+                  ]
+                    .filter(Boolean)
+                    .join(", ")
+                : typeof answers.q11_filmFeel === "string"
+                ? answers.q11_filmFeel
+                : "";
+              if (!filmFeelText) return null;
+              return (
+                <div>
+                  <span className="font-semibold text-[#1A1A1A]">Film Feel:</span>{" "}
+                  <span className="text-[#3A3A3A]">{filmFeelText}</span>
+                </div>
+              );
+            })()}
+
+            {(() => {
+              const toneText = Array.isArray((answers.q13_tone as any)?.selected)
+                ? [
+                    ...((answers.q13_tone as any).selected || []),
+                    (answers.q13_tone as any).other,
+                  ]
+                    .filter(Boolean)
+                    .join(", ")
+                : typeof answers.q13_tone === "string"
+                ? answers.q13_tone
+                : "";
+              if (!toneText) return null;
+              return (
+                <div>
+                  <span className="font-semibold text-[#1A1A1A]">Day's Tone:</span>{" "}
+                  <span className="text-[#3A3A3A]">{toneText}</span>
+                </div>
+              );
+            })()}
             {answers.q17_emotional && (
               <div>
                 <span className="font-semibold text-[#1A1A1A]">Who will cry first:</span>{" "}

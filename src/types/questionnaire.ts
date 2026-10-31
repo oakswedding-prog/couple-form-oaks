@@ -32,13 +32,14 @@ export interface QuestionnaireAnswers {
     treePhotoUrl?: string;
     treeNotes: string;
   };
-  q11_filmFeel: string;
+  q11_filmFeel: { selected: string[]; other: string };
   q12_references: {
+
     links: string[];
     images: string[];
     notes: string;
   };
-  q13_tone: string;
+  q13_tone: { selected: string[]; other: string };
   q14_moments: { selected: string[]; other: string };
   q15_captureAvoid: { definitelyCapture: string; pleaseAvoid: string };
   q16_nonNegotiables: string;
@@ -65,6 +66,8 @@ export interface SubmissionRecord {
   phone: string;
   email: string;
   answers: QuestionnaireAnswers;
+  editorialBrief?: string;
+  interviewQuestions?: string;
   privateNotes?: string;
 }
 

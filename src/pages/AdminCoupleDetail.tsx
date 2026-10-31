@@ -15,14 +15,20 @@ import {
   CheckCircle2,
   X,
   Lock,
+  Sparkles,
+  Mic,
 } from "lucide-react";
 import { SubmissionRecord, SubmissionStatus } from "../types/questionnaire.ts";
 import {
   getSubmissionById,
   updateSubmissionStatus,
   updateSubmissionNotes,
+  updateSubmissionEditorialBrief,
+  updateSubmissionInterviewQuestions,
 } from "../lib/submissions.ts";
 import { ShootDayCheatSheet } from "../components/ShootDayCheatSheet.tsx";
+import { EditorialBriefView } from "../components/EditorialBriefView.tsx";
+import { CoupleInterviewView } from "../components/CoupleInterviewView.tsx";
 import { exportToPdf, exportToDocx } from "../utils/exportBrief.ts";
 
 interface AdminCoupleDetailProps {
@@ -45,6 +51,9 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
 
   // Download menu
   const [isDownloadOpen, setIsDownloadOpen] = useState<boolean>(false);
+
+  // Active view tab: "brief" | "cheatsheet" | "interview" | "full" | "all"
+  const [activeTab, setActiveTab] = useState<"brief" | "cheatsheet" | "interview" | "full" | "all">("brief");
 
   // Image lightbox modal
   const [enlargedImage, setEnlargedImage] = useState<string | null>(null);
@@ -106,6 +115,28 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
         setNotesSaveStatus("idle");
       }
     }, 800);
+  };
+
+  // Handle saving regenerated or edited editorial brief
+  const handleSaveBrief = async (newBrief: string) => {
+    if (!submission) return;
+    setSubmission({ ...submission, editorialBrief: newBrief });
+    try {
+      await updateSubmissionEditorialBrief(submission.id, newBrief);
+    } catch (err) {
+      console.error("Failed to save editorial brief:", err);
+    }
+  };
+
+  // Handle saving regenerated or edited interview questions
+  const handleSaveInterview = async (newInterview: string) => {
+    if (!submission) return;
+    setSubmission({ ...submission, interviewQuestions: newInterview });
+    try {
+      await updateSubmissionInterviewQuestions(submission.id, newInterview);
+    } catch (err) {
+      console.error("Failed to save interview questions:", err);
+    }
   };
 
   if (isLoading) {
@@ -234,27 +265,123 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
       </header>
 
       {/* Main Container */}
-      <main className="max-w-5xl mx-auto px-4 sm:px-6 pt-6 sm:pt-8 space-y-10">
-        {/* 1. SHOOT DAY CHEAT SHEET (Shown first as requested) */}
-        <section className="space-y-3">
-          <div className="flex items-center justify-between print:hidden">
-            <h2 className="font-cormorant text-2xl font-semibold text-[#1A1A1A] flex items-center gap-2">
-              <span>Shoot Day Cheat Sheet</span>
-              <span className="text-xs font-sans font-normal text-[#8C7043] bg-[#FAF7F2] px-2 py-0.5 rounded-md border border-[#E8DFD3]">
-                1-Page Summary
-              </span>
-            </h2>
-            <button
-              type="button"
-              onClick={() => window.print()}
-              className="text-xs text-[#8C7043] hover:underline font-medium cursor-pointer"
-            >
-              Print Clean A4 Page →
-            </button>
-          </div>
+      <main className="max-w-5xl mx-auto px-4 sm:px-6 pt-6 sm:pt-8 space-y-8">
+        {/* View Mode Switcher Tabs */}
+        <div className="flex items-center gap-2 border-b border-[#E5DDD2] pb-3 print:hidden overflow-x-auto scrollbar-none">
+          <button
+            type="button"
+            onClick={() => setActiveTab("brief")}
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-medium transition-all cursor-pointer whitespace-nowrap ${
+              activeTab === "brief"
+                ? "bg-[#1A1A1A] text-white shadow-xs"
+                : "text-[#5F5F5F] hover:text-[#1A1A1A] hover:bg-[#F2ECE4]"
+            }`}
+          >
+            <Sparkles className="w-4 h-4 text-[#B08D57]" />
+            <span>Editorial Creative Brief</span>
+          </button>
 
-          <ShootDayCheatSheet submission={submission} />
-        </section>
+          <button
+            type="button"
+            onClick={() => setActiveTab("interview")}
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-medium transition-all cursor-pointer whitespace-nowrap ${
+              activeTab === "interview"
+                ? "bg-[#1A1A1A] text-white shadow-xs"
+                : "text-[#5F5F5F] hover:text-[#1A1A1A] hover:bg-[#F2ECE4]"
+            }`}
+          >
+            <Mic className="w-4 h-4 text-[#B08D57]" />
+            <span>Couple Interview (11 Qs)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab("cheatsheet")}
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-medium transition-all cursor-pointer whitespace-nowrap ${
+              activeTab === "cheatsheet"
+                ? "bg-[#1A1A1A] text-white shadow-xs"
+                : "text-[#5F5F5F] hover:text-[#1A1A1A] hover:bg-[#F2ECE4]"
+            }`}
+          >
+            <Printer className="w-4 h-4 text-[#8C7043]" />
+            <span>Shoot Day Cheat Sheet</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab("full")}
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-medium transition-all cursor-pointer whitespace-nowrap ${
+              activeTab === "full"
+                ? "bg-[#1A1A1A] text-white shadow-xs"
+                : "text-[#5F5F5F] hover:text-[#1A1A1A] hover:bg-[#F2ECE4]"
+            }`}
+          >
+            <FileText className="w-4 h-4 text-[#7A756D]" />
+            <span>Full Responses (Q1–23)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab("all")}
+            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer whitespace-nowrap ml-auto ${
+              activeTab === "all"
+                ? "bg-[#F2ECE4] text-[#1A1A1A] font-semibold"
+                : "text-[#8C7043] hover:text-[#1A1A1A]"
+            }`}
+          >
+            <span>Show All</span>
+          </button>
+        </div>
+
+        {/* 1. EDITORIAL CREATIVE BRIEF */}
+        {(activeTab === "brief" || activeTab === "all") && (
+          <section className="space-y-4">
+            <EditorialBriefView
+              brief={submission.editorialBrief}
+              answers={submission.answers}
+              coupleNames={`${p1} & ${p2}`}
+              weddingDate={submission.weddingDate}
+              displayId={submission.displayId}
+              onSaveBrief={handleSaveBrief}
+            />
+          </section>
+        )}
+
+        {/* 2. COUPLE INTERVIEW & TESTIMONIAL QUESTIONS (11 QUESTIONS) */}
+        {(activeTab === "interview" || activeTab === "all") && (
+          <section className="space-y-4">
+            <CoupleInterviewView
+              questionsText={submission.interviewQuestions}
+              answers={submission.answers}
+              coupleNames={`${p1} & ${p2}`}
+              displayId={submission.displayId}
+              onSaveInterview={handleSaveInterview}
+            />
+          </section>
+        )}
+
+        {/* 2. SHOOT DAY CHEAT SHEET */}
+        {(activeTab === "cheatsheet" || activeTab === "all") && (
+          <section className="space-y-3">
+            <div className="flex items-center justify-between print:hidden">
+              <h2 className="font-cormorant text-2xl font-semibold text-[#1A1A1A] flex items-center gap-2">
+                <span>Shoot Day Cheat Sheet</span>
+                <span className="text-xs font-sans font-normal text-[#8C7043] bg-[#FAF7F2] px-2 py-0.5 rounded-md border border-[#E8DFD3]">
+                  1-Page Quick Summary
+                </span>
+              </h2>
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="text-xs text-[#8C7043] hover:underline font-medium cursor-pointer"
+              >
+                Print Clean A4 Page →
+              </button>
+            </div>
+
+            <ShootDayCheatSheet submission={submission} />
+          </section>
+        )}
 
         {/* 2. PRIVATE TEAM NOTES (Auto-saving) */}
         <section className="bg-white border border-[#E5DDD2] rounded-2xl p-5 sm:p-6 shadow-2xs space-y-3 print:hidden">
@@ -286,8 +413,9 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
         </section>
 
         {/* 3. FULL ANSWERS GROUPED BY CHAPTER */}
-        <section className="space-y-8 print:hidden">
-          <div className="border-b border-[#E5DDD2] pb-3">
+        {(activeTab === "full" || activeTab === "all") && (
+          <section className="space-y-8 print:hidden">
+            <div className="border-b border-[#E5DDD2] pb-3">
             <h2 className="font-cormorant text-3xl font-semibold text-[#1A1A1A]">
               Full Questionnaire Responses
             </h2>
@@ -563,8 +691,26 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
             <AnswerBlock
               num={11}
               question="How do you want your wedding photographs and films to feel?"
-              content={<TextAnswer text={ans.q11_filmFeel} />}
+              content={
+                Array.isArray((ans.q11_filmFeel as any)?.selected) &&
+                (ans.q11_filmFeel as any).selected.length > 0 ? (
+                  <div className="space-y-2">
+                    <ChipList items={(ans.q11_filmFeel as any).selected} />
+                    {(ans.q11_filmFeel as any).other && (
+                      <p className="text-sm text-[#4A453E]">
+                        <span className="font-medium text-[#1A1A1A]">Other:</span>{" "}
+                        {(ans.q11_filmFeel as any).other}
+                      </p>
+                    )}
+                  </div>
+                ) : typeof ans.q11_filmFeel === "string" && ans.q11_filmFeel ? (
+                  <TextAnswer text={ans.q11_filmFeel} />
+                ) : (
+                  <NotAnswered />
+                )
+              }
             />
+
 
             {/* Q12 */}
             <AnswerBlock
@@ -626,7 +772,24 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
             <AnswerBlock
               num={13}
               question="What tone are you expecting to set for your wedding day"
-              content={<TextAnswer text={ans.q13_tone} />}
+              content={
+                Array.isArray((ans.q13_tone as any)?.selected) &&
+                (ans.q13_tone as any).selected.length > 0 ? (
+                  <div className="space-y-2">
+                    <ChipList items={(ans.q13_tone as any).selected} />
+                    {(ans.q13_tone as any).other && (
+                      <p className="text-sm text-[#4A453E]">
+                        <span className="font-medium text-[#1A1A1A]">Other:</span>{" "}
+                        {(ans.q13_tone as any).other}
+                      </p>
+                    )}
+                  </div>
+                ) : typeof ans.q13_tone === "string" && ans.q13_tone ? (
+                  <TextAnswer text={ans.q13_tone} />
+                ) : (
+                  <NotAnswered />
+                )
+              }
             />
           </ChapterSection>
 
@@ -791,6 +954,7 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
             />
           </ChapterSection>
         </section>
+        )}
       </main>
 
       {/* Lightbox Image Modal */}

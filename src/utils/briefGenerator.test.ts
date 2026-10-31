@@ -59,13 +59,13 @@ test("generateBriefSummary formats all 5 chapters and One Last Thing with couple
       ],
       treeNotes: "Close-knit extended family",
     },
-    q11_filmFeel: "Natural and candid",
+    q11_filmFeel: { selected: ["Natural and candid"], other: "" },
     q12_references: {
       links: ["https://pinterest.com/pin/123"],
       images: [],
       notes: "Love grain and warm natural light",
     },
-    q13_tone: "Romantic & Intimate",
+    q13_tone: { selected: ["Romantic & Intimate"], other: "" },
     q14_moments: {
       selected: ["First look or first glance", "Quiet moments together"],
       other: "",

@@ -19,6 +19,11 @@ import {
 } from "docx";
 import { SubmissionRecord } from "../types/questionnaire.ts";
 import { STUDIO_NAME } from "../constants.ts";
+import { synthesizeEditorialBrief } from "./editorialBriefGenerator.ts";
+import {
+  synthesizeInterviewQuestions,
+  parseInterviewDocument,
+} from "./interviewQuestionsGenerator.ts";
 
 /**
  * Downloads a binary blob as a named file in the browser.
@@ -99,11 +104,30 @@ export async function exportToPdf(submission: SubmissionRecord) {
     .map((m) => `${m.name} (${m.relationship})`)
     .join(", ");
 
+  const filmFeelStr = Array.isArray((ans.q11_filmFeel as any)?.selected)
+    ? [
+        ...((ans.q11_filmFeel as any).selected || []),
+        (ans.q11_filmFeel as any).other ? `Other: ${(ans.q11_filmFeel as any).other}` : null,
+      ].filter(Boolean).join(", ")
+    : typeof ans.q11_filmFeel === "string"
+    ? ans.q11_filmFeel
+    : "N/A";
+
+  const toneStr = Array.isArray((ans.q13_tone as any)?.selected)
+    ? [
+        ...((ans.q13_tone as any).selected || []),
+        (ans.q13_tone as any).other ? `Other: ${(ans.q13_tone as any).other}` : null,
+      ].filter(Boolean).join(", ")
+    : typeof ans.q13_tone === "string"
+    ? ans.q13_tone
+    : "N/A";
+
   const sections = [
     {
       title: "1. THE VIBE",
-      content: `Three Words: ${threeWords || "N/A"}\nFilm Feel: ${ans.q11_filmFeel || "N/A"}\nDay Tone: ${ans.q13_tone || "N/A"}\nEmotional: ${ans.q17_emotional || "N/A"}`,
+      content: `Three Words: ${threeWords || "N/A"}\nFilm Feel: ${filmFeelStr || "N/A"}\nDay Tone: ${toneStr || "N/A"}\nEmotional: ${ans.q17_emotional || "N/A"}`,
     },
+
     {
       title: "2. MUST CAPTURE",
       content: `VIP Family: ${vipPeople || "None specified"}\nDefinite Shots: ${ans.q15_captureAvoid?.definitelyCapture || "N/A"}\nKey Moments: ${(ans.q14_moments?.selected || []).join(", ")}`,
@@ -148,7 +172,132 @@ export async function exportToPdf(submission: SubmissionRecord) {
     y += 27;
   });
 
-  // PAGE 2+: FULL ANSWERS
+  // PAGE 2: EDITORIAL CREATIVE BRIEF
+  const briefText = submission.editorialBrief || synthesizeEditorialBrief(submission.answers);
+  doc.addPage();
+  y = 20;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(176, 141, 87);
+  doc.text(`${STUDIO_NAME.toUpperCase()} · EDITORIAL CREATIVE BRIEF`, left, y);
+
+  y += 7;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(18);
+  doc.setTextColor(26, 26, 26);
+  doc.text(`The Couple Story & Creative Direction`, left, y);
+
+  y += 5;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(100, 100, 100);
+  doc.text(`${title} · 3–5 min read for photography & cinema crew`, left, y);
+
+  y += 4;
+  doc.setDrawColor(229, 221, 210);
+  doc.setLineWidth(0.4);
+  doc.line(left, y, left + contentWidth, y);
+  y += 8;
+
+  const briefLines = briefText.split("\n");
+  briefLines.forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      y += 2.5;
+      return;
+    }
+    if (trimmed.startsWith("### ")) {
+      if (y > 260) {
+        doc.addPage();
+        y = 20;
+      }
+      y += 2;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10.5);
+      doc.setTextColor(176, 141, 87);
+      doc.text(trimmed.replace(/^###\s+/, ""), left, y);
+      y += 5;
+    } else if (
+      trimmed.startsWith("OAKS WEDDING") ||
+      trimmed.startsWith("---") ||
+      trimmed.includes("====")
+    ) {
+      // skip title banner lines
+    } else {
+      if (y > 268) {
+        doc.addPage();
+        y = 20;
+      }
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(45, 45, 45);
+      const wrapped = doc.splitTextToSize(trimmed, contentWidth);
+      doc.text(wrapped, left, y);
+      y += wrapped.length * 4.2 + 2;
+    }
+  });
+
+  // PAGE 3: 11 COUPLE INTERVIEW & TESTIMONIAL QUESTIONS
+  const interviewText = submission.interviewQuestions || synthesizeInterviewQuestions(submission.answers);
+  const interviewDoc = parseInterviewDocument(interviewText, p1, p2);
+  doc.addPage();
+  y = 20;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(176, 141, 87);
+  doc.text(`${STUDIO_NAME.toUpperCase()} · 11 TESTIMONIAL & INTERVIEW QUESTIONS`, left, y);
+
+  y += 7;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(18);
+  doc.setTextColor(26, 26, 26);
+  doc.text(`Videographer Interview Cue Sheet`, left, y);
+
+  y += 5;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(100, 100, 100);
+  doc.text(`${title} · On-day prompts for emotional & candid soundbites`, left, y);
+
+  y += 4;
+  doc.setDrawColor(229, 221, 210);
+  doc.setLineWidth(0.4);
+  doc.line(left, y, left + contentWidth, y);
+  y += 8;
+
+  interviewDoc.questions.forEach((q) => {
+    if (y > 255) {
+      doc.addPage();
+      y = 20;
+    }
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(176, 141, 87);
+    doc.text(`Q${String(q.number).padStart(2, "0")} — ${q.title}  [Ask: ${q.askTarget}]`, left, y);
+    y += 4.5;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(30, 30, 30);
+    const qWrapped = doc.splitTextToSize(`"${q.question}"`, contentWidth - 4);
+    doc.text(qWrapped, left + 2, y);
+    y += qWrapped.length * 4 + 1.5;
+
+    if (q.followUp) {
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(7.5);
+      doc.setTextColor(110, 100, 90);
+      const fWrapped = doc.splitTextToSize(`Follow-up cue: "${q.followUp}"`, contentWidth - 6);
+      doc.text(fWrapped, left + 4, y);
+      y += fWrapped.length * 3.5 + 3.5;
+    } else {
+      y += 2.5;
+    }
+  });
+
+  // PAGE 4+: FULL ANSWERS
   doc.addPage();
   y = 20;
 
@@ -169,9 +318,9 @@ export async function exportToPdf(submission: SubmissionRecord) {
     { q: "Q8. Funny story / inside joke?", a: ans.q8_funnyStory || "Not answered" },
     { q: "Q9. How did the proposal happen?", a: ans.q9_proposal?.story || "Not answered" },
     { q: "Q10. Family members & tree", a: `${allFamily || "None"} ${ans.q10_people?.treeNotes ? `\nNotes: ${ans.q10_people.treeNotes}` : ""}` },
-    { q: "Q11. Film & photo feel?", a: ans.q11_filmFeel || "Not answered" },
+    { q: "Q11. Film & photo feel?", a: filmFeelStr || "Not answered" },
     { q: "Q12. References & Links", a: `Links: ${(ans.q12_references?.links || []).join(", ") || "None"}\nNotes: ${ans.q12_references?.notes || "None"}` },
-    { q: "Q13. Wedding day tone?", a: ans.q13_tone || "Not answered" },
+    { q: "Q13. Wedding day tone?", a: toneStr || "Not answered" },
     { q: "Q14. Moments looking forward to?", a: `${(ans.q14_moments?.selected || []).join(", ")} ${ans.q14_moments?.other || ""}` },
     { q: "Q15. Definitely capture / avoid?", a: `Capture: ${ans.q15_captureAvoid?.definitelyCapture || "N/A"}\nAvoid: ${ans.q15_captureAvoid?.pleaseAvoid || "N/A"}` },
     { q: "Q16. Non-negotiables?", a: ans.q16_nonNegotiables || "Not answered" },
@@ -216,6 +365,24 @@ export async function exportToDocx(submission: SubmissionRecord) {
   const ans = submission.answers;
   const filename = `${submission.displayId}_${p1}_${p2}_OAKS_Brief.docx`.replace(/[^a-zA-Z0-9_-]/g, "_");
 
+  const filmFeelDocxStr = Array.isArray((ans.q11_filmFeel as any)?.selected)
+    ? [
+        ...((ans.q11_filmFeel as any).selected || []),
+        (ans.q11_filmFeel as any).other ? `Other: ${(ans.q11_filmFeel as any).other}` : null,
+      ].filter(Boolean).join(", ")
+    : typeof ans.q11_filmFeel === "string"
+    ? ans.q11_filmFeel
+    : "Not answered";
+
+  const toneDocxStr = Array.isArray((ans.q13_tone as any)?.selected)
+    ? [
+        ...((ans.q13_tone as any).selected || []),
+        (ans.q13_tone as any).other ? `Other: ${(ans.q13_tone as any).other}` : null,
+      ].filter(Boolean).join(", ")
+    : typeof ans.q13_tone === "string"
+    ? ans.q13_tone
+    : "Not answered";
+
   const doc = new Document({
     sections: [
       {
@@ -254,10 +421,11 @@ export async function exportToDocx(submission: SubmissionRecord) {
                     children: [
                       new Paragraph({ children: [new TextRun({ text: "1. The Vibe", bold: true })] }),
                       new Paragraph({ text: `Three Words: ${(ans.q5_threeWords || []).filter(Boolean).join(", ")}` }),
-                      new Paragraph({ text: `Film Feel: ${ans.q11_filmFeel || "N/A"}` }),
-                      new Paragraph({ text: `Tone: ${ans.q13_tone || "N/A"}` }),
+                      new Paragraph({ text: `Film Feel: ${filmFeelDocxStr}` }),
+                      new Paragraph({ text: `Tone: ${toneDocxStr}` }),
                     ],
                   }),
+
                   new TableCell({
                     children: [
                       new Paragraph({ children: [new TextRun({ text: "2. Must Capture", bold: true })] }),
@@ -316,6 +484,91 @@ export async function exportToDocx(submission: SubmissionRecord) {
               }),
             ],
           }),
+
+          new Paragraph({ text: "" }),
+
+          // Editorial Creative Brief Section
+          new Paragraph({
+            text: "EDITORIAL CREATIVE BRIEF",
+            heading: HeadingLevel.HEADING_2,
+          }),
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: `Interpreted creative direction for ${p1} & ${p2} (3–5 min read for photo & cinema crew)`,
+                italics: true,
+                color: "666666",
+              }),
+            ],
+          }),
+          new Paragraph({ text: "" }),
+          ...(submission.editorialBrief || synthesizeEditorialBrief(submission.answers))
+            .split("\n")
+            .filter((l) => {
+              const t = l.trim();
+              return !t.startsWith("OAKS WEDDING") && !t.startsWith("---") && !t.includes("====");
+            })
+            .map((line) => {
+              const t = line.trim();
+              if (!t) return new Paragraph({ text: "" });
+              if (t.startsWith("### ")) {
+                return new Paragraph({
+                  text: t.replace(/^###\s+/, ""),
+                  heading: HeadingLevel.HEADING_3,
+                });
+              }
+              return new Paragraph({
+                children: [new TextRun({ text: t })],
+              });
+            }),
+
+          new Paragraph({ text: "" }),
+
+          // 11 Testimonial & Interview Questions Section
+          new Paragraph({
+            text: "11 PERSONALIZED COUPLE INTERVIEW & TESTIMONIAL QUESTIONS",
+            heading: HeadingLevel.HEADING_2,
+          }),
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: `On-day documentary interview cue sheet for ${p1} & ${p2}`,
+                italics: true,
+                color: "666666",
+              }),
+            ],
+          }),
+          new Paragraph({ text: "" }),
+          ...parseInterviewDocument(
+            submission.interviewQuestions || synthesizeInterviewQuestions(submission.answers),
+            p1,
+            p2
+          ).questions.flatMap((q) => [
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: `Q${String(q.number).padStart(2, "0")} — ${q.title} [Ask: ${q.askTarget}]`,
+                  bold: true,
+                  color: "B08D57",
+                }),
+              ],
+            }),
+            new Paragraph({
+              children: [new TextRun({ text: `"${q.question}"` })],
+            }),
+            q.followUp
+              ? new Paragraph({
+                  children: [
+                    new TextRun({
+                      text: `Follow-up cue: "${q.followUp}"`,
+                      italics: true,
+                      color: "777777",
+                    }),
+                  ],
+                })
+              : new Paragraph({ text: "" }),
+            new Paragraph({ text: "" }),
+          ]),
 
           new Paragraph({ text: "" }),
           new Paragraph({
@@ -379,7 +632,7 @@ export async function exportToDocx(submission: SubmissionRecord) {
 
           // Q11
           new Paragraph({ children: [new TextRun({ text: "11. Film & Photo feel", bold: true })] }),
-          new Paragraph({ text: ans.q11_filmFeel || "Not answered" }),
+          new Paragraph({ text: filmFeelDocxStr }),
           new Paragraph({ text: "" }),
 
           // Q12
@@ -389,7 +642,7 @@ export async function exportToDocx(submission: SubmissionRecord) {
 
           // Q13
           new Paragraph({ children: [new TextRun({ text: "13. Day Tone", bold: true })] }),
-          new Paragraph({ text: ans.q13_tone || "Not answered" }),
+          new Paragraph({ text: toneDocxStr }),
           new Paragraph({ text: "" }),
 
           // Q14

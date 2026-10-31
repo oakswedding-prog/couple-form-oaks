@@ -50,9 +50,9 @@ const INITIAL_ANSWERS: QuestionnaireAnswers = {
     treePhotoUrl: undefined,
     treeNotes: "",
   },
-  q11_filmFeel: "",
+  q11_filmFeel: { selected: [], other: "" },
   q12_references: { links: [], images: [], notes: "" },
-  q13_tone: "",
+  q13_tone: { selected: [], other: "" },
   q14_moments: { selected: [], other: "" },
   q15_captureAvoid: { definitelyCapture: "", pleaseAvoid: "" },
   q16_nonNegotiables: "",
@@ -107,13 +107,32 @@ function sanitizeAnswers(raw: any): QuestionnaireAnswers {
       treePhotoUrl: raw.q10_people?.treePhotoUrl,
       treeNotes: typeof raw.q10_people?.treeNotes === "string" ? raw.q10_people.treeNotes : "",
     },
-    q11_filmFeel: typeof raw.q11_filmFeel === "string" ? raw.q11_filmFeel : "",
+    q11_filmFeel: {
+      selected: Array.isArray(raw.q11_filmFeel?.selected)
+        ? raw.q11_filmFeel.selected
+        : (Array.isArray(raw.q11_filmFeel)
+          ? raw.q11_filmFeel
+          : (typeof raw.q11_filmFeel === "string" && raw.q11_filmFeel
+            ? [raw.q11_filmFeel]
+            : [])),
+      other: typeof raw.q11_filmFeel?.other === "string" ? raw.q11_filmFeel.other : "",
+    },
     q12_references: {
+
       links: Array.isArray(raw.q12_references?.links) ? raw.q12_references.links : [],
       images: Array.isArray(raw.q12_references?.images) ? raw.q12_references.images : [],
       notes: typeof raw.q12_references?.notes === "string" ? raw.q12_references.notes : "",
     },
-    q13_tone: typeof raw.q13_tone === "string" ? raw.q13_tone : "",
+    q13_tone: {
+      selected: Array.isArray(raw.q13_tone?.selected)
+        ? raw.q13_tone.selected
+        : (Array.isArray(raw.q13_tone)
+          ? raw.q13_tone
+          : (typeof raw.q13_tone === "string" && raw.q13_tone
+            ? [raw.q13_tone]
+            : [])),
+      other: typeof raw.q13_tone?.other === "string" ? raw.q13_tone.other : "",
+    },
     q14_moments: {
       selected: Array.isArray(raw.q14_moments?.selected) ? raw.q14_moments.selected : [],
       other: typeof raw.q14_moments?.other === "string" ? raw.q14_moments.other : "",
@@ -314,8 +333,23 @@ export default function App() {
       setEditingFromReview(false);
       return;
     }
+    // Question 11 requires selecting at least 3 styles before continuing
+    if (currentStep === 11) {
+      const count = answers.q11_filmFeel?.selected?.length || 0;
+      if (count < 3) {
+        return;
+      }
+    }
+    // Question 13 requires at least 1 tone selected before continuing (they can pick up to 3+ if they want)
+    if (currentStep === 13) {
+      const count = answers.q13_tone?.selected?.length || 0;
+      if (count < 1) {
+        return;
+      }
+    }
     navigateToStep(currentStep + 1, true);
   };
+
 
   const handleSkip = () => {
     if (editingFromReview) {
@@ -957,32 +991,101 @@ export default function App() {
           {/* QUESTION 11 */}
           {currentStep === 11 && (
             <div className="space-y-6">
-              <QuestionHeader
-                title="How do you want your wedding photographs and films to feel?"
-                helper="Tap an option to continue."
-              />
-              <div className="space-y-3">
+              <div>
+                <QuestionHeader
+                  title="How do you want your wedding photographs and films to feel?"
+                  helper="Select at least 3 styles that resonate with you both."
+                />
+                {/* Minimum 3 Counter Indicator */}
+                <div className="mt-3 flex items-center gap-2">
+                  <span
+                    className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium transition-all ${
+                      (answers.q11_filmFeel.selected?.length || 0) >= 3
+                        ? "bg-emerald-50 text-emerald-800 border border-emerald-300 font-semibold"
+                        : "bg-[#FAF7F2] text-[#8C7043] border border-[#E8DFD3]"
+                    }`}
+                  >
+                    {(answers.q11_filmFeel.selected?.length || 0) >= 3 ? (
+                      <>
+                        <span>✓</span>
+                        <span>
+                          {answers.q11_filmFeel.selected.length} styles selected (minimum 3 reached)
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="font-semibold text-[#B08D57]">
+                          Select at least 3
+                        </span>
+                        <span>·</span>
+                        <span>
+                          {3 - (answers.q11_filmFeel.selected?.length || 0)} more needed (
+                          {answers.q11_filmFeel.selected?.length || 0} of 3 selected)
+                        </span>
+                      </>
+                    )}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {[
                   "Natural and candid",
                   "Emotional and intimate",
                   "Elegant and editorial",
                   "Fun and energetic",
+                  "Timeless and classic",
+                  "Cinematic and dramatic",
+                  "Warm and nostalgic",
                   "A mix of everything",
-                ].map((opt) => (
-                  <OptionCard
-                    key={opt}
-                    label={opt}
-                    isSelected={answers.q11_filmFeel === opt}
-                    onSelect={() =>
-                      handleSingleChoiceSelect(() =>
-                        setAnswers((prev) => ({ ...prev, q11_filmFeel: opt }))
-                      )
-                    }
-                  />
-                ))}
+                ].map((opt) => {
+                  const isSelected =
+                    answers.q11_filmFeel.selected?.includes(opt) ?? false;
+                  return (
+                    <OptionCard
+                      key={opt}
+                      label={opt}
+                      isSelected={isSelected}
+                      isMultiSelect={true}
+                      onSelect={() => {
+                        const current = answers.q11_filmFeel.selected || [];
+                        const updated = isSelected
+                          ? current.filter((x) => x !== opt)
+                          : [...current, opt];
+                        setAnswers((prev) => ({
+                          ...prev,
+                          q11_filmFeel: {
+                            ...prev.q11_filmFeel,
+                            selected: updated,
+                          },
+                        }));
+                      }}
+                    />
+                  );
+                })}
+              </div>
+
+              <div className="pt-2">
+                <VoiceTextarea
+                  id="q11-other"
+                  label="Anything else in your own words? (Optional)"
+                  value={answers.q11_filmFeel?.other ?? ""}
+                  onChange={(val) =>
+                    setAnswers((prev) => ({
+                      ...prev,
+                      q11_filmFeel: {
+                        ...prev.q11_filmFeel,
+                        other: val,
+                      },
+                    }))
+                  }
+                  placeholder="e.g. Grainy 35mm film vibes, warm golden hour tones, unposed candid moments..."
+                  rows={2}
+                />
               </div>
             </div>
           )}
+
 
           {/* QUESTION 12 */}
           {currentStep === 12 && (
@@ -1123,29 +1226,102 @@ export default function App() {
           {/* QUESTION 13 */}
           {currentStep === 13 && (
             <div className="space-y-6">
-              <QuestionHeader
-                title="What tone are you expecting to set for your wedding day"
-                helper="Tap an option to continue."
-              />
               <div className="space-y-3">
+                <QuestionHeader
+                  title="What tone are you expecting to set for your wedding day"
+                  helper="Select all that resonate with you (select 1 or more to continue · feel free to choose 3 or more)."
+                />
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                      (answers.q13_tone.selected?.length || 0) >= 1
+                        ? "bg-[#FAF7F2] text-[#8C7043] border border-[#E8DFD3]"
+                        : "bg-[#F3F3F3] text-[#7A756D] border border-transparent"
+                    }`}
+                  >
+                    {(answers.q13_tone.selected?.length || 0) >= 3 ? (
+                      <>
+                        <span>✓</span>
+                        <span>
+                          {answers.q13_tone.selected.length} tones selected (feel free to add more)
+                        </span>
+                      </>
+                    ) : (answers.q13_tone.selected?.length || 0) >= 1 ? (
+                      <>
+                        <span>✓</span>
+                        <span>
+                          {answers.q13_tone.selected.length} selected · ready to continue (select up to 3+ if you wish)
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="font-semibold text-[#B08D57]">
+                          Select 1 or more
+                        </span>
+                        <span>·</span>
+                        <span>
+                          Choose at least 1 tone to continue (or pick 3+)
+                        </span>
+                      </>
+                    )}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {[
                   "Romantic & Intimate",
                   "Fun & Vibrant",
                   "Fashion-Forward & Editorial",
                   "Organic & Natural",
                   "Traditional & Grand",
-                ].map((tone) => (
-                  <OptionCard
-                    key={tone}
-                    label={tone}
-                    isSelected={answers.q13_tone === tone}
-                    onSelect={() =>
-                      handleSingleChoiceSelect(() =>
-                        setAnswers((prev) => ({ ...prev, q13_tone: tone }))
-                      )
-                    }
-                  />
-                ))}
+                  "Timeless & Elegant",
+                  "Relaxed & Festive",
+                  "A mix of tones",
+                ].map((tone) => {
+                  const isSelected =
+                    answers.q13_tone.selected?.includes(tone) ?? false;
+                  return (
+                    <OptionCard
+                      key={tone}
+                      label={tone}
+                      isSelected={isSelected}
+                      isMultiSelect={true}
+                      onSelect={() => {
+                        const current = answers.q13_tone.selected || [];
+                        const updated = isSelected
+                          ? current.filter((x) => x !== tone)
+                          : [...current, tone];
+                        setAnswers((prev) => ({
+                          ...prev,
+                          q13_tone: {
+                            ...prev.q13_tone,
+                            selected: updated,
+                          },
+                        }));
+                      }}
+                    />
+                  );
+                })}
+              </div>
+
+              <div className="pt-2">
+                <VoiceTextarea
+                  id="q13-other"
+                  label="Anything specific about the tone or vibe in your own words? (Optional)"
+                  value={answers.q13_tone?.other ?? ""}
+                  onChange={(val) =>
+                    setAnswers((prev) => ({
+                      ...prev,
+                      q13_tone: {
+                        ...prev.q13_tone,
+                        other: val,
+                      },
+                    }))
+                  }
+                  placeholder="e.g. Cozy and emotional ceremony leading into a lively celebration, candlelit evening..."
+                  rows={2}
+                />
               </div>
             </div>
           )}
@@ -1589,20 +1765,52 @@ export default function App() {
 
         {/* Bottom Actions Bar (Continue & Skip) */}
         <div className="pt-8 pb-4 space-y-3">
-          <button
-            type="button"
-            onClick={handleNext}
-            className="w-full min-h-[58px] py-4 px-6 rounded-2xl bg-[#1A1A1A] hover:bg-[#333333] active:scale-[0.99] text-white font-medium text-[19px] transition-all flex items-center justify-center gap-3 shadow-sm cursor-pointer"
-          >
-            <span>
-              {editingFromReview
-                ? "Save & Return to Review"
-                : currentStep === 23
-                ? "Review your answers"
-                : "Continue"}
-            </span>
-            <ArrowRight className="w-5 h-5 text-[#B08D57]" />
-          </button>
+          {(() => {
+            const isStep11 = currentStep === 11;
+            const step11Count = answers.q11_filmFeel.selected?.length || 0;
+            const isStep11Incomplete = isStep11 && step11Count < 3;
+
+            const isStep13 = currentStep === 13;
+            const step13Count = answers.q13_tone.selected?.length || 0;
+            const isStep13Incomplete = isStep13 && step13Count < 1;
+
+            const isIncomplete = isStep11Incomplete || isStep13Incomplete;
+
+            return (
+              <button
+                type="button"
+                onClick={handleNext}
+                disabled={isIncomplete}
+                className={`w-full min-h-[58px] py-4 px-6 rounded-2xl font-medium text-[19px] transition-all flex items-center justify-center gap-3 shadow-sm ${
+                  isIncomplete
+                    ? "bg-[#E8E8E8] text-[#7A756D] cursor-not-allowed border-transparent"
+                    : "bg-[#1A1A1A] hover:bg-[#333333] active:scale-[0.99] text-white cursor-pointer"
+                }`}
+              >
+                <span>
+                  {editingFromReview
+                    ? "Save & Return to Review"
+                    : isStep11Incomplete
+                    ? `Select at least 3 styles to continue (${step11Count}/3)`
+                    : currentStep === 11
+                    ? `Continue (${step11Count} selected)`
+                    : isStep13Incomplete
+                    ? "Select at least 1 tone to continue"
+                    : currentStep === 13
+                    ? `Continue (${step13Count} selected)`
+                    : currentStep === 23
+                    ? "Review your answers"
+                    : "Continue"}
+                </span>
+                <ArrowRight
+                  className={`w-5 h-5 ${
+                    isIncomplete ? "text-[#7A756D]" : "text-[#B08D57]"
+                  }`}
+                />
+              </button>
+            );
+          })()}
+
 
           <div className="flex justify-center">
             <button

@@ -22,6 +22,8 @@ import {
   SubmissionRecord,
   SubmissionStatus,
 } from "../types/questionnaire.ts";
+import { synthesizeEditorialBrief } from "../utils/editorialBriefGenerator.ts";
+import { synthesizeInterviewQuestions } from "../utils/interviewQuestionsGenerator.ts";
 
 /**
  * Uploads a base64 image data URL to Firebase Storage.
@@ -151,6 +153,10 @@ export async function createSubmission(
       // 2. Upload any base64 images
       const processedAnswers = await processAllImages(answers, submissionId);
 
+      // Generate editorial brief & 11 interview questions for the submission
+      const editorialBrief = synthesizeEditorialBrief(processedAnswers);
+      const interviewQuestions = synthesizeInterviewQuestions(processedAnswers);
+
       const submissionDocRef = doc(db, "submissions", submissionId);
       const submissionData: SubmissionRecord = {
         id: submissionId,
@@ -164,6 +170,8 @@ export async function createSubmission(
         phone: answers.phone || "",
         email: answers.email || "",
         answers: processedAnswers,
+        editorialBrief,
+        interviewQuestions,
         privateNotes: "",
       };
 
@@ -259,4 +267,26 @@ export async function updateSubmissionNotes(
 ): Promise<void> {
   const submissionRef = doc(db, "submissions", id);
   await updateDoc(submissionRef, { privateNotes });
+}
+
+/**
+ * Admin: Update or save newly generated editorial brief for a couple.
+ */
+export async function updateSubmissionEditorialBrief(
+  id: string,
+  editorialBrief: string
+): Promise<void> {
+  const submissionRef = doc(db, "submissions", id);
+  await updateDoc(submissionRef, { editorialBrief });
+}
+
+/**
+ * Admin: Update or save newly generated interview questions for a couple.
+ */
+export async function updateSubmissionInterviewQuestions(
+  id: string,
+  interviewQuestions: string
+): Promise<void> {
+  const submissionRef = doc(db, "submissions", id);
+  await updateDoc(submissionRef, { interviewQuestions });
 }
