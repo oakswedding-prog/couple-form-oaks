@@ -45,8 +45,21 @@ export const CoupleInterviewView: React.FC<CoupleInterviewViewProps> = ({
   onSaveInterview,
   readOnly = false,
 }) => {
+  // Detect if initial questions contain outdated v1 dramatic/copied phrases
+  const isOutdatedV1 = Boolean(
+    initialQuestionsText &&
+      (initialQuestionsText.includes("rushing through your chest") ||
+        initialQuestionsText.includes("eyes tell you that words never could") ||
+        initialQuestionsText.includes("mean to your souls") ||
+        initialQuestionsText.includes("hit your heart so profoundly") ||
+        initialQuestionsText.includes("paths first crossed (") ||
+        initialQuestionsText.includes("In private, you call each other"))
+  );
+
   const [currentText, setCurrentText] = useState<string>(
-    initialQuestionsText || synthesizeInterviewQuestions(answers, "wedding")
+    !initialQuestionsText || isOutdatedV1
+      ? synthesizeInterviewQuestions(answers, "wedding")
+      : initialQuestionsText
   );
   const [eventType, setEventType] = useState<"wedding" | "haldi" | "reception" | "general">("wedding");
   const [copied, setCopied] = useState<boolean>(false);
@@ -55,6 +68,13 @@ export const CoupleInterviewView: React.FC<CoupleInterviewViewProps> = ({
   const [editedText, setEditedText] = useState<string>(currentText);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [completedQuestions, setCompletedQuestions] = useState<Record<number, boolean>>({});
+
+  // Auto-save fresh v2 questions to database if v1 was detected on mount
+  React.useEffect(() => {
+    if (isOutdatedV1 && onSaveInterview) {
+      onSaveInterview(currentText).catch(() => {});
+    }
+  }, [isOutdatedV1]);
 
   const p1 = (answers.partner1 || "Partner 1").trim();
   const p2 = (answers.partner2 || "Partner 2").trim();

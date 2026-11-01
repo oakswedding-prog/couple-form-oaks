@@ -25,6 +25,7 @@ import {
   updateSubmissionNotes,
   updateSubmissionEditorialBrief,
   updateSubmissionInterviewQuestions,
+  updateSubmissionCheatSheet,
 } from "../lib/submissions.ts";
 import { ShootDayCheatSheet } from "../components/ShootDayCheatSheet.tsx";
 import { EditorialBriefView } from "../components/EditorialBriefView.tsx";
@@ -136,6 +137,17 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
       await updateSubmissionInterviewQuestions(submission.id, newInterview);
     } catch (err) {
       console.error("Failed to save interview questions:", err);
+    }
+  };
+
+  // Handle saving regenerated or edited shoot day cheat sheet
+  const handleSaveCheatSheet = async (newCheatSheet: string) => {
+    if (!submission) return;
+    setSubmission({ ...submission, cheatSheet: newCheatSheet });
+    try {
+      await updateSubmissionCheatSheet(submission.id, newCheatSheet);
+    } catch (err) {
+      console.error("Failed to save shoot day cheat sheet:", err);
     }
   };
 
@@ -379,7 +391,11 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
               </button>
             </div>
 
-            <ShootDayCheatSheet submission={submission} />
+            <ShootDayCheatSheet
+              submission={submission}
+              cheatSheetText={submission.cheatSheet}
+              onSaveCheatSheet={handleSaveCheatSheet}
+            />
           </section>
         )}
 

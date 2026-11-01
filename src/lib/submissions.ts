@@ -24,6 +24,7 @@ import {
 } from "../types/questionnaire.ts";
 import { synthesizeEditorialBrief } from "../utils/editorialBriefGenerator.ts";
 import { synthesizeInterviewQuestions } from "../utils/interviewQuestionsGenerator.ts";
+import { synthesizeCheatSheet } from "../utils/cheatSheetGenerator.ts";
 
 /**
  * Uploads a base64 image data URL to Firebase Storage.
@@ -153,9 +154,10 @@ export async function createSubmission(
       // 2. Upload any base64 images
       const processedAnswers = await processAllImages(answers, submissionId);
 
-      // Generate editorial brief & 11 interview questions for the submission
+      // Generate editorial brief, 11 interview questions & shoot day cheat sheet
       const editorialBrief = synthesizeEditorialBrief(processedAnswers);
       const interviewQuestions = synthesizeInterviewQuestions(processedAnswers);
+      const cheatSheet = synthesizeCheatSheet(processedAnswers);
 
       const submissionDocRef = doc(db, "submissions", submissionId);
       const submissionData: SubmissionRecord = {
@@ -172,6 +174,7 @@ export async function createSubmission(
         answers: processedAnswers,
         editorialBrief,
         interviewQuestions,
+        cheatSheet,
         privateNotes: "",
       };
 
@@ -290,3 +293,15 @@ export async function updateSubmissionInterviewQuestions(
   const submissionRef = doc(db, "submissions", id);
   await updateDoc(submissionRef, { interviewQuestions });
 }
+
+/**
+ * Admin: Update or save newly generated shoot day cheat sheet for a couple.
+ */
+export async function updateSubmissionCheatSheet(
+  id: string,
+  cheatSheet: string
+): Promise<void> {
+  const submissionRef = doc(db, "submissions", id);
+  await updateDoc(submissionRef, { cheatSheet });
+}
+

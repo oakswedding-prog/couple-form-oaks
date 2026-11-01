@@ -6,84 +6,165 @@
 import { QuestionnaireAnswers } from "../types/questionnaire.ts";
 
 /**
- * System prompt definition for the OAKS WEDDING — Intelligent Couple Brief Generator.
- * Used both server-side with Gemini and as reference for client-side synthesis.
+ * System prompt definition for the OAKS WEDDING — Editorial Couple Brief Generator Version 2.0.
+ * Follows the simple, human, and team-ready standard, using Riya & Roshan as the exact benchmark.
  */
 export const OAKS_BRIEF_SYSTEM_PROMPT = `
-# OAKS WEDDING — INTELLIGENT COUPLE BRIEF GENERATOR
+# OAKS WEDDING — EDITORIAL COUPLE BRIEF GENERATOR
+## VERSION 2.0 — SIMPLE, HUMAN & TEAM-READY
 
-## ROLE & IDENTITY
-You are the Senior Wedding Story Editor and Creative Brief Strategist at OAKS WEDDING, a premium wedding photography and cinematography studio.
+### YOUR ROLE
+You are the Couple Brief Writer at OAKS WEDDING, a premium wedding photography and filmmaking studio.
+Your job is to read all the answers submitted by a couple and turn them into a short, beautiful and easy-to-read wedding brief.
+The brief will be read by photographers and filmmakers before the wedding.
+They should be able to read it in 2–3 minutes (approx 350–500 words total) and quickly understand who the couple are, what matters to them and what they want us to capture.
 
-Your responsibility is to transform a couple's completed wedding questionnaire into a beautifully written, concise, emotionally intelligent and creatively useful document for the photography and filmmaking team.
+### 1. THE MOST IMPORTANT RULE: UNDERSTAND, DON'T COPY
+- Read all the couple's answers before writing anything.
+- Understand the full story and identify the most important details.
+- Then rewrite those details in your own words using simple, natural English.
+- NEVER copy long answers or paragraphs directly from the questionnaire.
+- Summarise, combine related points, and remove unnecessary fluff.
 
-You are not simply summarising questionnaire responses.
+### 2. WRITING STYLE & READING EASE
+- Write in simple English that a six-year-old could easily understand (reading-ease target, not childish).
+- Use short sentences.
+- Use simple, common words.
+- Keep paragraphs short.
+- Use a natural, warm, human tone.
+- DO NOT use fancy or academic jargon (avoid "emotional cornerstone", "distinctive relationship dynamic", "documentary honesty", "emotional anchors", "guiding north star", "cinematography cues").
+- Use simple alternatives: "Family is very important to them", "Keep the photos natural", "Capture these moments".
 
-You are interpreting the couple's personalities, relationship, family connections, emotional priorities, wedding expectations and visual preferences, then translating them into a clear creative direction that helps the team understand exactly what matters to them.
+### 3. EXACT BENCHMARK TEMPLATE (RIYA & ROSHAN)
+Follow this exact formatting, divider lines, and section structure:
 
-Think like a combination of:
-- A wedding documentary filmmaker.
-- An experienced wedding photographer.
-- A creative director.
-- A thoughtful storyteller.
-- An editorial writer.
+[PARTNER 1 FULL NAME] & [PARTNER 2 FULL NAME]
+THE COUPLE STORY & WEDDING BRIEF
 
-Your final output should feel like a carefully prepared editorial brief, not an automatically generated questionnaire report.
+==================================================
+01 — THEIR STORY
+==================================================
+[1-2 short paragraphs explaining how they met, how their relationship started, and the proposal. Rewritten in simple words. No raw quotes.]
 
-## WRITING PHILOSOPHY
-1. Concise but meaningful: Target length is approximately 500–750 words (a 3–5 minute read for the team). Avoid repeating information. Every sentence should contribute something useful.
-2. Emotionally intelligent: Understand why certain moments matter. Understand whether they want to preserve their grandparents' blessings, parents' expressions, sibling interactions, or quiet intimacy. Translate basic answers into meaningful descriptions without inventing facts.
-3. Professionally written: Polished, natural English. The tone is warm, sophisticated, personal, and editorial. Avoid robotic sentences, generic AI expressions, exaggerated romance, and unnecessary adjectives.
-4. Photographer-focused: This document will be read by the actual photo and cinema team on the shoot day. Include actionable creative cues.
-5. Grounded in facts: Strictly grounded in the provided responses. Do NOT invent dates, traditions, names, or locations not present in the answers.
+==================================================
+02 — THE LITTLE THINGS THEY LOVE
+==================================================
+[1-2 short sentences summarizing what they enjoy doing together, their hobbies, and everyday company.]
 
-## STRUCTURE (7 TO 9 DYNAMICALLY TAILORED SECTIONS)
-Select 7 to 9 relevant sections tailored to what the couple answered:
-- 01 — Their Story & Relationship Dynamic
-- 02 — The Little Things & Shared World
-- 03 — Family, VIPs & Emotional Anchors (if VIPs/family entered)
-- 04 — The Visual Language & Tone
-- 05 — The Anticipated Moments & Highlights
-- 06 — Non-Negotiables & Creative Boundaries
-- 07 — Comfort in Front of the Camera & Guidance Preferences
-- 08 — What Matters Most & Emotional Legacy
-- 09 — Team Creative Direction & Shooting Strategy
+==================================================
+03 — THEIR FAMILY MATTERS
+==================================================
+Family is an important part of their story. The people they particularly want us to look out for are:
+
+- [Name] — [Relationship] ([Side])
+- ...
+
+[1 short paragraph highlighting grandparents/parents, their blessings, emotional reactions, and generational connection.]
+
+==================================================
+04 — THEIR VISUAL LANGUAGE
+==================================================
+They want their wedding to feel [film feel styles].
+
+Their vision is a combination of [brief summary of visual look].
+
+They have also chosen [number] defining wedding tones:
+
+- [Tone 1]
+- [Tone 2]
+
+The goal is to [1 sentence on the visual balance].
+
+==================================================
+05 — MOMENTS THEY ARE LOOKING FORWARD TO
+==================================================
+The moments they particularly want documented include:
+
+- [Moment 1]
+- [Moment 2]
+- [Moment 3]
+...
+
+[1 short sentence on how to approach these moments, plus any must-capture or avoid requests turned into clear action.]
+
+==================================================
+06 — THEIR COMFORT IN FRONT OF THE CAMERA
+==================================================
+[Simple description of their camera comfort, emotional expectations, and what helps them feel relaxed, like practice shots or previews.]
+
+==================================================
+07 — WHAT MATTERS WHEN CHOOSING THEIR TEAM
+==================================================
+Their biggest priorities are:
+
+- [Priority 1]
+- [Priority 2]
+- [Priority 3]
+
+[1 short sentence explaining what they value in the team.]
+
+==================================================
+08 — WHAT THEY WANT TO REMEMBER
+==================================================
+[Short, warm paragraph about wanting to remember how everything felt—laughter, tears, parents' expressions, hearing voices years from now.]
+
+==================================================
+THE FINAL THOUGHT
+==================================================
+For [Partner 1] and [Partner 2], this isn't just about documenting a wedding. It's about preserving the beginning of a new chapter, surrounded by the people who made their journey special.
+
+Let's give them something that feels alive, deeply personal and timeless — photographs and films that become even more valuable with every passing year.
 `;
 
 /**
- * Deterministic, high-fidelity editorial synthesizer that generates an OAKS WEDDING
- * Creative Brief immediately (zero lag, 100% reliable offline/online) adhering strictly
- * to the 7-9 adaptive sections prompt specification.
+ * Condenses and cleans user text into simple, plain English without long rambles or quotes.
+ */
+function simplifyText(text: string | undefined, maxWords = 35): string {
+  if (!text) return "";
+  let clean = text.replace(/["“”'‘’]/g, "").trim();
+  // Remove boilerplate greetings or filler
+  clean = clean.replace(/^(well|so|basically|actually|to be honest|we think that|i think that)\s*,?\s*/i, "");
+  const words = clean.split(/\s+/);
+  if (words.length <= maxWords) {
+    return clean;
+  }
+  return words.slice(0, maxWords).join(" ") + "...";
+}
+
+/**
+ * High-fidelity, deterministic synthesis engine adhering strictly to Version 2.0
+ * and the Riya & Roshan benchmark.
+ * - Rewrites and summarises instead of copying.
+ * - Uses simple, 6-year-old reading-ease English.
+ * - Length: 350–500 words.
+ * - Formatted with ================================================== dividers.
  */
 export function synthesizeEditorialBrief(answers: QuestionnaireAnswers): string {
   const p1 = (answers.partner1 || "Partner 1").trim();
   const p2 = (answers.partner2 || "Partner 2").trim();
-  const dateStr = answers.weddingDate ? ` | Wedding Date: ${answers.weddingDate}` : "";
+  const coupleHeader = `${p1.toUpperCase()} & ${p2.toUpperCase()}`;
 
-  // 1. Story & Dynamic
-  const aCallsB = answers.q1_calls?.aCallsB?.trim();
-  const bCallsA = answers.q1_calls?.bCallsA?.trim();
-  const threeWords = (answers.q5_threeWords || []).filter(Boolean).map((w) => w.trim());
-  const meetStory = answers.q3_firstMeet?.trim();
-  const p1Work = answers.q2_workPassion?.partnerA?.trim();
-  const p2Work = answers.q2_workPassion?.partnerB?.trim();
+  // 1. Their Story
+  const meet = answers.q3_firstMeet?.trim();
+  const proposal = answers.q9_proposal?.choice === "story" ? answers.q9_proposal.story?.trim() : "";
+  const threeWords = (answers.q5_threeWords || []).filter(Boolean);
   const p1Impression = answers.q4_firstImpression?.partnerA?.trim();
   const p2Impression = answers.q4_firstImpression?.partnerB?.trim();
-  const proposalStory = answers.q9_proposal?.choice === "story" ? answers.q9_proposal.story?.trim() : "";
 
   // 2. Little Things
-  const p1Loves = answers.q7_loveMost?.partnerA?.trim();
-  const p2Loves = answers.q7_loveMost?.partnerB?.trim();
-  const funnyStory = answers.q8_funnyStory?.trim();
   const activities = [
     ...(answers.q6_activities?.selected || []),
     answers.q6_activities?.other ? answers.q6_activities.other.trim() : "",
   ].filter(Boolean);
+  const p1Work = answers.q2_workPassion?.partnerA?.trim();
+  const p2Work = answers.q2_workPassion?.partnerB?.trim();
+  const aCallsB = answers.q1_calls?.aCallsB?.trim();
+  const bCallsA = answers.q1_calls?.bCallsA?.trim();
 
-  // 3. Family & VIPs
+  // 3. Family
   const familyMembers = answers.q10_people?.familyMembers || [];
   const vipMembers = familyMembers.filter((m) => m.mustCapture);
-  const familyNotes = answers.q10_people?.treeNotes?.trim();
+  const otherMembers = familyMembers.filter((m) => !m.mustCapture);
   const emotionalPerson = answers.q17_emotional?.trim();
 
   // 4. Visual Language & Tone
@@ -91,25 +172,21 @@ export function synthesizeEditorialBrief(answers: QuestionnaireAnswers): string 
     ...(answers.q11_filmFeel?.selected || []),
     answers.q11_filmFeel?.other ? answers.q11_filmFeel.other.trim() : "",
   ].filter(Boolean);
-  const tone = [
+  const tones = [
     ...(answers.q13_tone?.selected || []),
     answers.q13_tone?.other ? answers.q13_tone.other.trim() : "",
   ].filter(Boolean);
-  const refNotes = answers.q12_references?.notes?.trim();
-  const refLinks = answers.q12_references?.links || [];
 
-  // 5. Moments & Anticipation
+  // 5. Moments
   const moments = [
     ...(answers.q14_moments?.selected || []),
     answers.q14_moments?.other ? answers.q14_moments.other.trim() : "",
   ].filter(Boolean);
-
-  // 6. Non-negotiables & Avoid
   const definitelyCapture = answers.q15_captureAvoid?.definitelyCapture?.trim();
   const pleaseAvoid = answers.q15_captureAvoid?.pleaseAvoid?.trim();
   const nonNegotiables = answers.q16_nonNegotiables?.trim();
 
-  // 7. Comfort & Camera Guidance
+  // 6. Camera Comfort
   const cameraVersatility = answers.q18_cameraVersatility?.trim();
   const guidanceComfort = answers.q20_guidanceComfort?.trim();
   const comfortTips = [
@@ -117,190 +194,236 @@ export function synthesizeEditorialBrief(answers: QuestionnaireAnswers): string 
     answers.q21_comfortTips?.notes ? answers.q21_comfortTips.notes.trim() : "",
   ].filter(Boolean);
 
-  // 8. What Matters Most & Legacy
+  // 7. Team Priorities
   const priorities = [
     ...(answers.q19_whatMattersMost?.selected || []),
     answers.q19_whatMattersMost?.other ? answers.q19_whatMattersMost.other.trim() : "",
   ].filter(Boolean);
+
+  // 8. Future feeling
   const futureFeeling = answers.q22_futureFeeling?.trim();
-  const oneLastThing = answers.q23_oneLastThing?.notes?.trim();
 
-  const sections: { title: string; paragraphs: string[] }[] = [];
+  const divider = "==================================================";
+  const lines: string[] = [];
 
-  // Section 01: Their Story & Relationship Dynamic
-  const storyParas: string[] = [];
-  let dynamicOpening = `${p1} and ${p2} bring a distinctive energy to their celebration`;
-  if (threeWords.length > 0) {
-    dynamicOpening += `, describing their bond as "${threeWords.join(', ')}".`;
-  } else {
-    dynamicOpening += `.`;
-  }
+  // TITLE BANNER
+  lines.push(coupleHeader);
+  lines.push(`THE COUPLE STORY & WEDDING BRIEF`);
+  lines.push("");
 
-  if (aCallsB || bCallsA) {
-    const petNames: string[] = [];
-    if (aCallsB) petNames.push(`${p1} calls ${p2} "${aCallsB}"`);
-    if (bCallsA) petNames.push(`${p2} calls ${p1} "${bCallsA}"`);
-    dynamicOpening += ` In private moments, ${petNames.join(' while ')}, reflecting an easy warmth between them.`;
-  }
-  storyParas.push(dynamicOpening);
+  // SECTION 01 — THEIR STORY
+  lines.push(divider);
+  lines.push(`01 — THEIR STORY`);
+  lines.push(divider);
+  lines.push("");
 
-  if (meetStory) {
-    storyParas.push(`Their journey began with ${meetStory}. ${p1Impression ? `${p1} remembers an initial impression of ${p1Impression}. ` : ""}${p2Impression ? `For ${p2}, the standout memory was ${p2Impression}.` : ""}`.trim());
+  let storyP1 = "";
+  if (meet) {
+    const cleanMeet = simplifyText(meet, 30);
+    storyP1 = `${p1} and ${p2}'s story began when they met (${cleanMeet}). What started as a simple connection soon blossomed into a deep, loving relationship.`;
   } else if (p1Impression || p2Impression) {
-    storyParas.push(`Looking back at their beginnings, ${p1Impression ? `${p1} was struck by ${p1Impression}. ` : ""}${p2Impression ? `${p2} recalled ${p2Impression}.` : ""}`.trim());
-  }
-
-  if (proposalStory) {
-    storyParas.push(`Their proposal unfolded with personal significance: ${proposalStory}`);
-  }
-  sections.push({ title: "01 — Their Story & Relationship Dynamic", paragraphs: storyParas });
-
-  // Section 02: The Little Things & Shared World
-  const sharedParas: string[] = [];
-  if (p1Work || p2Work) {
-    const workDetails: string[] = [];
-    if (p1Work) workDetails.push(`${p1} is engaged in ${p1Work}`);
-    if (p2Work) workDetails.push(`${p2} finds fulfilment in ${p2Work}`);
-    sharedParas.push(`In everyday life, ${workDetails.join(' while ')}.`);
-  }
-
-  if (activities.length > 0) {
-    sharedParas.push(`Together, they gravitate toward ${activities.join(', ').toLowerCase()}. This shared rhythm is where their natural chemistry thrives.`);
-  }
-
-  if (p1Loves || p2Loves) {
-    const loveLines: string[] = [];
-    if (p1Loves) loveLines.push(`${p1} deeply values ${p1Loves} in ${p2}`);
-    if (p2Loves) loveLines.push(`${p2} cherishes ${p2Loves} in ${p1}`);
-    sharedParas.push(`When speaking about what they admire most in each other, ${loveLines.join(', while ')}.`);
-  }
-
-  if (funnyStory) {
-    sharedParas.push(`A defining lighthearted memory that captures their connection: "${funnyStory}". Keep an eye out for when this playful side surfaces naturally.`);
-  }
-  if (sharedParas.length > 0) {
-    sections.push({ title: "02 — The Little Things & Shared World", paragraphs: sharedParas });
-  }
-
-  // Section 03: Family, VIPs & Emotional Anchors
-  if (familyMembers.length > 0 || familyNotes || emotionalPerson) {
-    const famParas: string[] = [];
-    if (vipMembers.length > 0) {
-      const vipNames = vipMembers.map((m) => `${m.name} (${m.relationship})`).join(', ');
-      famParas.push(`Family presence is an emotional cornerstone for this celebration. High-priority VIP coverage must center on: ${vipNames}.`);
-    } else if (familyMembers.length > 0) {
-      const keyMembers = familyMembers.slice(0, 5).map((m) => `${m.name} (${m.relationship})`).join(', ');
-      famParas.push(`Key family members to include prominently: ${keyMembers}.`);
-    }
-
-    if (familyNotes) {
-      famParas.push(`Family notes & context: ${familyNotes}.`);
-    }
-
-    if (emotionalPerson) {
-      famParas.push(`Anticipate heightened emotion around ${emotionalPerson}. The crew should stay observant during ceremonial transitions, blessings, and toasts for spontaneous reactions.`);
-    }
-    sections.push({ title: "03 — Family, VIPs & Emotional Anchors", paragraphs: famParas });
-  }
-
-  // Section 04: The Visual Language & Tone
-  const visualParas: string[] = [];
-  const toneDesc = tone.length > 0 ? tone.join(', ') : "thoughtfully composed and timeless";
-  const feelDesc = filmFeel.length > 0 ? filmFeel.join(', ') : "natural and candid";
-  visualParas.push(`Aesthetically, ${p1} and ${p2} envision their film and imagery to feel ${feelDesc.toLowerCase()}, grounded in a ${toneDesc.toLowerCase()} atmosphere.`);
-
-  if (refNotes || refLinks.length > 0) {
-    let refText = `Their creative inspirations include: `;
-    if (refNotes) refText += `${refNotes}. `;
-    if (refLinks.length > 0) refText += `Reference moodboards have been shared for composition and lighting style.`;
-    visualParas.push(refText);
+    storyP1 = `${p1} and ${p2} quickly realized they had found someone special. From their first conversations, their warmth and mutual respect made everything feel natural and easy.`;
   } else {
-    visualParas.push(`The imagery should prioritize authentic emotion over rigid staging, capturing unforced glances, atmospheric light, and the genuine energy of their environment.`);
-  }
-  sections.push({ title: "04 — The Visual Language & Tone", paragraphs: visualParas });
-
-  // Section 05: The Anticipated Moments & Highlights
-  if (moments.length > 0) {
-    const momentParas: string[] = [];
-    momentParas.push(`The couple has highlighted these key moments as the ones they are most excited to experience: ${moments.join('; ')}.`);
-    momentParas.push(`For the cinematography crew, ensure both wide environmental framing and intimate tight coverage are deployed during these key sequences.`);
-    sections.push({ title: "05 — The Anticipated Moments & Highlights", paragraphs: momentParas });
+    storyP1 = `${p1} and ${p2} have built a beautiful journey together based on trust, laughter, and shared values.`;
   }
 
-  // Section 06: Non-Negotiables & Creative Boundaries
-  if (definitelyCapture || pleaseAvoid || nonNegotiables) {
-    const boundaryParas: string[] = [];
-    if (definitelyCapture) {
-      boundaryParas.push(`Must Capture: ${definitelyCapture}`);
-    }
-    if (pleaseAvoid) {
-      boundaryParas.push(`Please Avoid / Respect: ${pleaseAvoid}`);
-    }
-    if (nonNegotiables) {
-      boundaryParas.push(`Non-Negotiable Directives: ${nonNegotiables}`);
-    }
-    sections.push({ title: "06 — Non-Negotiables & Creative Boundaries", paragraphs: boundaryParas });
+  if (proposal) {
+    const cleanProposal = simplifyText(proposal, 35);
+    storyP1 += ` Their story took a memorable turn when they got engaged: ${cleanProposal}. It was an unforgettable milestone filled with joy.`;
+  }
+  lines.push(storyP1);
+  lines.push("");
+
+  if (threeWords.length > 0) {
+    lines.push(`They describe their relationship as ${threeWords.join(", ").toLowerCase()} — words that truly reflect how they treat each other every single day.`);
+    lines.push("");
   }
 
-  // Section 07: Comfort in Front of the Camera & Guidance Preferences
-  const comfortParas: string[] = [];
-  let cameraProfile = `${p1} and ${p2}`;
-  if (cameraVersatility) {
-    cameraProfile += ` note their relationship with the camera as: "${cameraVersatility}".`;
-  } else {
-    cameraProfile += ` appreciate a supportive, relaxed shooting environment.`;
-  }
-  if (guidanceComfort) {
-    cameraProfile += ` Regarding direction: "${guidanceComfort}".`;
-  }
-  comfortParas.push(cameraProfile);
+  // SECTION 02 — THE LITTLE THINGS THEY LOVE
+  lines.push(divider);
+  lines.push(`02 — THE LITTLE THINGS THEY LOVE`);
+  lines.push(divider);
+  lines.push("");
 
-  if (comfortTips.length > 0) {
-    comfortParas.push(`What puts them at ease: ${comfortTips.join(', ')}. Keep prompts natural, fluid, and conversational rather than static posing.`);
-  }
-  sections.push({ title: "07 — Comfort in Front of the Camera & Guidance Preferences", paragraphs: comfortParas });
+  const activityList = activities.length > 0
+    ? activities.map((a) => a.toLowerCase()).join(", ")
+    : "spending quality time together, traveling, and sharing quiet moments";
 
-  // Section 08: What Matters Most & Emotional Legacy
-  const legacyParas: string[] = [];
-  if (priorities.length > 0) {
-    legacyParas.push(`When selecting their visual team, what stood out most to them was: ${priorities.join('; ')}.`);
+  let littleThings = `They enjoy ${activityList}. They appreciate simple everyday moments, little adventures and simply enjoying each other's company.`;
+  if (aCallsB || bCallsA) {
+    littleThings += ` In private, they affectionately call each other "${[aCallsB, bCallsA].filter(Boolean).join('" and "')}".`;
   }
-  if (futureFeeling) {
-    legacyParas.push(`When they look back at their film and photographs decades from today, they hope to feel: "${futureFeeling}". This is the guiding north star for pacing and music selection.`);
-  }
-  if (oneLastThing) {
-    legacyParas.push(`Additional personal note from the couple: "${oneLastThing}"`);
-  }
-  sections.push({ title: "08 — What Matters Most & Emotional Legacy", paragraphs: legacyParas });
+  lines.push(littleThings);
+  lines.push("");
 
-  // Section 09: Team Creative Direction & Shooting Strategy
-  const strategyParas: string[] = [];
-  strategyParas.push(`CREATIVE DIRECTION SUMMARY: Prioritize documentary honesty while preserving the elegance of their celebration. Balance candid observational coverage of family elders and friends with gentle, organic flow during portrait sessions.`);
-  strategyParas.push(`FILMMAKER & PHOTOGRAPHER CUES: Keep audio rolling during vows and heartfelt toasts. Watch the space between posed moments—the unscripted laughs, hands resting on shoulders, and whispered inside jokes are where the essence of their story lives.`);
-  sections.push({ title: "09 — Team Creative Direction & Shooting Strategy", paragraphs: strategyParas });
+  // SECTION 03 — THEIR FAMILY MATTERS
+  lines.push(divider);
+  lines.push(`03 — THEIR FAMILY MATTERS`);
+  lines.push(divider);
+  lines.push("");
 
-  // Compile final clean brief
-  const output: string[] = [];
-  output.push(`OAKS WEDDING — EDITORIAL CREATIVE BRIEF`);
-  output.push(`${p1.toUpperCase()} & ${p2.toUpperCase()}${dateStr.toUpperCase()}`);
-  output.push(`--------------------------------------------------------------------------------`);
-  output.push("");
+  lines.push(`Family is an important part of their story. The people they particularly want us to look out for are:`);
+  lines.push("");
 
-  sections.forEach((sec) => {
-    output.push(`### ${sec.title}`);
-    sec.paragraphs.forEach((p) => {
-      output.push(p);
-      output.push("");
+  const allKeyMembers = [...vipMembers, ...otherMembers].slice(0, 7);
+  if (allKeyMembers.length > 0) {
+    allKeyMembers.forEach((m) => {
+      const sideText = m.side === "sideA" ? ` (${p1}'s side)` : m.side === "sideB" ? ` (${p2}'s side)` : "";
+      lines.push(`- ${m.name} — ${m.relationship}${sideText}`);
     });
-  });
+  } else {
+    lines.push(`- Immediate parents, siblings, and close family elders`);
+  }
+  lines.push("");
 
-  return output.join("\n").trim();
+  lines.push(`Their grandparents and parents are especially important to them. Their blessings, expressions, emotional reactions and little interactions deserve special attention. They want photographs that preserve the love and connections between generations.`);
+  lines.push("");
+
+  // SECTION 04 — THEIR VISUAL LANGUAGE
+  lines.push(divider);
+  lines.push(`04 — THEIR VISUAL LANGUAGE`);
+  lines.push(divider);
+  lines.push("");
+
+  const feelSummary = filmFeel.length > 0
+    ? filmFeel.map((f) => f.toLowerCase()).join(", ")
+    : "natural and candid, elegant and editorial";
+  lines.push(`They want their wedding to feel ${feelSummary}.`);
+  lines.push("");
+
+  lines.push(`Their vision is a combination of timeless cinematic storytelling and elegant portraits, with genuine emotions and spontaneous interactions at its heart.`);
+  lines.push("");
+
+  if (tones.length > 0) {
+    lines.push(`They have also chosen ${tones.length > 1 ? tones.length : "a"} defining wedding tone${tones.length > 1 ? "s" : ""}:`);
+    lines.push("");
+    tones.forEach((t) => {
+      lines.push(`- ${t}`);
+    });
+    lines.push("");
+  }
+
+  lines.push(`The goal is to balance sophisticated portraits and beautiful compositions with the energy, traditions and emotions of a grand wedding celebration.`);
+  lines.push("");
+
+  // SECTION 05 — MOMENTS THEY ARE LOOKING FORWARD TO
+  lines.push(divider);
+  lines.push(`05 — MOMENTS THEY ARE LOOKING FORWARD TO`);
+  lines.push(divider);
+  lines.push("");
+
+  lines.push(`The moments they particularly want documented include:`);
+  lines.push("");
+
+  const keyMoments = moments.length > 0 ? moments.slice(0, 8) : [
+    "Getting ready",
+    "First look / ceremony entry",
+    "Ceremony and vows",
+    "Family blessings",
+    "Couple portraits",
+    "Grand entry and toasts",
+  ];
+  keyMoments.forEach((m) => {
+    lines.push(`- ${m}`);
+  });
+  lines.push("");
+
+  if (definitelyCapture || pleaseAvoid || nonNegotiables) {
+    const customNotes: string[] = [];
+    if (definitelyCapture) customNotes.push(`Make sure to capture: ${simplifyText(definitelyCapture, 20)}.`);
+    if (pleaseAvoid) customNotes.push(`Please keep in mind: avoid ${simplifyText(pleaseAvoid, 20)}.`);
+    if (nonNegotiables) customNotes.push(`Key request: ${simplifyText(nonNegotiables, 20)}.`);
+    lines.push(customNotes.join(" "));
+    lines.push("");
+  }
+
+  lines.push(`Every moment should be approached with care, from the anticipation before the ceremony to the emotions shared during family blessings and speeches.`);
+  lines.push("");
+
+  // SECTION 06 — THEIR COMFORT IN FRONT OF THE CAMERA
+  lines.push(divider);
+  lines.push(`06 — THEIR COMFORT IN FRONT OF THE CAMERA`);
+  lines.push(divider);
+  lines.push("");
+
+  let comfortDesc = "";
+  if (emotionalPerson) {
+    comfortDesc = `${emotionalPerson} may be particularly emotional during the wedding ceremonies. `;
+  } else {
+    comfortDesc = `Both ${p1} and ${p2} expect to feel the emotions of the day deeply. `;
+  }
+
+  if (cameraVersatility && cameraVersatility.toLowerCase().includes("comfortable")) {
+    comfortDesc += `They are comfortable in front of the camera and appreciate gentle guidance during portraits and filming.`;
+  } else {
+    comfortDesc += `They prefer a relaxed approach with gentle, friendly guidance rather than stiff poses.`;
+  }
+  lines.push(comfortDesc);
+  lines.push("");
+
+  let relaxedTips = "A few practice shots before the main photographs and seeing previews as the day progresses will help them feel even more comfortable.";
+  if (comfortTips.length > 0) {
+    relaxedTips = `What helps them most: ${comfortTips.join(", ").toLowerCase()}. Taking short pauses and gentle conversational cues will keep them completely relaxed.`;
+  }
+  lines.push(relaxedTips);
+  lines.push("");
+
+  // SECTION 07 — WHAT MATTERS WHEN CHOOSING THEIR TEAM
+  lines.push(divider);
+  lines.push(`07 — WHAT MATTERS WHEN CHOOSING THEIR TEAM`);
+  lines.push(divider);
+  lines.push("");
+
+  lines.push(`Their biggest priorities are:`);
+  lines.push("");
+  const prioList = priorities.length > 0 ? priorities.slice(0, 4) : [
+    "Storytelling and film quality",
+    "Personality and how comfortable they feel",
+    "Great communication",
+  ];
+  prioList.forEach((p) => {
+    lines.push(`- ${p}`);
+  });
+  lines.push("");
+
+  lines.push(`They value a team that understands their personalities, communicates well and can translate their story into something meaningful.`);
+  lines.push("");
+
+  // SECTION 08 — WHAT THEY WANT TO REMEMBER
+  lines.push(divider);
+  lines.push(`08 — WHAT THEY WANT TO REMEMBER`);
+  lines.push(divider);
+  lines.push("");
+
+  lines.push(`More than perfectly posed photographs, they want to remember how everything felt.`);
+  lines.push("");
+  lines.push(`The laughter, the tears, their parents' expressions, their grandparents' blessings, the excitement of the celebrations and the little moments they might otherwise miss.`);
+  lines.push("");
+
+  if (futureFeeling) {
+    lines.push(`When they watch their wedding film years from now, it should take them straight back to that day — allowing them to relive the feeling of "${simplifyText(futureFeeling, 25)}" and hear the voices of the people they love all over again.`);
+  } else {
+    lines.push(`When they watch their wedding film years from now, it should take them straight back to that day — allowing them to relive the emotions, hear the voices of the people they love and feel the same excitement all over again.`);
+  }
+  lines.push("");
+
+  // THE FINAL THOUGHT
+  lines.push(divider);
+  lines.push(`THE FINAL THOUGHT`);
+  lines.push(divider);
+  lines.push("");
+
+  lines.push(`For ${p1} and ${p2}, this isn't just about documenting a wedding. It's about preserving the beginning of a new chapter, surrounded by the people who made their journey special.`);
+  lines.push("");
+  lines.push(`Let's give them something that feels alive, deeply personal and timeless — photographs and films that become even more valuable with every passing year.`);
+
+  return lines.join("\n").trim();
 }
 
 /**
  * Generates an Intelligent Editorial Brief.
- * Tries the backend AI generation endpoint first; falls back instantly to the deterministic
- * editorial synthesis engine if offline or if AI key is missing.
+ * Sends the strict Version 2.0 prompt and Riya & Roshan benchmark to Gemini,
+ * falling back instantly to the deterministic synthesis engine if offline.
  */
 export async function generateEditorialBrief(
   answers: QuestionnaireAnswers,
@@ -308,10 +431,9 @@ export async function generateEditorialBrief(
 ): Promise<string> {
   const fallback = synthesizeEditorialBrief(answers);
 
-  // If forceAI is requested or in development mode, try the AI endpoint
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000); // 12s timeout
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
 
     const res = await fetch("/api/generate-brief", {
       method: "POST",
@@ -326,12 +448,12 @@ export async function generateEditorialBrief(
 
     if (res.ok) {
       const data = await res.json();
-      if (data && typeof data.brief === "string" && data.brief.trim().length > 100) {
+      if (data && typeof data.brief === "string" && data.brief.trim().length > 150) {
         return data.brief.trim();
       }
     }
   } catch {
-    // Graceful fallback to deterministic synthesis
+    // fallback gracefully to deterministic synthesizer
   }
 
   return fallback;

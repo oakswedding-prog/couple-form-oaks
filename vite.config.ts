@@ -70,7 +70,12 @@ export default defineConfig(() => {
               const prompt = `Here are the couple's responses to the OAKS Wedding Questionnaire:
 ${JSON.stringify(answers, null, 2)}
 
-Please write an emotionally intelligent, concise, beautifully written Editorial Creative Brief (~500–750 words, 3–5 min read) with 7 to 9 dynamically tailored sections strictly grounded in their answers, following your instructions.`;
+IMPORTANT INSTRUCTIONS:
+- Write a short, simple and beautiful wedding brief (~350–500 words, 2–3 min read for the photography and cinema team).
+- NEVER copy long answers or paragraphs directly from the questionnaire. Understand and rewrite them in your own words.
+- Write in simple English with a six-year-old reading-ease target (short sentences, simple common words, no fancy jargon).
+- Follow the exact Riya & Roshan benchmark structure and divider lines (==================================================).
+- Produce ONLY the finished couple brief starting with the couple's names.`;
 
               const response = await ai.models.generateContent({
                 model: 'gemini-2.5-flash',
@@ -126,7 +131,12 @@ ${JSON.stringify(answers, null, 2)}
 
 Event/Session Context: ${eventType || 'wedding'}
 
-Please generate exactly 11 deeply personalised, open-ended interview/testimonial questions for the couple following the 11-question emotional storytelling journey, along with the INTERVIEW DIRECTION and THE CREATIVE OBJECTIVE. Strictly adhere to your instructions.`;
+CRITICAL RULES FOR GENERATION:
+1. NEVER copy or paste the couple's original questionnaire answers or paragraphs into the questions. Never put long answers inside brackets.
+2. Write in simple, conversational English. Sound like a friendly, curious human sitting across from the couple.
+3. Absolutely NO artificial movie melodrama or poetic drama (do not use "unspoken thought rushing through your chest", "eyes tell you that words never could", "mean to your souls").
+4. Follow the exact quality, tone, and conversational phrasing of the Riya & Roshan 11 interview questions benchmark.
+5. Provide exactly 11 numbered questions, each with title, Ask target, the question, and a short optional follow-up, followed by ### INTERVIEW DIRECTION.`;
 
               const response = await ai.models.generateContent({
                 model: 'gemini-2.5-flash',
@@ -144,6 +154,74 @@ Please generate exactly 11 deeply personalised, open-ended interview/testimonial
               console.error('Error generating interview with Gemini:', err);
               res.statusCode = 500;
               res.end(JSON.stringify({ error: err?.message || 'Failed to generate interview' }));
+            }
+          });
+
+          server.middlewares.use('/api/generate-cheatsheet', async (req, res) => {
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+            if (req.method === 'OPTIONS') {
+              res.statusCode = 200;
+              res.end();
+              return;
+            }
+            if (req.method !== 'POST') {
+              res.statusCode = 405;
+              res.end(JSON.stringify({ error: 'Method not allowed' }));
+              return;
+            }
+
+            const apiKey = process.env.GEMINI_API_KEY;
+            if (!apiKey) {
+              res.statusCode = 503;
+              res.end(JSON.stringify({ error: 'GEMINI_API_KEY is not set' }));
+              return;
+            }
+
+            try {
+              let bodyStr = '';
+              for await (const chunk of req) {
+                bodyStr += chunk;
+              }
+              const { answers, systemPrompt } = JSON.parse(bodyStr || '{}');
+
+              const ai = new GoogleGenAI({ apiKey });
+              const prompt = `Here are the couple's responses to the OAKS Wedding Questionnaire:
+${JSON.stringify(answers, null, 2)}
+
+CRITICAL PRODUCTION RULES FOR SHOOT DAY CHEAT SHEET:
+1. Target length: ~150–220 words. Total scan time for crew: 30–60 seconds.
+2. The cheat sheet is NOT a summary of all 23 answers. It is an on-day quick production cue sheet.
+3. NEVER copy long paragraphs or sentences directly from questionnaire answers.
+4. Use simple, crisp, clear English. Prefer short bullet points over paragraphs.
+5. Exactly follow the 6 uppercase numbered sections:
+   01 — THE VIBE
+   02 — TOP PRIORITIES
+   03 — MUST-CAPTURE MOMENTS
+   04 — IMPORTANT PEOPLE
+   05 — PLEASE AVOID
+   06 — WORKING WITH THE COUPLE
+   (plus TECHNICAL NON-NEGOTIABLE if applicable).
+6. Match the exact tone and structure of the Riya & Roshan reference model.
+7. Return ONLY the finished cheat sheet text, starting with "OAKS WEDDING".`;
+
+              const response = await ai.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents: prompt,
+                config: {
+                  systemInstruction: systemPrompt || undefined,
+                  temperature: 0.5,
+                },
+              });
+
+              const text = response.text || '';
+              res.statusCode = 200;
+              res.end(JSON.stringify({ cheatSheet: text }));
+            } catch (err: any) {
+              console.error('Error generating cheat sheet with Gemini:', err);
+              res.statusCode = 500;
+              res.end(JSON.stringify({ error: err?.message || 'Failed to generate cheat sheet' }));
             }
           });
         },

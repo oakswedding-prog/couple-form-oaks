@@ -36,13 +36,28 @@ export const EditorialBriefView: React.FC<EditorialBriefViewProps> = ({
   onSaveBrief,
   readOnly = false,
 }) => {
+  // If initialBrief is missing or contains the outdated copied-answers boilerplate from v1, use the fresh v2 brief
+  const isOutdatedV1 = Boolean(
+    initialBrief &&
+      (initialBrief.includes("bring a distinctive energy") ||
+        initialBrief.includes("CREATIVE DIRECTION SUMMARY") ||
+        initialBrief.includes("Their proposal unfolded with personal significance"))
+  );
+
   const [briefText, setBriefText] = useState<string>(
-    initialBrief || synthesizeEditorialBrief(answers)
+    !initialBrief || isOutdatedV1 ? synthesizeEditorialBrief(answers) : initialBrief
   );
   const [copied, setCopied] = useState<boolean>(false);
   const [isRegenerating, setIsRegenerating] = useState<boolean>(false);
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [editedText, setEditedText] = useState<string>(briefText);
+
+  // If outdated brief was upgraded on mount, persist it to storage
+  React.useEffect(() => {
+    if (isOutdatedV1 && onSaveBrief) {
+      onSaveBrief(briefText).catch(() => {});
+    }
+  }, [isOutdatedV1]);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
 
   // Copy to clipboard
@@ -95,33 +110,40 @@ export const EditorialBriefView: React.FC<EditorialBriefViewProps> = ({
 
   // Parse sections for beautiful editorial presentation
   const parseSections = (text: string) => {
-    const rawSections = text.split(/(?=###\s+)/);
     const parsed: { title: string; body: string }[] = [];
 
-    for (const chunk of rawSections) {
-      const match = chunk.match(/###\s+(.+)\n([\s\S]*)/);
-      if (match) {
-        parsed.push({
-          title: match[1].trim(),
-          body: match[2].trim(),
+    // Check if the text uses ================================================== dividers (Riya & Roshan benchmark format)
+    if (text.includes("====")) {
+      const pattern = /={20,}\s*\n([^\n]+)\n\s*={20,}/g;
+      const titles: { title: string; index: number; length: number }[] = [];
+      let m: RegExpExecArray | null;
+      while ((m = pattern.exec(text)) !== null) {
+        titles.push({
+          title: m[1].trim(),
+          index: m.index,
+          length: m[0].length,
         });
-      } else {
-        // Preamble or unformatted lines
-        const cleanChunk = chunk.replace(/^#+\s+/gm, "").trim();
-        if (cleanChunk && !cleanChunk.startsWith("OAKS WEDDING — EDITORIAL") && !cleanChunk.includes("------")) {
-          // Check if it starts with section number e.g. "01 — "
-          const numMatch = cleanChunk.match(/^(\d{2}\s*—\s*[^:\n]+)[:\n]([\s\S]*)/);
-          if (numMatch) {
-            parsed.push({
-              title: numMatch[1].trim(),
-              body: numMatch[2].trim(),
-            });
-          } else {
-            parsed.push({
-              title: "Creative Story Notes",
-              body: cleanChunk,
-            });
-          }
+      }
+
+      for (let i = 0; i < titles.length; i++) {
+        const cur = titles[i];
+        const nextIndex = i + 1 < titles.length ? titles[i + 1].index : text.length;
+        const body = text.substring(cur.index + cur.length, nextIndex).trim();
+        parsed.push({
+          title: cur.title,
+          body,
+        });
+      }
+    } else {
+      // Markdown ### fallback
+      const rawSections = text.split(/(?=###\s+)/);
+      for (const chunk of rawSections) {
+        const match = chunk.match(/###\s+(.+)\n([\s\S]*)/);
+        if (match) {
+          parsed.push({
+            title: match[1].trim(),
+            body: match[2].trim(),
+          });
         }
       }
     }
@@ -156,8 +178,8 @@ export const EditorialBriefView: React.FC<EditorialBriefViewProps> = ({
             The Couple Story &amp; Wedding Brief
           </h2>
           <p className="text-xs sm:text-sm text-[#7A756D]">
-            Interpreted creative direction for {coupleNames}
-            {weddingDate ? ` · ${weddingDate}` : ""} (3–5 min read for photo &amp; cinema crew)
+            Simple, human wedding brief for {coupleNames}
+            {weddingDate ? ` · ${weddingDate}` : ""} (2–3 min read · ~350–500 words)
           </p>
         </div>
 
@@ -283,12 +305,26 @@ export const EditorialBriefView: React.FC<EditorialBriefViewProps> = ({
                   </h3>
                 </div>
                 <div className="text-sm sm:text-[15px] text-[#33302C] leading-relaxed space-y-3 font-serif">
-                  {sec.body.split("\n\n").map((para, pIdx) => {
-                    const cleanPara = para.trim();
-                    if (!cleanPara) return null;
+                  {sec.body.split("\n\n").map((block, pIdx) => {
+                    const cleanBlock = block.trim();
+                    if (!cleanBlock) return null;
+                    const lines = cleanBlock.split("\n").map((l) => l.trim()).filter(Boolean);
+                    const isBulletList = lines.every((l) => l.startsWith("- ") || l.startsWith("• "));
+                    if (isBulletList) {
+                      return (
+                        <ul key={pIdx} className="space-y-1.5 pl-1 my-2">
+                          {lines.map((l, lIdx) => (
+                            <li key={lIdx} className="flex items-start gap-2.5 text-sm sm:text-[15px] text-[#1A1A1A]">
+                              <span className="w-1.5 h-1.5 rounded-full bg-[#B08D57] mt-2 shrink-0" />
+                              <span>{l.replace(/^[-•]\s*/, "")}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      );
+                    }
                     return (
-                      <p key={pIdx} className="leading-relaxed">
-                        {cleanPara}
+                      <p key={pIdx} className="leading-relaxed whitespace-pre-line">
+                        {cleanBlock}
                       </p>
                     );
                   })}

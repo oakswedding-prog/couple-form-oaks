@@ -68,6 +68,7 @@ export interface SubmissionRecord {
   answers: QuestionnaireAnswers;
   editorialBrief?: string;
   interviewQuestions?: string;
+  cheatSheet?: string;
   privateNotes?: string;
 }
 

@@ -24,6 +24,10 @@ import {
   synthesizeInterviewQuestions,
   parseInterviewDocument,
 } from "./interviewQuestionsGenerator.ts";
+import {
+  synthesizeCheatSheet,
+  parseCheatSheetDocument,
+} from "./cheatSheetGenerator.ts";
 
 /**
  * Downloads a binary blob as a named file in the browser.
@@ -93,87 +97,207 @@ export async function exportToPdf(submission: SubmissionRecord) {
 
   y += 8;
 
-  // Shoot Day Cheat Sheet 6 Sections
-  const ans = submission.answers;
-  const threeWords = (ans.q5_threeWords || []).filter(Boolean).join(", ");
-  const vipPeople = (ans.q10_people?.familyMembers || [])
-    .filter((m) => m.mustCapture)
-    .map((m) => `${m.name} (${m.relationship})`)
-    .join(", ");
-  const allFamily = (ans.q10_people?.familyMembers || [])
-    .map((m) => `${m.name} (${m.relationship})`)
-    .join(", ");
+  // PAGE 1: SHOOT DAY CHEAT SHEET (30–60s Crew Production Cue Sheet)
+  const isOutdatedCheatSheet = Boolean(
+    !submission.cheatSheet ||
+      submission.cheatSheet.includes("Who will cry first:") ||
+      submission.cheatSheet.includes("Camera Versatility:") ||
+      submission.cheatSheet.includes("Quiet Notes & Surprises") ||
+      !submission.cheatSheet.includes("01 — THE VIBE") ||
+      !submission.cheatSheet.includes("02 — TOP PRIORITIES")
+  );
+  const cheatSheetText = isOutdatedCheatSheet
+    ? synthesizeCheatSheet(submission.answers)
+    : submission.cheatSheet!;
+  const cheatSheetDoc = parseCheatSheetDocument(cheatSheetText, p1, p2);
 
-  const filmFeelStr = Array.isArray((ans.q11_filmFeel as any)?.selected)
-    ? [
-        ...((ans.q11_filmFeel as any).selected || []),
-        (ans.q11_filmFeel as any).other ? `Other: ${(ans.q11_filmFeel as any).other}` : null,
-      ].filter(Boolean).join(", ")
-    : typeof ans.q11_filmFeel === "string"
-    ? ans.q11_filmFeel
-    : "N/A";
+  // 01 — THE VIBE (Across Top)
+  doc.setFillColor(250, 248, 245);
+  doc.rect(left, y, contentWidth, 20, "F");
+  doc.setDrawColor(229, 221, 210);
+  doc.rect(left, y, contentWidth, 20, "D");
 
-  const toneStr = Array.isArray((ans.q13_tone as any)?.selected)
-    ? [
-        ...((ans.q13_tone as any).selected || []),
-        (ans.q13_tone as any).other ? `Other: ${(ans.q13_tone as any).other}` : null,
-      ].filter(Boolean).join(", ")
-    : typeof ans.q13_tone === "string"
-    ? ans.q13_tone
-    : "N/A";
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.5);
+  doc.setTextColor(176, 141, 87);
+  doc.text("01 — THE VIBE", left + 3.5, y + 4.5);
 
-  const sections = [
-    {
-      title: "1. THE VIBE",
-      content: `Three Words: ${threeWords || "N/A"}\nFilm Feel: ${filmFeelStr || "N/A"}\nDay Tone: ${toneStr || "N/A"}\nEmotional: ${ans.q17_emotional || "N/A"}`,
-    },
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.setTextColor(26, 26, 26);
+  doc.text(cheatSheetDoc.vibeWords, left + 38, y + 4.5);
 
-    {
-      title: "2. MUST CAPTURE",
-      content: `VIP Family: ${vipPeople || "None specified"}\nDefinite Shots: ${ans.q15_captureAvoid?.definitelyCapture || "N/A"}\nKey Moments: ${(ans.q14_moments?.selected || []).join(", ")}`,
-    },
-    {
-      title: "3. DO NOT CAPTURE",
-      content: ans.q15_captureAvoid?.pleaseAvoid
-        ? `AVOID: ${ans.q15_captureAvoid.pleaseAvoid}`
-        : "No specific avoidances noted.",
-    },
-    {
-      title: "4. WORKING WITH THEM",
-      content: `Camera Versatility: ${ans.q18_cameraVersatility || "N/A"}\nGuidance: ${ans.q20_guidanceComfort || "N/A"}\nComfort Tips: ${(ans.q21_comfortTips?.selected || []).join(", ")} ${ans.q21_comfortTips?.notes || ""}`,
-    },
-    {
-      title: "5. WHO'S WHO (FAMILY & VIPS)",
-      content: allFamily || "None specified",
-    },
-    {
-      title: "6. QUIET NOTES & SURPRISES",
-      content: `Non-negotiables: ${ans.q16_nonNegotiables || "None"}\nNotes: ${ans.q23_oneLastThing?.notes || "None"}\n${submission.privateNotes ? `[Internal Team Note]: ${submission.privateNotes}` : ""}`,
-    },
-  ];
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.5);
+  doc.setTextColor(45, 45, 45);
+  const vibeWrapped = doc.splitTextToSize(cheatSheetDoc.vibeDescription, contentWidth - 7);
+  doc.text(vibeWrapped, left + 3.5, y + 9.5);
+  y += 23;
 
-  sections.forEach((sec) => {
-    doc.setFillColor(250, 248, 245);
-    doc.rect(left, y, contentWidth, 24, "F");
-    doc.setDrawColor(229, 221, 210);
-    doc.rect(left, y, contentWidth, 24, "D");
+  // Left & Right Columns
+  const colW = 86;
+  const colGap = 6;
+  const col2X = left + colW + colGap;
+  const colStartY = y;
 
+  // LEFT COL: 02 - TOP PRIORITIES & 05 - PLEASE AVOID
+  let leftY = colStartY;
+
+  // 02 - TOP PRIORITIES
+  doc.setFillColor(250, 248, 245);
+  doc.rect(left, leftY, colW, 46, "F");
+  doc.setDrawColor(229, 221, 210);
+  doc.rect(left, leftY, colW, 46, "D");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.5);
+  doc.setTextColor(176, 141, 87);
+  doc.text("02 — TOP PRIORITIES", left + 3.5, leftY + 4.5);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.5);
+  doc.setTextColor(40, 40, 40);
+  let pY = leftY + 9.5;
+  cheatSheetDoc.topPriorities.slice(0, 4).forEach((item) => {
+    const wrapped = doc.splitTextToSize(`• ${item}`, colW - 6);
+    doc.text(wrapped, left + 3.5, pY);
+    pY += wrapped.length * 3.4 + 1.2;
+  });
+  leftY += 49;
+
+  // 05 - PLEASE AVOID
+  doc.setFillColor(254, 242, 242);
+  doc.rect(left, leftY, colW, 46, "F");
+  doc.setDrawColor(254, 202, 202);
+  doc.rect(left, leftY, colW, 46, "D");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.5);
+  doc.setTextColor(185, 28, 28);
+  doc.text("05 — PLEASE AVOID", left + 3.5, leftY + 4.5);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.5);
+  doc.setTextColor(50, 20, 20);
+  let aY = leftY + 9.5;
+  cheatSheetDoc.pleaseAvoid.slice(0, 4).forEach((item) => {
+    const wrapped = doc.splitTextToSize(`✕ ${item}`, colW - 6);
+    doc.text(wrapped, left + 3.5, aY);
+    aY += wrapped.length * 3.4 + 1.2;
+  });
+  leftY += 49;
+
+  // RIGHT COL: 03 - MUST-CAPTURE & 04 - IMPORTANT PEOPLE
+  let rightY = colStartY;
+
+  // 03 - MUST-CAPTURE MOMENTS
+  doc.setFillColor(250, 248, 245);
+  doc.rect(col2X, rightY, colW, 46, "F");
+  doc.setDrawColor(229, 221, 210);
+  doc.rect(col2X, rightY, colW, 46, "D");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.5);
+  doc.setTextColor(176, 141, 87);
+  doc.text("03 — MUST-CAPTURE MOMENTS", col2X + 3.5, rightY + 4.5);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.5);
+  doc.setTextColor(40, 40, 40);
+  let mY = rightY + 9.5;
+  cheatSheetDoc.mustCaptureMoments.slice(0, 5).forEach((item) => {
+    const wrapped = doc.splitTextToSize(`* ${item}`, colW - 6);
+    doc.text(wrapped, col2X + 3.5, mY);
+    mY += wrapped.length * 3.3 + 1;
+  });
+  rightY += 49;
+
+  // 04 - IMPORTANT PEOPLE
+  doc.setFillColor(250, 248, 245);
+  doc.rect(col2X, rightY, colW, 46, "F");
+  doc.setDrawColor(229, 221, 210);
+  doc.rect(col2X, rightY, colW, 46, "D");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.5);
+  doc.setTextColor(176, 141, 87);
+  doc.text("04 — IMPORTANT PEOPLE", col2X + 3.5, rightY + 4.5);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.5);
+  doc.setTextColor(40, 40, 40);
+  let famY = rightY + 9.5;
+  cheatSheetDoc.importantPeople.slice(0, 4).forEach((p) => {
+    doc.text(`• ${p.name} — ${p.relationship}`, col2X + 3.5, famY);
+    famY += 4;
+  });
+  doc.setFont("helvetica", "italic");
+  doc.setFontSize(6.8);
+  doc.setTextColor(80, 80, 80);
+  const noteWrapped = doc.splitTextToSize(cheatSheetDoc.importantPeopleNote, colW - 6);
+  doc.text(noteWrapped, col2X + 3.5, famY + 1.5);
+  rightY += 49;
+
+  y = Math.max(leftY, rightY) + 1;
+
+  // 06 — WORKING WITH THE COUPLE (Across bottom)
+  doc.setFillColor(250, 248, 245);
+  doc.rect(left, y, contentWidth, 22, "F");
+  doc.setDrawColor(229, 221, 210);
+  doc.rect(left, y, contentWidth, 22, "D");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.5);
+  doc.setTextColor(176, 141, 87);
+  doc.text("06 — WORKING WITH THE COUPLE", left + 3.5, y + 4.5);
+
+  let workX = left + 3.5;
+  const workCellW = (contentWidth - 7) / Math.max(1, cheatSheetDoc.workingWithCouple.length);
+  cheatSheetDoc.workingWithCouple.forEach((w) => {
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(9);
+    doc.setFontSize(6.8);
     doc.setTextColor(176, 141, 87);
-    doc.text(sec.title, left + 4, y + 5);
+    doc.text(w.label, workX, y + 9.5);
 
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(40, 40, 40);
-    const splitText = doc.splitTextToSize(sec.content, contentWidth - 8);
-    doc.text(splitText, left + 4, y + 10);
-
-    y += 27;
+    doc.setFontSize(7.2);
+    doc.setTextColor(30, 30, 30);
+    const valWrapped = doc.splitTextToSize(w.value, workCellW - 3);
+    doc.text(valWrapped, workX, y + 13.5);
+    workX += workCellW;
   });
+  y += 25;
+
+  // TECHNICAL NON-NEGOTIABLE (if present)
+  if (cheatSheetDoc.technicalNonNegotiable) {
+    doc.setFillColor(255, 249, 238);
+    doc.rect(left, y, contentWidth, 14, "F");
+    doc.setDrawColor(176, 141, 87);
+    doc.setLineWidth(0.4);
+    doc.rect(left, y, contentWidth, 14, "D");
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.5);
+    doc.setTextColor(176, 141, 87);
+    doc.text("TECHNICAL NON-NEGOTIABLE", left + 3.5, y + 4.5);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+    doc.setTextColor(26, 26, 26);
+    const techWrapped = doc.splitTextToSize(cheatSheetDoc.technicalNonNegotiable, contentWidth - 7);
+    doc.text(techWrapped, left + 3.5, y + 9);
+  }
 
   // PAGE 2: EDITORIAL CREATIVE BRIEF
-  const briefText = submission.editorialBrief || synthesizeEditorialBrief(submission.answers);
+  const isOutdatedV1 = Boolean(
+    submission.editorialBrief &&
+      (submission.editorialBrief.includes("bring a distinctive energy") ||
+        submission.editorialBrief.includes("CREATIVE DIRECTION SUMMARY") ||
+        submission.editorialBrief.includes("Their proposal unfolded with personal significance"))
+  );
+  const briefText = (!submission.editorialBrief || isOutdatedV1)
+    ? synthesizeEditorialBrief(submission.answers)
+    : submission.editorialBrief;
   doc.addPage();
   y = 20;
 
@@ -207,23 +331,26 @@ export async function exportToPdf(submission: SubmissionRecord) {
       y += 2.5;
       return;
     }
-    if (trimmed.startsWith("### ")) {
-      if (y > 260) {
+    const isSectionHeading = /^\d{2}\s*—/.test(trimmed) || trimmed === "THE FINAL THOUGHT" || trimmed.startsWith("### ");
+    if (isSectionHeading) {
+      if (y > 255) {
         doc.addPage();
         y = 20;
       }
-      y += 2;
+      y += 3;
       doc.setFont("helvetica", "bold");
       doc.setFontSize(10.5);
       doc.setTextColor(176, 141, 87);
       doc.text(trimmed.replace(/^###\s+/, ""), left, y);
-      y += 5;
+      y += 5.5;
     } else if (
       trimmed.startsWith("OAKS WEDDING") ||
       trimmed.startsWith("---") ||
-      trimmed.includes("====")
+      trimmed.includes("====") ||
+      trimmed === "THE COUPLE STORY & WEDDING BRIEF" ||
+      trimmed === `${p1.toUpperCase()} & ${p2.toUpperCase()}`
     ) {
-      // skip title banner lines
+      // skip title banner lines and divider bars
     } else {
       if (y > 268) {
         doc.addPage();
@@ -239,7 +366,16 @@ export async function exportToPdf(submission: SubmissionRecord) {
   });
 
   // PAGE 3: 11 COUPLE INTERVIEW & TESTIMONIAL QUESTIONS
-  const interviewText = submission.interviewQuestions || synthesizeInterviewQuestions(submission.answers);
+  const isOutdatedInterviewV1 = Boolean(
+    submission.interviewQuestions &&
+      (submission.interviewQuestions.includes("rushing through your chest") ||
+        submission.interviewQuestions.includes("eyes tell you that words never could") ||
+        submission.interviewQuestions.includes("mean to your souls") ||
+        submission.interviewQuestions.includes("paths first crossed ("))
+  );
+  const interviewText = (!submission.interviewQuestions || isOutdatedInterviewV1)
+    ? synthesizeInterviewQuestions(submission.answers)
+    : submission.interviewQuestions;
   const interviewDoc = parseInterviewDocument(interviewText, p1, p2);
   doc.addPage();
   y = 20;
@@ -306,6 +442,28 @@ export async function exportToPdf(submission: SubmissionRecord) {
   doc.setTextColor(26, 26, 26);
   doc.text(`Full Questionnaire Answers · ${title}`, left, y);
   y += 8;
+
+  const ans = submission.answers;
+  const threeWords = (ans.q5_threeWords || []).filter(Boolean).join(", ");
+  const allFamily = (ans.q10_people?.familyMembers || [])
+    .map((m) => `${m.name} (${m.relationship})`)
+    .join(", ");
+  const filmFeelStr = Array.isArray((ans.q11_filmFeel as any)?.selected)
+    ? [
+        ...((ans.q11_filmFeel as any).selected || []),
+        (ans.q11_filmFeel as any).other ? `Other: ${(ans.q11_filmFeel as any).other}` : null,
+      ].filter(Boolean).join(", ")
+    : typeof ans.q11_filmFeel === "string"
+    ? ans.q11_filmFeel
+    : "N/A";
+  const toneStr = Array.isArray((ans.q13_tone as any)?.selected)
+    ? [
+        ...((ans.q13_tone as any).selected || []),
+        (ans.q13_tone as any).other ? `Other: ${(ans.q13_tone as any).other}` : null,
+      ].filter(Boolean).join(", ")
+    : typeof ans.q13_tone === "string"
+    ? ans.q13_tone
+    : "N/A";
 
   const fullQuestions = [
     { q: "Q1. What do you call each other?", a: `${p1} calls ${p2}: "${ans.q1_calls?.aCallsB || ""}" · ${p2} calls ${p1}: "${ans.q1_calls?.bCallsA || ""}"` },
@@ -383,6 +541,29 @@ export async function exportToDocx(submission: SubmissionRecord) {
     ? ans.q13_tone
     : "Not answered";
 
+  const isOutdatedCheatSheetDocx = Boolean(
+    !submission.cheatSheet ||
+      submission.cheatSheet.includes("Who will cry first:") ||
+      submission.cheatSheet.includes("Camera Versatility:") ||
+      submission.cheatSheet.includes("Quiet Notes & Surprises") ||
+      !submission.cheatSheet.includes("01 — THE VIBE") ||
+      !submission.cheatSheet.includes("02 — TOP PRIORITIES")
+  );
+  const docxCheatSheetText = isOutdatedCheatSheetDocx
+    ? synthesizeCheatSheet(submission.answers)
+    : submission.cheatSheet!;
+
+  const isOutdatedInterviewV1Docx = Boolean(
+    submission.interviewQuestions &&
+      (submission.interviewQuestions.includes("rushing through your chest") ||
+        submission.interviewQuestions.includes("eyes tell you that words never could") ||
+        submission.interviewQuestions.includes("mean to your souls") ||
+        submission.interviewQuestions.includes("paths first crossed ("))
+  );
+  const docxInterviewText = (!submission.interviewQuestions || isOutdatedInterviewV1Docx)
+    ? synthesizeInterviewQuestions(submission.answers)
+    : submission.interviewQuestions;
+
   const doc = new Document({
     sections: [
       {
@@ -407,83 +588,56 @@ export async function exportToDocx(submission: SubmissionRecord) {
           }),
           new Paragraph({ text: "" }),
 
-          // Cheat Sheet Table
+          // Shoot Day Cheat Sheet Section (01–06 + Technical)
           new Paragraph({
-            text: "SHOOT DAY CHEAT SHEET SUMMARY",
-            heading: HeadingLevel.HEADING_3,
+            text: "SHOOT DAY PRODUCTION CHEAT SHEET",
+            heading: HeadingLevel.HEADING_2,
           }),
-          new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            rows: [
-              new TableRow({
-                children: [
-                  new TableCell({
-                    children: [
-                      new Paragraph({ children: [new TextRun({ text: "1. The Vibe", bold: true })] }),
-                      new Paragraph({ text: `Three Words: ${(ans.q5_threeWords || []).filter(Boolean).join(", ")}` }),
-                      new Paragraph({ text: `Film Feel: ${filmFeelDocxStr}` }),
-                      new Paragraph({ text: `Tone: ${toneDocxStr}` }),
-                    ],
-                  }),
-
-                  new TableCell({
-                    children: [
-                      new Paragraph({ children: [new TextRun({ text: "2. Must Capture", bold: true })] }),
-                      new Paragraph({
-                        text: `VIPs: ${(ans.q10_people?.familyMembers || [])
-                          .filter((m) => m.mustCapture)
-                          .map((m) => `${m.name} (${m.relationship})`)
-                          .join(", ") || "None"}`,
-                      }),
-                      new Paragraph({ text: `Must Shots: ${ans.q15_captureAvoid?.definitelyCapture || "N/A"}` }),
-                    ],
-                  }),
-                ],
-              }),
-              new TableRow({
-                children: [
-                  new TableCell({
-                    children: [
-                      new Paragraph({ children: [new TextRun({ text: "3. Do NOT Capture", bold: true })] }),
-                      new Paragraph({ text: ans.q15_captureAvoid?.pleaseAvoid || "None specified" }),
-                    ],
-                  }),
-                  new TableCell({
-                    children: [
-                      new Paragraph({ children: [new TextRun({ text: "4. Working with Them", bold: true })] }),
-                      new Paragraph({ text: `Camera Versatility: ${ans.q18_cameraVersatility || "N/A"}` }),
-                      new Paragraph({ text: `Guidance: ${ans.q20_guidanceComfort || "N/A"}` }),
-                      new Paragraph({
-                        text: `Tips: ${(ans.q21_comfortTips?.selected || []).join(", ")} ${ans.q21_comfortTips?.notes || ""}`,
-                      }),
-                    ],
-                  }),
-                ],
-              }),
-              new TableRow({
-                children: [
-                  new TableCell({
-                    children: [
-                      new Paragraph({ children: [new TextRun({ text: "5. Who's Who (Family)", bold: true })] }),
-                      new Paragraph({
-                        text: (ans.q10_people?.familyMembers || [])
-                          .map((m) => `${m.name} (${m.relationship})`)
-                          .join(", ") || "None",
-                      }),
-                    ],
-                  }),
-                  new TableCell({
-                    children: [
-                      new Paragraph({ children: [new TextRun({ text: "6. Notes & Surprises", bold: true })] }),
-                      new Paragraph({ text: `Non-negotiables: ${ans.q16_nonNegotiables || "None"}` }),
-                      new Paragraph({ text: `Notes: ${ans.q23_oneLastThing?.notes || "None"}` }),
-                      new Paragraph({ text: `Private Team Notes: ${submission.privateNotes || "None"}` }),
-                    ],
-                  }),
-                ],
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: `Quick-reference production cue sheet for ${p1} & ${p2} (30–60s scan · ~150–220 words)`,
+                italics: true,
+                color: "666666",
               }),
             ],
           }),
+          new Paragraph({ text: "" }),
+          ...docxCheatSheetText
+            .split("\n")
+            .filter((l) => {
+              const t = l.trim();
+              return (
+                !t.startsWith("OAKS WEDDING") &&
+                t !== `${p1.toUpperCase()} & ${p2.toUpperCase()}` &&
+                t !== "WEDDING DAY CHEAT SHEET"
+              );
+            })
+            .map((line) => {
+              const trimmed = line.trim();
+              if (!trimmed) return new Paragraph({ text: "" });
+              const isSectionHeading =
+                /^\d{2}\s*—/.test(trimmed) || trimmed === "TECHNICAL NON-NEGOTIABLE";
+              if (isSectionHeading) {
+                return new Paragraph({
+                  text: trimmed,
+                  heading: HeadingLevel.HEADING_3,
+                });
+              }
+              if (trimmed.startsWith("*") || trimmed.startsWith("-")) {
+                return new Paragraph({
+                  bullet: { level: 0 },
+                  children: [
+                    new TextRun({
+                      text: trimmed.replace(/^[*•\-]\s*/, ""),
+                    }),
+                  ],
+                });
+              }
+              return new Paragraph({
+                children: [new TextRun({ text: trimmed })],
+              });
+            }),
 
           new Paragraph({ text: "" }),
 
@@ -495,23 +649,33 @@ export async function exportToDocx(submission: SubmissionRecord) {
           new Paragraph({
             children: [
               new TextRun({
-                text: `Interpreted creative direction for ${p1} & ${p2} (3–5 min read for photo & cinema crew)`,
+                text: `Simple, human wedding brief for ${p1} & ${p2} (2–3 min read · ~350–500 words)`,
                 italics: true,
                 color: "666666",
               }),
             ],
           }),
           new Paragraph({ text: "" }),
-          ...(submission.editorialBrief || synthesizeEditorialBrief(submission.answers))
+          ...((!submission.editorialBrief ||
+            submission.editorialBrief.includes("bring a distinctive energy") ||
+            submission.editorialBrief.includes("CREATIVE DIRECTION SUMMARY") ||
+            submission.editorialBrief.includes("Their proposal unfolded with personal significance"))
+            ? synthesizeEditorialBrief(submission.answers)
+            : submission.editorialBrief)
             .split("\n")
             .filter((l) => {
               const t = l.trim();
-              return !t.startsWith("OAKS WEDDING") && !t.startsWith("---") && !t.includes("====");
+              return !t.startsWith("OAKS WEDDING") &&
+                     !t.startsWith("---") &&
+                     !t.includes("====") &&
+                     t !== "THE COUPLE STORY & WEDDING BRIEF" &&
+                     t !== `${p1.toUpperCase()} & ${p2.toUpperCase()}`;
             })
             .map((line) => {
               const t = line.trim();
               if (!t) return new Paragraph({ text: "" });
-              if (t.startsWith("### ")) {
+              const isSectionHeading = /^\d{2}\s*—/.test(t) || t === "THE FINAL THOUGHT" || t.startsWith("### ");
+              if (isSectionHeading) {
                 return new Paragraph({
                   text: t.replace(/^###\s+/, ""),
                   heading: HeadingLevel.HEADING_3,
@@ -540,7 +704,7 @@ export async function exportToDocx(submission: SubmissionRecord) {
           }),
           new Paragraph({ text: "" }),
           ...parseInterviewDocument(
-            submission.interviewQuestions || synthesizeInterviewQuestions(submission.answers),
+            docxInterviewText,
             p1,
             p2
           ).questions.flatMap((q) => [
