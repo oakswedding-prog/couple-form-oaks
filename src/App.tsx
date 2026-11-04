@@ -29,6 +29,7 @@ import { AdminLogin } from "./pages/AdminLogin.tsx";
 import { AdminDashboard } from "./pages/AdminDashboard.tsx";
 import { AdminCoupleDetail } from "./pages/AdminCoupleDetail.tsx";
 import { useAdminAuth } from "./lib/auth.ts";
+import { Analytics } from "@vercel/analytics/react";
 
 const INITIAL_ANSWERS: QuestionnaireAnswers = {
   partner1: "",
@@ -1823,6 +1824,7 @@ export default function App() {
           </div>
         </div>
       </main>
+      <Analytics />
     </div>
   );
 }
