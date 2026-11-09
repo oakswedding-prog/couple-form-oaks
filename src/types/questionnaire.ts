@@ -66,6 +66,7 @@ export interface SubmissionRecord {
   phone: string;
   email: string;
   answers: QuestionnaireAnswers;
+  coupleLetter?: string;
   editorialBrief?: string;
   interviewQuestions?: string;
   cheatSheet?: string;

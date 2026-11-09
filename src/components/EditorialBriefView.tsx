@@ -8,14 +8,16 @@ import {
   Sparkles,
   Copy,
   Check,
-  Printer,
+  Download,
+  Loader2,
   RefreshCw,
   Edit2,
   CheckCircle2,
   BookOpen,
 } from "lucide-react";
-import { QuestionnaireAnswers } from "../types/questionnaire.ts";
+import { QuestionnaireAnswers, SubmissionRecord } from "../types/questionnaire.ts";
 import { generateEditorialBrief, synthesizeEditorialBrief } from "../utils/editorialBriefGenerator.ts";
+import { exportToPdf } from "../utils/exportBrief.ts";
 
 interface EditorialBriefViewProps {
   brief?: string;

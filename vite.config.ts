@@ -224,6 +224,66 @@ CRITICAL PRODUCTION RULES FOR SHOOT DAY CHEAT SHEET:
               res.end(JSON.stringify({ error: err?.message || 'Failed to generate cheat sheet' }));
             }
           });
+
+          server.middlewares.use('/api/generate-letter', async (req, res) => {
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+            if (req.method === 'OPTIONS') {
+              res.statusCode = 200;
+              res.end();
+              return;
+            }
+            if (req.method !== 'POST') {
+              res.statusCode = 405;
+              res.end(JSON.stringify({ error: 'Method not allowed' }));
+              return;
+            }
+
+            const apiKey = process.env.GEMINI_API_KEY;
+            if (!apiKey) {
+              res.statusCode = 503;
+              res.end(JSON.stringify({ error: 'GEMINI_API_KEY is not set' }));
+              return;
+            }
+
+            try {
+              let bodyStr = '';
+              for await (const chunk of req) {
+                bodyStr += chunk;
+              }
+              const { answers, systemPrompt } = JSON.parse(bodyStr || '{}');
+
+              const ai = new GoogleGenAI({ apiKey });
+              const prompt = `Here are the couple's responses to all 23 questions in the OAKS Wedding Questionnaire:
+${JSON.stringify(answers, null, 2)}
+
+INSTRUCTIONS FOR THE COUPLE LETTER:
+- Write a warm, personal, client-facing message to the couple titled "OUR UNDERSTANDING OF YOUR WEDDING".
+- Follow the exact structure, level of warmth, simplicity, and tone of the Ajin & Siya benchmark.
+- Target word count: approximately 400–650 words.
+- NEVER cite question numbers or mention "in the questionnaire".
+- NEVER invent proposal stories, family relationships, or details not provided by the couple.
+- Return ONLY the finished letter starting with the couple's names.`;
+
+              const response = await ai.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents: prompt,
+                config: {
+                  systemInstruction: systemPrompt || undefined,
+                  temperature: 0.6,
+                },
+              });
+
+              const text = response.text || '';
+              res.statusCode = 200;
+              res.end(JSON.stringify({ letter: text }));
+            } catch (err: any) {
+              console.error('Error generating couple letter with Gemini:', err);
+              res.statusCode = 500;
+              res.end(JSON.stringify({ error: err?.message || 'Failed to generate couple letter' }));
+            }
+          });
         },
       },
     ],

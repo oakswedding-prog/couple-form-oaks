@@ -7,7 +7,8 @@ import React, { useState, useEffect } from "react";
 import {
   Copy,
   Check,
-  Printer,
+  Download,
+  Loader2,
   RefreshCw,
   Edit2,
   CheckCircle2,
@@ -27,6 +28,8 @@ import {
   generateCheatSheet,
   synthesizeCheatSheet,
 } from "../utils/cheatSheetGenerator.ts";
+import { exportCheatSheetPdf } from "../utils/exportBrief.ts";
+import { LightboxModal, LightboxImage } from "./MediaGallery.tsx";
 
 interface ShootDayCheatSheetProps {
   submission: SubmissionRecord;
@@ -67,6 +70,17 @@ export const ShootDayCheatSheet: React.FC<ShootDayCheatSheetProps> = ({
   const [editedText, setEditedText] = useState<string>(currentText);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"card" | "plain">("card");
+
+  // Lightbox for cheat sheet photos (tree sketch & VIP member photos)
+  const [lightboxImages, setLightboxImages] = useState<LightboxImage[]>([]);
+  const [lightboxIndex, setLightboxIndex] = useState<number>(0);
+  const [isLightboxOpen, setIsLightboxOpen] = useState<boolean>(false);
+
+  const openLightbox = (images: LightboxImage[], startIndex: number = 0) => {
+    setLightboxImages(images);
+    setLightboxIndex(startIndex);
+    setIsLightboxOpen(true);
+  };
 
   // Auto-migrate legacy text to the new 150-220 word production standard on mount
   useEffect(() => {
@@ -134,9 +148,24 @@ export const ShootDayCheatSheet: React.FC<ShootDayCheatSheetProps> = ({
     }
   };
 
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState<boolean>(false);
+
+  const handleDownloadPdf = async () => {
+    if (isDownloadingPdf) return;
+    setIsDownloadingPdf(true);
+    try {
+      await exportCheatSheetPdf(submission);
+    } catch (err) {
+      console.error("Failed to export cheat sheet PDF:", err);
+      if (onPrint) onPrint();
+      else window.print();
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
+
   const handlePrint = () => {
-    if (onPrint) onPrint();
-    else window.print();
+    handleDownloadPdf();
   };
 
   // Format date nicely
@@ -266,12 +295,17 @@ export const ShootDayCheatSheet: React.FC<ShootDayCheatSheetProps> = ({
 
             <button
               type="button"
-              onClick={handlePrint}
-              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-white bg-[#1A1A1A] hover:bg-black rounded-lg transition-colors cursor-pointer shadow-2xs"
-              title="Print clean 1-page A4 reference"
+              onClick={handleDownloadPdf}
+              disabled={isDownloadingPdf}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-[#1A1A1A] hover:bg-black rounded-lg transition-colors cursor-pointer shadow-2xs disabled:opacity-60"
+              title="Download 1-page Shoot Day Cheat Sheet as PDF"
             >
-              <Printer className="w-3.5 h-3.5" />
-              <span>Print A4</span>
+              {isDownloadingPdf ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Download className="w-3.5 h-3.5" />
+              )}
+              <span>Download PDF</span>
             </button>
           </div>
         </div>
@@ -426,25 +460,94 @@ export const ShootDayCheatSheet: React.FC<ShootDayCheatSheetProps> = ({
                     04 — Important People
                   </h2>
                 </div>
-                <span className="text-[10px] text-[#7A756D]">VIP Family</span>
+                <span className="text-[10px] text-[#7A756D]">VIP Family &amp; Friends</span>
               </div>
 
-              <div className="space-y-2">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-2 gap-y-1.5">
-                  {doc.importantPeople.map((p, idx) => (
-                    <div
-                      key={idx}
-                      className="bg-white/80 p-1.5 rounded-lg border border-[#E8DFD3]/80 text-[11px] flex items-center justify-between gap-1 print:bg-white print:border-gray-300"
-                    >
-                      <span className="font-semibold text-[#1A1A1A] truncate">
-                        {p.name}
-                      </span>
-                      <span className="text-[#8C7043] font-medium text-[10px] shrink-0 print:text-black">
-                        {p.relationship}
-                      </span>
-                    </div>
-                  ))}
+              <div className="space-y-2.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-2 gap-y-2">
+                  {doc.importantPeople.map((p, idx) => {
+                    const matchedMember = (answers.q10_people?.familyMembers || []).find(
+                      (m) =>
+                        m.name.toLowerCase().trim() === p.name.toLowerCase().trim() ||
+                        p.name.toLowerCase().includes(m.name.toLowerCase().trim()) ||
+                        m.name.toLowerCase().includes(p.name.toLowerCase().trim())
+                    );
+                    const photoUrl = matchedMember?.photoUrl;
+
+                    return (
+                      <div
+                        key={idx}
+                        className="bg-white/90 p-1.5 rounded-lg border border-[#E8DFD3]/80 text-[11px] flex items-center gap-2 print:bg-white print:border-gray-300"
+                      >
+                        {photoUrl ? (
+                          <img
+                            src={photoUrl}
+                            alt={p.name}
+                            onClick={() =>
+                              openLightbox([
+                                {
+                                  url: photoUrl,
+                                  title: p.name,
+                                  subtitle: `${p.relationship} · VIP Family Member`,
+                                },
+                              ])
+                            }
+                            className="w-8 h-8 rounded-md object-cover border border-[#E8DFD3] shrink-0 cursor-pointer hover:opacity-90 transition-opacity"
+                            title="Click to view photo"
+                          />
+                        ) : (
+                          <div className="w-8 h-8 rounded-md bg-[#FAF7F2] border border-[#E8DFD3] flex items-center justify-center font-cormorant font-semibold text-xs text-[#8C7043] shrink-0">
+                            {p.name.charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="font-semibold text-[#1A1A1A] truncate">
+                            {p.name}
+                          </div>
+                          <div className="text-[#8C7043] font-medium text-[10px] shrink-0 truncate print:text-black">
+                            {p.relationship}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
+
+                {/* Uploaded Family Tree Preview */}
+                {answers.q10_people?.treePhotoUrl && (
+                  <div className="pt-2 border-t border-[#E8DFD3]/70">
+                    <div
+                      onClick={() =>
+                        openLightbox([
+                          {
+                            url: answers.q10_people!.treePhotoUrl!,
+                            title: "Family Tree Sketch",
+                            subtitle: `Uploaded by ${p1} & ${p2}`,
+                          },
+                        ])
+                      }
+                      className="bg-white/95 p-2 rounded-lg border border-[#E8DFD3] flex items-center gap-2.5 cursor-pointer hover:border-[#B08D57] transition-all group"
+                      title="Click to view full family tree sketch"
+                    >
+                      <img
+                        src={answers.q10_people.treePhotoUrl}
+                        alt="Family Tree Sketch"
+                        className="w-10 h-10 rounded-md object-cover border border-[#E8DFD3] shrink-0 group-hover:scale-105 transition-transform"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[10px] font-bold text-[#8C7043] uppercase tracking-wider flex items-center justify-between">
+                          <span>Family Tree Sketch</span>
+                          <span className="text-[9px] font-normal text-[#7A756D] underline">
+                            View Sketch →
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-[#4A453E] truncate">
+                          Visual family tree diagram attached
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {doc.importantPeopleNote && (
                   <p className="text-[11px] text-[#4A453E] italic pt-1 border-t border-[#E8DFD3]/60 print:border-gray-200">
@@ -530,6 +633,15 @@ export const ShootDayCheatSheet: React.FC<ShootDayCheatSheetProps> = ({
         <span>Confidential · OAKS Wedding Photography &amp; Cinematography</span>
         <span>Target: 30–60 second scanning reference for shoot day crew</span>
       </div>
+
+      {/* Lightbox for cheat sheet photos */}
+      <LightboxModal
+        images={lightboxImages}
+        currentIndex={lightboxIndex}
+        isOpen={isLightboxOpen}
+        onClose={() => setIsLightboxOpen(false)}
+        onNavigate={(idx) => setLightboxIndex(idx)}
+      />
     </div>
   );
 };

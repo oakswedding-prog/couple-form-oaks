@@ -19,6 +19,8 @@ import {
   Mic,
   Trash2,
   AlertTriangle,
+  Users,
+  HeartHandshake,
 } from "lucide-react";
 import { SubmissionRecord, SubmissionStatus } from "../types/questionnaire.ts";
 import {
@@ -28,12 +30,22 @@ import {
   updateSubmissionEditorialBrief,
   updateSubmissionInterviewQuestions,
   updateSubmissionCheatSheet,
+  updateSubmissionCoupleLetter,
   deleteSubmission,
 } from "../lib/submissions.ts";
 import { ShootDayCheatSheet } from "../components/ShootDayCheatSheet.tsx";
 import { EditorialBriefView } from "../components/EditorialBriefView.tsx";
 import { CoupleInterviewView } from "../components/CoupleInterviewView.tsx";
+import { CoupleLetterView } from "../components/CoupleLetterView.tsx";
+import { synthesizeCoupleLetter } from "../utils/coupleLetterGenerator.ts";
 import { exportToPdf, exportToDocx } from "../utils/exportBrief.ts";
+import {
+  LightboxModal,
+  LightboxImage,
+  SafeImageThumbnail,
+  ThumbnailGallery,
+  ReferenceLinksList,
+} from "../components/MediaGallery.tsx";
 
 interface AdminCoupleDetailProps {
   submissionId: string;
@@ -56,11 +68,19 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
   // Download menu
   const [isDownloadOpen, setIsDownloadOpen] = useState<boolean>(false);
 
-  // Active view tab: "brief" | "cheatsheet" | "interview" | "full" | "all"
-  const [activeTab, setActiveTab] = useState<"brief" | "cheatsheet" | "interview" | "full" | "all">("brief");
+  // Active view tab: "letter" | "brief" | "cheatsheet" | "interview" | "full" | "all"
+  const [activeTab, setActiveTab] = useState<"letter" | "brief" | "cheatsheet" | "interview" | "full" | "all">("letter");
 
-  // Image lightbox modal
-  const [enlargedImage, setEnlargedImage] = useState<string | null>(null);
+  // Multi-image Lightbox modal state
+  const [lightboxImages, setLightboxImages] = useState<LightboxImage[]>([]);
+  const [lightboxIndex, setLightboxIndex] = useState<number>(0);
+  const [isLightboxOpen, setIsLightboxOpen] = useState<boolean>(false);
+
+  const openLightbox = (images: LightboxImage[], startIndex: number = 0) => {
+    setLightboxImages(images);
+    setLightboxIndex(startIndex);
+    setIsLightboxOpen(true);
+  };
 
   // Delete modal state
   const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false);
@@ -156,6 +176,17 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
       await updateSubmissionCheatSheet(submission.id, newCheatSheet);
     } catch (err) {
       console.error("Failed to save shoot day cheat sheet:", err);
+    }
+  };
+
+  // Handle saving regenerated or edited couple letter
+  const handleSaveLetter = async (newLetter: string) => {
+    if (!submission) return;
+    setSubmission({ ...submission, coupleLetter: newLetter });
+    try {
+      await updateSubmissionCoupleLetter(submission.id, newLetter);
+    } catch (err) {
+      console.error("Failed to save couple letter:", err);
     }
   };
 
@@ -344,6 +375,19 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
         <div className="flex items-center gap-2 border-b border-[#E5DDD2] pb-3 print:hidden overflow-x-auto scrollbar-none">
           <button
             type="button"
+            onClick={() => setActiveTab("letter")}
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-medium transition-all cursor-pointer whitespace-nowrap ${
+              activeTab === "letter"
+                ? "bg-[#1A1A1A] text-white shadow-xs"
+                : "text-[#5F5F5F] hover:text-[#1A1A1A] hover:bg-[#F2ECE4]"
+            }`}
+          >
+            <HeartHandshake className="w-4 h-4 text-[#B08D57]" />
+            <span>The Couple Letter</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveTab("brief")}
             className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-medium transition-all cursor-pointer whitespace-nowrap ${
               activeTab === "brief"
@@ -406,6 +450,20 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
             <span>Show All</span>
           </button>
         </div>
+
+        {/* 0. THE COUPLE LETTER — Our Understanding of Your Wedding */}
+        {(activeTab === "letter" || activeTab === "all") && (
+          <section className="space-y-4">
+            <CoupleLetterView
+              letter={submission.coupleLetter || synthesizeCoupleLetter(submission.answers)}
+              answers={submission.answers}
+              coupleNames={`${p1} & ${p2}`}
+              displayId={submission.displayId}
+              weddingDate={submission.weddingDate}
+              onSaveLetter={handleSaveLetter}
+            />
+          </section>
+        )}
 
         {/* 1. EDITORIAL CREATIVE BRIEF */}
         {(activeTab === "brief" || activeTab === "all") && (
@@ -686,72 +744,134 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
               num={10}
               question="Who are the most important people you want us to capture please give a family tree?"
               content={
-                <div className="space-y-4">
+                <div className="space-y-5">
                   {familyMembers.length > 0 ? (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                      {familyMembers.map((m) => (
-                        <div
-                          key={m.id}
-                          className={`p-3.5 rounded-xl border text-sm space-y-1.5 ${
-                            m.mustCapture
-                              ? "bg-[#FFFDF7] border-[#D4AF37] ring-1 ring-[#D4AF37]/30"
-                              : "bg-[#FAF8F5] border-[#E8DFD3]"
-                          }`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="font-semibold text-[#1A1A1A]">
-                              {m.name}
-                            </span>
-                            {m.mustCapture && (
-                              <span className="inline-flex items-center gap-1 text-[11px] font-bold text-[#8C7043] bg-[#FAF7F2] px-2 py-0.5 rounded-full border border-[#E8DFD3]">
-                                <Star className="w-3 h-3 fill-[#8C7043]" />
-                                Must Capture
-                              </span>
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-[#4A453E] flex items-center gap-1.5">
+                          <Users className="w-3.5 h-3.5 text-[#8C7043]" />
+                          <span>VIP Family Members &amp; Friends</span>
+                        </span>
+                        <span className="text-[11px] font-semibold text-[#8C7043] bg-[#FAF7F2] px-2 py-0.5 rounded-full border border-[#E8DFD3]">
+                          {familyMembers.length} {familyMembers.length === 1 ? "person" : "people"}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                        {familyMembers.map((m, mIdx) => (
+                          <div
+                            key={m.id || mIdx}
+                            className={`p-3 rounded-xl border text-sm flex gap-3 items-center transition-all ${
+                              m.mustCapture
+                                ? "bg-[#FFFDF7] border-[#D4AF37] ring-1 ring-[#D4AF37]/30 shadow-2xs"
+                                : "bg-[#FAF8F5] border-[#E8DFD3]"
+                            }`}
+                          >
+                            {/* Member Photo or Initial Avatar */}
+                            {m.photoUrl ? (
+                              <SafeImageThumbnail
+                                src={m.photoUrl}
+                                alt={m.name}
+                                onClick={() => {
+                                  const memberImages: LightboxImage[] = familyMembers
+                                    .filter((mem) => Boolean(mem.photoUrl))
+                                    .map((mem) => ({
+                                      url: mem.photoUrl!,
+                                      title: mem.name,
+                                      subtitle: `${mem.relationship} · ${
+                                        mem.side === "sideA"
+                                          ? `${p1}'s side`
+                                          : mem.side === "sideB"
+                                          ? `${p2}'s side`
+                                          : "Both sides"
+                                      }${mem.mustCapture ? " (★ Must Capture)" : ""}`,
+                                    }));
+                                  const targetIdx = memberImages.findIndex(
+                                    (item) => item.url === m.photoUrl
+                                  );
+                                  openLightbox(memberImages, targetIdx >= 0 ? targetIdx : 0);
+                                }}
+                                className="w-14 h-14 shrink-0 rounded-lg"
+                              />
+                            ) : (
+                              <div className="w-14 h-14 shrink-0 rounded-lg bg-[#F0EBE1] border border-[#E8DFD3] flex items-center justify-center font-cormorant font-semibold text-lg text-[#8C7043]">
+                                {m.name ? m.name.charAt(0).toUpperCase() : "?"}
+                              </div>
                             )}
+
+                            <div className="min-w-0 flex-1 space-y-0.5">
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="font-semibold text-[#1A1A1A] truncate text-sm">
+                                  {m.name}
+                                </span>
+                              </div>
+                              <div className="text-xs text-[#5F5F5F] truncate">
+                                {m.relationship}
+                              </div>
+                              <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                                <span className="text-[10px] text-[#7A756D] bg-white px-1.5 py-0.5 rounded border border-[#E8DFD3]">
+                                  {m.side === "sideA"
+                                    ? `${p1}'s side`
+                                    : m.side === "sideB"
+                                    ? `${p2}'s side`
+                                    : "Both"}
+                                </span>
+                                {m.mustCapture && (
+                                  <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-[#8C7043] bg-[#FAF7F2] px-1.5 py-0.5 rounded border border-[#E8DFD3]">
+                                    <Star className="w-2.5 h-2.5 fill-[#8C7043]" />
+                                    Must capture
+                                  </span>
+                                )}
+                              </div>
+                            </div>
                           </div>
-                          <div className="text-xs text-[#5F5F5F]">
-                            {m.relationship} ·{" "}
-                            {m.side === "sideA"
-                              ? `${p1}'s side`
-                              : m.side === "sideB"
-                              ? `${p2}'s side`
-                              : "Both"}
-                          </div>
-                          {m.photoUrl && (
-                            <img
-                              src={m.photoUrl}
-                              alt={m.name}
-                              onClick={() => setEnlargedImage(m.photoUrl!)}
-                              className="w-12 h-12 object-cover rounded-lg border border-[#E8DFD3] cursor-pointer mt-1"
-                            />
-                          )}
-                        </div>
-                      ))}
+                        ))}
+                      </div>
                     </div>
                   ) : (
-                    <NotAnswered text="No individual family members listed." />
+                    <NotAnswered text="No individual VIP family members listed." />
                   )}
 
+                  {/* Family Tree Sketch Preview */}
+                  <div className="space-y-2 pt-2 border-t border-[#E8DFD3]/60">
+                    <span className="text-xs font-semibold text-[#4A453E] block">
+                      Uploaded Family Tree / Sketch:
+                    </span>
+                    {ans.q10_people?.treePhotoUrl ? (
+                      <div className="bg-[#FAF8F5] p-3 rounded-xl border border-[#E8DFD3] inline-block">
+                        <SafeImageThumbnail
+                          src={ans.q10_people.treePhotoUrl}
+                          alt="Uploaded Family Tree Sketch"
+                          onClick={() =>
+                            openLightbox([
+                              {
+                                url: ans.q10_people!.treePhotoUrl!,
+                                title: "Family Tree Sketch",
+                                subtitle: `Provided by ${p1} & ${p2}`,
+                              },
+                            ])
+                          }
+                          className="max-h-60 w-auto min-w-[200px]"
+                        />
+                        <div className="mt-2 flex items-center justify-between text-[11px] text-[#7A756D]">
+                          <span>Click sketch to view full screen</span>
+                          <span className="font-semibold text-[#8C7043]">1 image</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-3.5 rounded-xl border border-[#E8DFD3] bg-[#FAF8F5] text-xs text-[#7A756D] italic">
+                        No family tree sketch uploaded.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Family Dynamics & Tree Notes */}
                   {ans.q10_people?.treeNotes && (
                     <div className="bg-[#FAF8F5] p-3 rounded-xl border border-[#E8DFD3] text-sm">
                       <span className="text-xs text-[#7A756D] font-medium block mb-1">
                         Family Dynamics &amp; Tree Notes:
                       </span>
-                      <p className="text-[#1A1A1A]">{ans.q10_people.treeNotes}</p>
-                    </div>
-                  )}
-
-                  {ans.q10_people?.treePhotoUrl && (
-                    <div>
-                      <span className="text-xs text-[#7A756D] font-medium block mb-1.5">
-                        Uploaded Family Tree / Sketch:
-                      </span>
-                      <img
-                        src={ans.q10_people.treePhotoUrl}
-                        alt="Family Tree"
-                        onClick={() => setEnlargedImage(ans.q10_people!.treePhotoUrl!)}
-                        className="max-h-48 rounded-xl border border-[#E8DFD3] object-cover cursor-pointer hover:opacity-90 transition-opacity"
-                      />
+                      <p className="text-[#1A1A1A] leading-relaxed">{ans.q10_people.treeNotes}</p>
                     </div>
                   )}
                 </div>
@@ -795,53 +915,33 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
               num={12}
               question="Are there any photographers, films, or Pinterest references you love?"
               content={
-                <div className="space-y-3">
+                <div className="space-y-4">
                   {ans.q12_references?.notes && (
                     <TextAnswer text={ans.q12_references.notes} />
                   )}
 
-                  {/* Links as clickable chips */}
-                  {ans.q12_references?.links?.length > 0 && (
-                    <div className="space-y-1">
-                      <span className="text-xs text-[#7A756D] font-medium block">
-                        Reference Links:
-                      </span>
-                      <div className="flex flex-wrap gap-2">
-                        {ans.q12_references.links.map((lnk, idx) => (
-                          <a
-                            key={idx}
-                            href={lnk}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs bg-[#FAF7F2] border border-[#E8DFD3] text-[#8C7043] hover:text-[#1A1A1A] hover:bg-[#F2ECE1] transition-colors"
-                          >
-                            <ExternalLink className="w-3.5 h-3.5" />
-                            <span className="truncate max-w-xs">{lnk}</span>
-                          </a>
-                        ))}
-                      </div>
-                    </div>
+                  {/* Links as clickable chips opening in new tabs */}
+                  {ans.q12_references?.links && ans.q12_references.links.length > 0 && (
+                    <ReferenceLinksList links={ans.q12_references.links} />
                   )}
 
-                  {/* Mood images */}
-                  {ans.q12_references?.images?.length > 0 && (
-                    <div className="space-y-1.5 pt-1">
-                      <span className="text-xs text-[#7A756D] font-medium block">
-                        Inspiration Photos:
-                      </span>
-                      <div className="flex flex-wrap gap-3">
-                        {ans.q12_references.images.map((img, idx) => (
-                          <img
-                            key={idx}
-                            src={img}
-                            alt={`Reference ${idx + 1}`}
-                            onClick={() => setEnlargedImage(img)}
-                            className="w-24 h-24 object-cover rounded-xl border border-[#E8DFD3] cursor-pointer hover:opacity-90"
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  {/* Mood inspiration images */}
+                  <ThumbnailGallery
+                    images={ans.q12_references?.images || []}
+                    titlePrefix="Reference Inspiration"
+                    categoryLabel="Inspiration Photos &amp; Screenshots"
+                    emptyLabel="No reference photos or screenshots uploaded."
+                    onOpenImage={(idx) => {
+                      const list: LightboxImage[] = (ans.q12_references?.images || []).map(
+                        (img, i) => ({
+                          url: img,
+                          title: `Reference Mood Image ${i + 1}`,
+                          subtitle: `Inspiration reference for ${p1} & ${p2}`,
+                        })
+                      );
+                      openLightbox(list, idx);
+                    }}
+                  />
                 </div>
               }
             />
@@ -1007,26 +1107,28 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
               num={23}
               question="Is there anything else you would love us to know about you, your story, or your wedding?"
               content={
-                <div className="space-y-3">
-                  <TextAnswer text={ans.q23_oneLastThing?.notes} />
-                  {ans.q23_oneLastThing?.images?.length > 0 && (
-                    <div className="space-y-1.5 pt-1">
-                      <span className="text-xs text-[#7A756D] font-medium block">
-                        Attached Photos:
-                      </span>
-                      <div className="flex flex-wrap gap-3">
-                        {ans.q23_oneLastThing.images.map((img, idx) => (
-                          <img
-                            key={idx}
-                            src={img}
-                            alt={`Photo ${idx + 1}`}
-                            onClick={() => setEnlargedImage(img)}
-                            className="w-24 h-24 object-cover rounded-xl border border-[#E8DFD3] cursor-pointer hover:opacity-90"
-                          />
-                        ))}
-                      </div>
-                    </div>
+                <div className="space-y-4">
+                  {ans.q23_oneLastThing?.notes && (
+                    <TextAnswer text={ans.q23_oneLastThing.notes} />
                   )}
+
+                  {/* Attached Photos */}
+                  <ThumbnailGallery
+                    images={ans.q23_oneLastThing?.images || []}
+                    titlePrefix="Attached Photo"
+                    categoryLabel="Attached Photos"
+                    emptyLabel="No additional photos attached."
+                    onOpenImage={(idx) => {
+                      const list: LightboxImage[] = (ans.q23_oneLastThing?.images || []).map(
+                        (img, i) => ({
+                          url: img,
+                          title: `Attached Photo ${i + 1}`,
+                          subtitle: `Shared by ${p1} & ${p2}`,
+                        })
+                      );
+                      openLightbox(list, idx);
+                    }}
+                  />
                 </div>
               }
             />
@@ -1035,27 +1137,14 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
         )}
       </main>
 
-      {/* Lightbox Image Modal */}
-      {enlargedImage && (
-        <div
-          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 animate-in fade-in duration-150"
-          onClick={() => setEnlargedImage(null)}
-        >
-          <button
-            type="button"
-            onClick={() => setEnlargedImage(null)}
-            className="absolute top-4 right-4 text-white hover:text-gray-300 p-2"
-          >
-            <X className="w-6 h-6" />
-          </button>
-          <img
-            src={enlargedImage}
-            alt="Enlarged reference"
-            className="max-h-[90vh] max-w-[90vw] object-contain rounded-lg shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          />
-        </div>
-      )}
+      {/* Full-Screen Multi-Image Lightbox Modal */}
+      <LightboxModal
+        images={lightboxImages}
+        currentIndex={lightboxIndex}
+        isOpen={isLightboxOpen}
+        onClose={() => setIsLightboxOpen(false)}
+        onNavigate={(idx) => setLightboxIndex(idx)}
+      />
 
       {/* Delete Confirmation Modal */}
       {showDeleteModal && (

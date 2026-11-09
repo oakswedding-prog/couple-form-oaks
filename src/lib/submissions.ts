@@ -26,11 +26,118 @@ import {
 import { synthesizeEditorialBrief } from "../utils/editorialBriefGenerator.ts";
 import { synthesizeInterviewQuestions } from "../utils/interviewQuestionsGenerator.ts";
 import { synthesizeCheatSheet } from "../utils/cheatSheetGenerator.ts";
+import { synthesizeCoupleLetter } from "../utils/coupleLetterGenerator.ts";
 
 /**
- * Uploads a base64 image data URL to Firebase Storage.
- * Falls back to returning the original data URL if storage is unconfigured or fails,
- * ensuring couples' media is never lost.
+ * In-memory cache for resolved Firebase Storage URLs
+ */
+const resolvedUrlCache = new Map<string, string>();
+
+/**
+ * Resolves a storage path ("submissions/...") or URI to an accessible signed download URL.
+ * Signed-in admins have read permissions on Firebase Storage.
+ */
+export async function resolveMediaUrl(pathOrUrl: string | undefined | null): Promise<string> {
+  if (!pathOrUrl) return "";
+  const trimmed = pathOrUrl.trim();
+  if (!trimmed) return "";
+
+  // Already a full web URL, data URI, or blob URL
+  if (
+    trimmed.startsWith("http://") ||
+    trimmed.startsWith("https://") ||
+    trimmed.startsWith("data:image/") ||
+    trimmed.startsWith("blob:")
+  ) {
+    return trimmed;
+  }
+
+  // In-memory cache hit
+  if (resolvedUrlCache.has(trimmed)) {
+    return resolvedUrlCache.get(trimmed)!;
+  }
+
+  // Handle Firebase Storage path (e.g. "submissions/sub_.../tree.jpg" or "gs://...")
+  try {
+    let cleanPath = trimmed;
+    if (cleanPath.startsWith("gs://")) {
+      const parts = cleanPath.split("/").slice(3);
+      cleanPath = parts.join("/");
+    }
+    const storageRef = ref(storage, cleanPath);
+    const url = await getDownloadURL(storageRef);
+    resolvedUrlCache.set(trimmed, url);
+    return url;
+  } catch (err) {
+    console.warn(`Could not resolve storage path "${trimmed}":`, err);
+    return "";
+  }
+}
+
+/**
+ * Resolves all image paths (Q10 tree/members, Q12 references, Q23 photos) in a SubmissionRecord.
+ * Ensures the admin UI and export utilities receive ready-to-display https download URLs.
+ */
+export async function resolveSubmissionMedia(record: SubmissionRecord): Promise<SubmissionRecord> {
+  if (!record || !record.answers) return record;
+
+  const cloned: SubmissionRecord = JSON.parse(JSON.stringify(record));
+  const ans = cloned.answers;
+
+  // Resolve Q10 tree photo
+  if (ans.q10_people?.treePhotoUrl) {
+    ans.q10_people.treePhotoUrl = await resolveMediaUrl(ans.q10_people.treePhotoUrl);
+  }
+
+  // Resolve Q10 family members
+  if (Array.isArray(ans.q10_people?.familyMembers)) {
+    for (const m of ans.q10_people.familyMembers) {
+      if (m.photoUrl) {
+        m.photoUrl = await resolveMediaUrl(m.photoUrl);
+      }
+    }
+  }
+
+  // Resolve Q12 reference images
+  if (Array.isArray(ans.q12_references?.images)) {
+    const resolved: string[] = [];
+    for (const img of ans.q12_references.images) {
+      const url = await resolveMediaUrl(img);
+      if (url) resolved.push(url);
+    }
+    ans.q12_references.images = resolved;
+  }
+
+  // Resolve Q23 one last thing images
+  if (Array.isArray(ans.q23_oneLastThing?.images)) {
+    const resolved: string[] = [];
+    for (const img of ans.q23_oneLastThing.images) {
+      const url = await resolveMediaUrl(img);
+      if (url) resolved.push(url);
+    }
+    ans.q23_oneLastThing.images = resolved;
+  }
+
+  // Auto-synthesize couple letter if not yet generated on earlier submissions
+  if (!cloned.coupleLetter && cloned.answers) {
+    try {
+      cloned.coupleLetter = synthesizeCoupleLetter(cloned.answers);
+    } catch {
+      // ignore
+    }
+  }
+
+  return cloned;
+}
+
+/**
+ * Uploads a base64 image data URL to Firebase Storage under submissions/{folder}/{name}.
+ * Since couples are unauthenticated and storage rules enforce `allow read: if isAdmin();`,
+ * attempting getDownloadURL right after upload throws storage/unauthorized for couples.
+ *
+ * When this occurs, we store the storagePath (e.g. "submissions/...").
+ * The authenticated admin dashboard resolves storage paths to signed download URLs on demand.
+ * This guarantees the Firestore document stays tiny (<10KB) and avoids Firestore's 1MB limit.
  */
 async function uploadMediaFile(
   submissionFolder: string,
@@ -41,15 +148,35 @@ async function uploadMediaFile(
     return dataUrl;
   }
 
+  // Derive mime type and file extension
+  const mimeMatch = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+_-]+);base64,/);
+  const contentType = mimeMatch ? mimeMatch[1] : "image/jpeg";
+  let ext = "jpg";
+  if (contentType === "image/png") ext = "png";
+  else if (contentType === "image/webp") ext = "webp";
+
+  const storagePath = `submissions/${submissionFolder}/${Date.now()}_${fileName}.${ext}`;
+  const storageRef = ref(storage, storagePath);
+
   try {
-    const storagePath = `submissions/${submissionFolder}/${Date.now()}_${fileName}.jpg`;
-    const storageRef = ref(storage, storagePath);
-    await uploadString(storageRef, dataUrl, "data_url");
+    await uploadString(storageRef, dataUrl, "data_url", {
+      contentType,
+    });
+  } catch (uploadErr: any) {
+    console.error(`Firebase Storage upload failed for ${fileName}:`, uploadErr);
+    throw new Error(
+      `Failed to upload ${fileName.replace(/_/g, " ")}. Please check your internet connection and try again.`
+    );
+  }
+
+  // File was successfully uploaded to Storage.
+  // Now attempt to obtain a download URL; if unauthenticated (expected for couples),
+  // return the storagePath so the authenticated admin can resolve it securely.
+  try {
     const downloadUrl = await getDownloadURL(storageRef);
     return downloadUrl;
-  } catch (err) {
-    console.warn("Storage upload fallback: using local media URL", err);
-    return dataUrl;
+  } catch {
+    return storagePath;
   }
 }
 
@@ -155,10 +282,11 @@ export async function createSubmission(
       // 2. Upload any base64 images
       const processedAnswers = await processAllImages(answers, submissionId);
 
-      // Generate editorial brief, 11 interview questions & shoot day cheat sheet
+      // Generate editorial brief, 11 interview questions, shoot day cheat sheet & couple letter
       const editorialBrief = synthesizeEditorialBrief(processedAnswers);
       const interviewQuestions = synthesizeInterviewQuestions(processedAnswers);
       const cheatSheet = synthesizeCheatSheet(processedAnswers);
+      const coupleLetter = synthesizeCoupleLetter(processedAnswers);
 
       const submissionDocRef = doc(db, "submissions", submissionId);
       const submissionData: SubmissionRecord = {
@@ -173,6 +301,7 @@ export async function createSubmission(
         phone: answers.phone || "",
         email: answers.email || "",
         answers: processedAnswers,
+        coupleLetter,
         editorialBrief,
         interviewQuestions,
         cheatSheet,
@@ -320,19 +449,26 @@ export async function getSubmissionById(id: string): Promise<SubmissionRecord | 
   // Check memory cache
   if (memorySubmissionsCache) {
     const found = memorySubmissionsCache.find((r) => r.id === id);
-    if (found) return found;
+    if (found) {
+      const resolved = await resolveSubmissionMedia(found);
+      return resolved;
+    }
   }
   // Check session storage
   const sessionData = loadFromSessionCache();
   if (sessionData) {
     const found = sessionData.find((r) => r.id === id);
-    if (found) return found;
+    if (found) {
+      const resolved = await resolveSubmissionMedia(found);
+      return resolved;
+    }
   }
 
   const submissionRef = doc(db, "submissions", id);
   const snapshot = await getDoc(submissionRef);
   if (!snapshot.exists()) return null;
-  const record = { ...(snapshot.data() as SubmissionRecord), id: snapshot.id };
+  const rawRecord = { ...(snapshot.data() as SubmissionRecord), id: snapshot.id };
+  const record = await resolveSubmissionMedia(rawRecord);
 
   if (memorySubmissionsCache) {
     const idx = memorySubmissionsCache.findIndex((r) => r.id === id);
@@ -392,6 +528,18 @@ export async function updateSubmissionInterviewQuestions(
   updateLocalCacheRecord(id, (rec) => ({ ...rec, interviewQuestions }));
   const submissionRef = doc(db, "submissions", id);
   await updateDoc(submissionRef, { interviewQuestions });
+}
+
+/**
+ * Admin: Update or save newly generated couple letter for a couple.
+ */
+export async function updateSubmissionCoupleLetter(
+  id: string,
+  coupleLetter: string
+): Promise<void> {
+  updateLocalCacheRecord(id, (rec) => ({ ...rec, coupleLetter }));
+  const submissionRef = doc(db, "submissions", id);
+  await updateDoc(submissionRef, { coupleLetter });
 }
 
 /**

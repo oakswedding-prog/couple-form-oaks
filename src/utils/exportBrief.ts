@@ -14,6 +14,11 @@ import {
   synthesizeCheatSheet,
   parseCheatSheetDocument,
 } from "./cheatSheetGenerator.ts";
+import { synthesizeCoupleLetter } from "./coupleLetterGenerator.ts";
+import {
+  loadImageAsDataUrl,
+  loadImageAsUint8Array,
+} from "./imageLoader.ts";
 
 /**
  * Downloads a binary blob as a named file in the browser.
@@ -275,7 +280,77 @@ export async function exportToPdf(submission: SubmissionRecord) {
     doc.text(techWrapped, left + 3.5, y + 9);
   }
 
-  // PAGE 2: EDITORIAL CREATIVE BRIEF
+  // PAGE 2: THE COUPLE LETTER — OUR UNDERSTANDING OF YOUR WEDDING
+  const coupleLetterText =
+    submission.coupleLetter || synthesizeCoupleLetter(submission.answers);
+  doc.addPage();
+  y = 20;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(176, 141, 87);
+  doc.text(`${STUDIO_NAME.toUpperCase()} · THE COUPLE LETTER`, left, y);
+
+  y += 7;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(18);
+  doc.setTextColor(26, 26, 26);
+  doc.text("Our Understanding of Your Wedding", left, y);
+
+  y += 5;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(100, 100, 100);
+  doc.text(`A personalized message from OAKS Wedding for ${title}`, left, y);
+
+  y += 4;
+  doc.setDrawColor(229, 221, 210);
+  doc.setLineWidth(0.4);
+  doc.line(left, y, left + contentWidth, y);
+  y += 8;
+
+  const letterLines = coupleLetterText.split("\n");
+  letterLines.forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      y += 2.5;
+      return;
+    }
+    const isSectionHeading = /^\d{2}\s*—/.test(trimmed) || trimmed.startsWith("### ");
+    if (isSectionHeading) {
+      if (y > 255) {
+        doc.addPage();
+        y = 20;
+      }
+      y += 3;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10.5);
+      doc.setTextColor(176, 141, 87);
+      doc.text(trimmed.replace(/^###\s+/, ""), left, y);
+      y += 5.5;
+    } else if (
+      trimmed.startsWith("THE COUPLE LETTER") ||
+      trimmed.startsWith("---") ||
+      trimmed.includes("====") ||
+      trimmed.startsWith("Our Understanding of Your Wedding") ||
+      trimmed === `${p1.toUpperCase()} & ${p2.toUpperCase()}`
+    ) {
+      // skip repeated banner headers
+    } else {
+      if (y > 268) {
+        doc.addPage();
+        y = 20;
+      }
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(45, 45, 45);
+      const wrapped = doc.splitTextToSize(trimmed, contentWidth);
+      doc.text(wrapped, left, y);
+      y += wrapped.length * 4.2 + 2;
+    }
+  });
+
+  // PAGE 3: EDITORIAL CREATIVE BRIEF
   const isOutdatedV1 = Boolean(
     submission.editorialBrief &&
       (submission.editorialBrief.includes("bring a distinctive energy") ||
@@ -478,8 +553,8 @@ export async function exportToPdf(submission: SubmissionRecord) {
     { q: "Q23. One last thing?", a: `${ans.q23_oneLastThing?.notes || "Not answered"}` },
   ];
 
-  fullQuestions.forEach((item) => {
-    if (y > 265) {
+  for (const item of fullQuestions) {
+    if (y > 260) {
       doc.addPage();
       y = 20;
     }
@@ -495,8 +570,151 @@ export async function exportToPdf(submission: SubmissionRecord) {
     doc.setTextColor(60, 60, 60);
     const splitA = doc.splitTextToSize(item.a, contentWidth);
     doc.text(splitA, left, y);
-    y += splitA.length * 4.2 + 5;
-  });
+    y += splitA.length * 4.2 + 3;
+
+    // Embed Q10 Images (Family Tree sketch & VIP photos)
+    if (item.q.startsWith("Q10.")) {
+      // 1. Family tree sketch
+      if (ans.q10_people?.treePhotoUrl) {
+        const treeData = await loadImageAsDataUrl(ans.q10_people.treePhotoUrl);
+        if (treeData) {
+          if (y > 215) {
+            doc.addPage();
+            y = 20;
+          }
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(8);
+          doc.setTextColor(176, 141, 87);
+          doc.text("Family Tree / Sketch Attached:", left, y);
+          y += 4;
+          try {
+            doc.addImage(treeData, "JPEG", left, y, 75, 48);
+            y += 52;
+          } catch {
+            // ignore
+          }
+        }
+      }
+
+      // 2. VIP Member Photos
+      const membersWithPhotos = (ans.q10_people?.familyMembers || []).filter((m) => Boolean(m.photoUrl));
+      if (membersWithPhotos.length > 0) {
+        if (y > 225) {
+          doc.addPage();
+          y = 20;
+        }
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.setTextColor(176, 141, 87);
+        doc.text(`VIP Member Photos (${membersWithPhotos.length}):`, left, y);
+        y += 4;
+
+        let mx = left;
+        for (const m of membersWithPhotos.slice(0, 6)) {
+          const mData = await loadImageAsDataUrl(m.photoUrl);
+          if (mData) {
+            if (mx + 28 > left + contentWidth) {
+              mx = left;
+              y += 28;
+              if (y > 255) {
+                doc.addPage();
+                y = 20;
+              }
+            }
+            try {
+              doc.addImage(mData, "JPEG", mx, y, 22, 22);
+              doc.setFont("helvetica", "normal");
+              doc.setFontSize(6.5);
+              doc.setTextColor(40, 40, 40);
+              doc.text(m.name.slice(0, 14), mx, y + 25);
+              mx += 28;
+            } catch {
+              // ignore
+            }
+          }
+        }
+        y += 30;
+      }
+    }
+
+    // Embed Q12 Images (Reference Mood Photos)
+    if (item.q.startsWith("Q12.")) {
+      const refImages = ans.q12_references?.images || [];
+      if (refImages.length > 0) {
+        if (y > 225) {
+          doc.addPage();
+          y = 20;
+        }
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.setTextColor(176, 141, 87);
+        doc.text(`Reference Inspiration Photos (${refImages.length}):`, left, y);
+        y += 4;
+
+        let rx = left;
+        for (const img of refImages.slice(0, 6)) {
+          const rData = await loadImageAsDataUrl(img);
+          if (rData) {
+            if (rx + 42 > left + contentWidth) {
+              rx = left;
+              y += 32;
+              if (y > 255) {
+                doc.addPage();
+                y = 20;
+              }
+            }
+            try {
+              doc.addImage(rData, "JPEG", rx, y, 38, 27);
+              rx += 42;
+            } catch {
+              // ignore
+            }
+          }
+        }
+        y += 32;
+      }
+    }
+
+    // Embed Q23 Images (Attached Photos)
+    if (item.q.startsWith("Q23.")) {
+      const lastImages = ans.q23_oneLastThing?.images || [];
+      if (lastImages.length > 0) {
+        if (y > 225) {
+          doc.addPage();
+          y = 20;
+        }
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.setTextColor(176, 141, 87);
+        doc.text(`Attached Photos (${lastImages.length}):`, left, y);
+        y += 4;
+
+        let lx = left;
+        for (const img of lastImages.slice(0, 6)) {
+          const lData = await loadImageAsDataUrl(img);
+          if (lData) {
+            if (lx + 42 > left + contentWidth) {
+              lx = left;
+              y += 32;
+              if (y > 255) {
+                doc.addPage();
+                y = 20;
+              }
+            }
+            try {
+              doc.addImage(lData, "JPEG", lx, y, 38, 27);
+              lx += 42;
+            } catch {
+              // ignore
+            }
+          }
+        }
+        y += 32;
+      }
+    }
+
+    y += 3;
+  }
 
   doc.save(filename);
 }
@@ -551,7 +769,29 @@ export async function exportToDocx(submission: SubmissionRecord) {
     ? synthesizeInterviewQuestions(submission.answers)
     : submission.interviewQuestions;
 
-  const { Document, Packer, Paragraph, TextRun, HeadingLevel } = await import("docx");
+  const { Document, Packer, Paragraph, TextRun, HeadingLevel, ImageRun } = await import("docx");
+
+  // Pre-load image bytes asynchronously for embedding
+  const treePhotoBytes = await loadImageAsUint8Array(ans.q10_people?.treePhotoUrl);
+  const vipPhotoBytes = await Promise.all(
+    (ans.q10_people?.familyMembers || [])
+      .filter((m) => Boolean(m.photoUrl))
+      .slice(0, 6)
+      .map(async (m) => ({
+        name: m.name,
+        bytes: await loadImageAsUint8Array(m.photoUrl),
+      }))
+  );
+  const refPhotoBytes = await Promise.all(
+    (ans.q12_references?.images || [])
+      .slice(0, 6)
+      .map(async (img) => await loadImageAsUint8Array(img))
+  );
+  const lastPhotoBytes = await Promise.all(
+    (ans.q23_oneLastThing?.images || [])
+      .slice(0, 6)
+      .map(async (img) => await loadImageAsUint8Array(img))
+  );
 
   const doc = new Document({
     sections: [
@@ -625,6 +865,50 @@ export async function exportToDocx(submission: SubmissionRecord) {
               }
               return new Paragraph({
                 children: [new TextRun({ text: trimmed })],
+              });
+            }),
+
+          new Paragraph({ text: "" }),
+
+          // The Couple Letter Section
+          new Paragraph({
+            text: "THE COUPLE LETTER — OUR UNDERSTANDING OF YOUR WEDDING",
+            heading: HeadingLevel.HEADING_2,
+          }),
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: `Personalized client-facing letter for ${p1} & ${p2} (~400–600 words)`,
+                italics: true,
+                color: "666666",
+              }),
+            ],
+          }),
+          new Paragraph({ text: "" }),
+          ...(submission.coupleLetter || synthesizeCoupleLetter(submission.answers))
+            .split("\n")
+            .filter((l) => {
+              const t = l.trim();
+              return (
+                !t.startsWith("THE COUPLE LETTER") &&
+                !t.startsWith("---") &&
+                !t.includes("====") &&
+                t !== "Our Understanding of Your Wedding" &&
+                t !== `${p1.toUpperCase()} & ${p2.toUpperCase()}`
+              );
+            })
+            .map((line) => {
+              const t = line.trim();
+              if (!t) return new Paragraph({ text: "" });
+              const isSectionHeading = /^\d{2}\s*—/.test(t) || t.startsWith("### ");
+              if (isSectionHeading) {
+                return new Paragraph({
+                  text: t.replace(/^###\s+/, ""),
+                  heading: HeadingLevel.HEADING_3,
+                });
+              }
+              return new Paragraph({
+                children: [new TextRun({ text: t })],
               });
             }),
 
@@ -781,6 +1065,39 @@ export async function exportToDocx(submission: SubmissionRecord) {
               .map((m) => `${m.name} (${m.relationship})${m.mustCapture ? " [MUST CAPTURE]" : ""}`)
               .join("; ") || "None",
           }),
+          ...(ans.q10_people?.treeNotes
+            ? [new Paragraph({ text: `Notes: ${ans.q10_people.treeNotes}` })]
+            : []),
+          ...(treePhotoBytes
+            ? [
+                new Paragraph({
+                  children: [new TextRun({ text: "Family Tree / Sketch Attached:", bold: true, italics: true })],
+                }),
+                new Paragraph({
+                  children: [
+                    new ImageRun({
+                      data: treePhotoBytes,
+                      transformation: { width: 340, height: 210 },
+                      type: "jpg",
+                    }),
+                  ],
+                }),
+              ]
+            : []),
+          ...vipPhotoBytes
+            .filter((vp) => vp.bytes !== null)
+            .flatMap((vp) => [
+              new Paragraph({
+                children: [
+                  new TextRun({ text: `• ${vp.name}: `, bold: true }),
+                  new ImageRun({
+                    data: vp.bytes!,
+                    transformation: { width: 75, height: 75 },
+                    type: "jpg",
+                  }),
+                ],
+              }),
+            ]),
           new Paragraph({ text: "" }),
 
           // Q11
@@ -791,6 +1108,20 @@ export async function exportToDocx(submission: SubmissionRecord) {
           // Q12
           new Paragraph({ children: [new TextRun({ text: "12. References & Links", bold: true })] }),
           new Paragraph({ text: `Links: ${(ans.q12_references?.links || []).join(", ") || "None"} | Notes: ${ans.q12_references?.notes || "None"}` }),
+          ...refPhotoBytes
+            .filter((b): b is Uint8Array => b !== null)
+            .map(
+              (b) =>
+                new Paragraph({
+                  children: [
+                    new ImageRun({
+                      data: b,
+                      transformation: { width: 180, height: 130 },
+                      type: "jpg",
+                    }),
+                  ],
+                })
+            ),
           new Paragraph({ text: "" }),
 
           // Q13
@@ -846,6 +1177,20 @@ export async function exportToDocx(submission: SubmissionRecord) {
           // Q23
           new Paragraph({ children: [new TextRun({ text: "23. One last thing", bold: true })] }),
           new Paragraph({ text: ans.q23_oneLastThing?.notes || "Not answered" }),
+          ...lastPhotoBytes
+            .filter((b): b is Uint8Array => b !== null)
+            .map(
+              (b) =>
+                new Paragraph({
+                  children: [
+                    new ImageRun({
+                      data: b,
+                      transformation: { width: 180, height: 130 },
+                      type: "jpg",
+                    }),
+                  ],
+                })
+            ),
         ],
       },
     ],
@@ -853,4 +1198,327 @@ export async function exportToDocx(submission: SubmissionRecord) {
 
   const blob = await Packer.toBlob(doc);
   downloadBlob(blob, filename);
+}
+
+/**
+ * Export ONLY the Couple Letter as an elegant client-facing PDF document
+ */
+export async function exportCoupleLetterPdf(
+  submission: SubmissionRecord,
+  letterTextProp?: string
+) {
+  const { jsPDF } = await import("jspdf");
+  const doc = new jsPDF({
+    orientation: "portrait",
+    unit: "mm",
+    format: "a4",
+  });
+
+  const p1 = submission.partner1 || "Partner 1";
+  const p2 = submission.partner2 || "Partner 2";
+  const title = `${p1} & ${p2}`;
+  const filename = `${submission.displayId || "OAKS"}_${p1}_${p2}_Couple_Letter.pdf`.replace(
+    /[^a-zA-Z0-9_-]/g,
+    "_"
+  );
+
+  const coupleLetterText =
+    letterTextProp ||
+    submission.coupleLetter ||
+    synthesizeCoupleLetter(submission.answers);
+
+  let y = 22;
+  const left = 20;
+  const pageWidth = 210;
+  const contentWidth = 170;
+
+  // Header
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(176, 141, 87); // Gold #B08D57
+  doc.text(`${STUDIO_NAME.toUpperCase()} · CLIENT-FACING MESSAGE`, left, y);
+
+  if (submission.displayId) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(100, 100, 100);
+    doc.text(submission.displayId, pageWidth - left - 15, y);
+  }
+
+  y += 8;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(22);
+  doc.setTextColor(26, 26, 26);
+  doc.text("THE COUPLE LETTER", left, y);
+
+  y += 6;
+  doc.setFont("helvetica", "italic");
+  doc.setFontSize(11);
+  doc.setTextColor(140, 112, 67); // #8C7043
+  doc.text(`Our Understanding of Your Wedding · ${title}`, left, y);
+
+  y += 5;
+  doc.setDrawColor(26, 26, 26);
+  doc.setLineWidth(0.6);
+  doc.line(left, y, left + contentWidth, y);
+  y += 10;
+
+  const letterLines = coupleLetterText.split("\n");
+  letterLines.forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      y += 3;
+      return;
+    }
+    const isSectionHeading = /^\d{2}\s*—/.test(trimmed) || trimmed.startsWith("### ");
+    if (isSectionHeading) {
+      if (y > 255) {
+        doc.addPage();
+        y = 22;
+      }
+      y += 4;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(176, 141, 87);
+      doc.text(trimmed.replace(/^###\s+/, ""), left, y);
+      y += 6;
+    } else if (
+      trimmed.startsWith("THE COUPLE LETTER") ||
+      trimmed.startsWith("---") ||
+      trimmed.includes("====") ||
+      trimmed.startsWith("Our Understanding of Your Wedding") ||
+      trimmed === `${p1.toUpperCase()} & ${p2.toUpperCase()}`
+    ) {
+      // skip duplicate header text
+    } else {
+      if (y > 265) {
+        doc.addPage();
+        y = 22;
+      }
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9.5);
+      doc.setTextColor(35, 35, 35);
+      const wrapped = doc.splitTextToSize(trimmed, contentWidth);
+      doc.text(wrapped, left, y);
+      y += wrapped.length * 4.8 + 3;
+    }
+  });
+
+  doc.save(filename);
+}
+
+/**
+ * Export ONLY the Shoot Day Cheat Sheet as a 1-page A4 reference PDF
+ */
+export async function exportCheatSheetPdf(submission: SubmissionRecord) {
+  const { jsPDF } = await import("jspdf");
+  const doc = new jsPDF({
+    orientation: "portrait",
+    unit: "mm",
+    format: "a4",
+  });
+
+  const p1 = submission.partner1 || "Partner 1";
+  const p2 = submission.partner2 || "Partner 2";
+  const title = `${p1} & ${p2}`;
+  const filename = `${submission.displayId || "OAKS"}_${p1}_${p2}_Shoot_Day_Cheat_Sheet.pdf`.replace(
+    /[^a-zA-Z0-9_-]/g,
+    "_"
+  );
+
+  let y = 18;
+  const left = 16;
+  const pageWidth = 210;
+  const contentWidth = 178;
+
+  // Header
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(176, 141, 87); // Gold #B08D57
+  doc.text(`${STUDIO_NAME.toUpperCase()} · SHOOT DAY CHEAT SHEET`, left, y);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.setTextColor(100, 100, 100);
+  doc.text(submission.displayId || "", pageWidth - left - 15, y);
+
+  y += 8;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(22);
+  doc.setTextColor(26, 26, 26);
+  doc.text(title, left, y);
+
+  y += 6;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.setTextColor(70, 70, 70);
+  const weddingStr = submission.weddingDate
+    ? `Wedding Date: ${submission.weddingDate}`
+    : "Wedding Date: TBD";
+  const contactStr = [submission.phone, submission.email].filter(Boolean).join("  ·  ");
+  doc.text(`${weddingStr}  |  ${contactStr}`, left, y);
+
+  y += 4;
+  doc.setDrawColor(26, 26, 26);
+  doc.setLineWidth(0.6);
+  doc.line(left, y, left + contentWidth, y);
+
+  y += 8;
+
+  const isOutdatedCheatSheet = Boolean(
+    !submission.cheatSheet ||
+      submission.cheatSheet.includes("Who will cry first:") ||
+      submission.cheatSheet.includes("Camera Versatility:") ||
+      submission.cheatSheet.includes("Quiet Notes & Surprises") ||
+      !submission.cheatSheet.includes("01 — THE VIBE") ||
+      !submission.cheatSheet.includes("02 — TOP PRIORITIES")
+  );
+  const cheatSheetText = isOutdatedCheatSheet
+    ? synthesizeCheatSheet(submission.answers)
+    : submission.cheatSheet!;
+  const cheatSheetDoc = parseCheatSheetDocument(cheatSheetText, p1, p2);
+
+  // 01 — THE VIBE (Across Top)
+  doc.setFillColor(250, 248, 245);
+  doc.rect(left, y, contentWidth, 20, "F");
+  doc.setDrawColor(229, 221, 210);
+  doc.rect(left, y, contentWidth, 20, "D");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.5);
+  doc.setTextColor(176, 141, 87);
+  doc.text("01 — THE VIBE", left + 3.5, y + 4.5);
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.setTextColor(26, 26, 26);
+  doc.text(cheatSheetDoc.vibeWords, left + 38, y + 4.5);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.5);
+  doc.setTextColor(45, 45, 45);
+  const vibeWrapped = doc.splitTextToSize(cheatSheetDoc.vibeDescription, contentWidth - 7);
+  doc.text(vibeWrapped, left + 3.5, y + 9.5);
+  y += 23;
+
+  // Left & Right Columns
+  const colW = 86;
+  const colGap = 6;
+  const col2X = left + colW + colGap;
+  const colStartY = y;
+
+  let leftY = colStartY;
+
+  // 02 - TOP PRIORITIES
+  doc.setFillColor(250, 248, 245);
+  doc.rect(left, leftY, colW, 46, "F");
+  doc.setDrawColor(229, 221, 210);
+  doc.rect(left, leftY, colW, 46, "D");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.5);
+  doc.setTextColor(176, 141, 87);
+  doc.text("02 — TOP PRIORITIES", left + 3.5, leftY + 4.5);
+
+  let py = leftY + 9;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.5);
+  doc.setTextColor(40, 40, 40);
+  cheatSheetDoc.topPriorities.slice(0, 4).forEach((p) => {
+    const pWrapped = doc.splitTextToSize(`• ${p}`, colW - 7);
+    doc.text(pWrapped, left + 3.5, py);
+    py += pWrapped.length * 3.8 + 1;
+  });
+
+  leftY += 49;
+
+  // 05 - PLEASE AVOID
+  doc.setFillColor(254, 242, 242);
+  doc.rect(left, leftY, colW, 42, "F");
+  doc.setDrawColor(254, 202, 202);
+  doc.rect(left, leftY, colW, 42, "D");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.5);
+  doc.setTextColor(185, 28, 28);
+  doc.text("05 — PLEASE AVOID (NON-NEGOTIABLE)", left + 3.5, leftY + 4.5);
+
+  let ay = leftY + 9;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.5);
+  doc.setTextColor(127, 29, 29);
+  cheatSheetDoc.pleaseAvoid.slice(0, 3).forEach((a) => {
+    const aWrapped = doc.splitTextToSize(`• ${a}`, colW - 7);
+    doc.text(aWrapped, left + 3.5, ay);
+    ay += aWrapped.length * 3.8 + 1;
+  });
+
+  // RIGHT COL: 03, 04, 06
+  let rightY = colStartY;
+
+  // 03 - PEOPLE TO WATCH
+  doc.setFillColor(250, 248, 245);
+  doc.rect(col2X, rightY, colW, 46, "F");
+  doc.setDrawColor(229, 221, 210);
+  doc.rect(col2X, rightY, colW, 46, "D");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.5);
+  doc.setTextColor(176, 141, 87);
+  doc.text("03 — PEOPLE TO WATCH", col2X + 3.5, rightY + 4.5);
+
+  let pwy = rightY + 9;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.5);
+  doc.setTextColor(40, 40, 40);
+  cheatSheetDoc.peopleToWatch.slice(0, 4).forEach((pw) => {
+    const pwWrapped = doc.splitTextToSize(`• ${pw}`, colW - 7);
+    doc.text(pwWrapped, col2X + 3.5, pwy);
+    pwy += pwWrapped.length * 3.8 + 1;
+  });
+
+  rightY += 49;
+
+  // 04 - MUST-CAPTURE MOMENTS
+  doc.setFillColor(250, 248, 245);
+  doc.rect(col2X, rightY, colW, 42, "F");
+  doc.setDrawColor(229, 221, 210);
+  doc.rect(col2X, rightY, colW, 42, "D");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.5);
+  doc.setTextColor(176, 141, 87);
+  doc.text("04 — MUST-CAPTURE MOMENTS", col2X + 3.5, rightY + 4.5);
+
+  let my = rightY + 9;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.5);
+  doc.setTextColor(40, 40, 40);
+  cheatSheetDoc.mustCaptureMoments.slice(0, 3).forEach((m) => {
+    const mWrapped = doc.splitTextToSize(`• ${m}`, colW - 7);
+    doc.text(mWrapped, col2X + 3.5, my);
+    my += mWrapped.length * 3.8 + 1;
+  });
+
+  // 06 - TECHNICAL & CREW
+  y = Math.max(leftY + 45, rightY + 45);
+  if (cheatSheetDoc.technicalNonNegotiable) {
+    doc.setFillColor(255, 251, 235);
+    doc.rect(left, y, contentWidth, 18, "F");
+    doc.setDrawColor(254, 215, 170);
+    doc.rect(left, y, contentWidth, 18, "D");
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.5);
+    doc.setTextColor(176, 141, 87);
+    doc.text("TECHNICAL NON-NEGOTIABLE", left + 3.5, y + 4.5);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+    doc.setTextColor(26, 26, 26);
+    const techWrapped = doc.splitTextToSize(cheatSheetDoc.technicalNonNegotiable, contentWidth - 7);
+    doc.text(techWrapped, left + 3.5, y + 9);
+  }
+
+  doc.save(filename);
 }
