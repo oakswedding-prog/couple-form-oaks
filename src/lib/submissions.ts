@@ -10,6 +10,7 @@ import {
   getDocs,
   setDoc,
   updateDoc,
+  deleteDoc,
   query,
   orderBy,
   runTransaction,
@@ -221,10 +222,44 @@ export async function createSubmission(
   throw new Error("Unable to save submission.");
 }
 
-/**
- * Admin: Fetch all submissions ordered by newest sequence number first.
- */
-export async function getSubmissions(): Promise<SubmissionRecord[]> {
+const SESSION_CACHE_KEY = "oaks_submissions_cache_v1";
+let memorySubmissionsCache: SubmissionRecord[] | null = null;
+
+function saveToSessionCache(records: SubmissionRecord[]) {
+  try {
+    sessionStorage.setItem(SESSION_CACHE_KEY, JSON.stringify(records));
+  } catch {
+    // sessionStorage quota or disabled
+  }
+}
+
+function loadFromSessionCache(): SubmissionRecord[] | null {
+  try {
+    const raw = sessionStorage.getItem(SESSION_CACHE_KEY);
+    if (raw) {
+      return JSON.parse(raw);
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+function updateLocalCacheRecord(id: string, updater: (record: SubmissionRecord) => SubmissionRecord) {
+  if (memorySubmissionsCache) {
+    memorySubmissionsCache = memorySubmissionsCache.map((rec) => (rec.id === id ? updater(rec) : rec));
+    saveToSessionCache(memorySubmissionsCache);
+  }
+}
+
+function removeFromLocalCache(id: string) {
+  if (memorySubmissionsCache) {
+    memorySubmissionsCache = memorySubmissionsCache.filter((rec) => rec.id !== id);
+    saveToSessionCache(memorySubmissionsCache);
+  }
+}
+
+async function fetchSubmissionsFromServer(): Promise<SubmissionRecord[]> {
   const submissionsRef = collection(db, "submissions");
   const q = query(submissionsRef, orderBy("sequenceNumber", "desc"));
   const snapshot = await getDocs(q);
@@ -241,13 +276,74 @@ export async function getSubmissions(): Promise<SubmissionRecord[]> {
 }
 
 /**
+ * Admin: Fetch all submissions ordered by newest sequence number first.
+ * Employs SWR (Stale-While-Revalidate) with in-memory & sessionStorage caching
+ * so repeat visits and back navigation appear in 0ms without blank screens.
+ */
+export async function getSubmissions(forceRefresh = false): Promise<SubmissionRecord[]> {
+  // 1. In-memory cache hit (fastest, 0ms)
+  if (!forceRefresh && memorySubmissionsCache && memorySubmissionsCache.length > 0) {
+    // Background revalidation
+    fetchSubmissionsFromServer().then((fresh) => {
+      memorySubmissionsCache = fresh;
+      saveToSessionCache(fresh);
+    }).catch(() => {});
+    return memorySubmissionsCache;
+  }
+
+  // 2. SessionStorage cache hit (preserves data across page reloads/tab navigation)
+  if (!forceRefresh && !memorySubmissionsCache) {
+    const sessionData = loadFromSessionCache();
+    if (sessionData && sessionData.length > 0) {
+      memorySubmissionsCache = sessionData;
+      // Background revalidation
+      fetchSubmissionsFromServer().then((fresh) => {
+        memorySubmissionsCache = fresh;
+        saveToSessionCache(fresh);
+      }).catch(() => {});
+      return sessionData;
+    }
+  }
+
+  // 3. Network fetch
+  const fresh = await fetchSubmissionsFromServer();
+  memorySubmissionsCache = fresh;
+  saveToSessionCache(fresh);
+  return fresh;
+}
+
+/**
  * Admin: Fetch a single couple submission by ID.
+ * Returns immediately from cache when available.
  */
 export async function getSubmissionById(id: string): Promise<SubmissionRecord | null> {
+  // Check memory cache
+  if (memorySubmissionsCache) {
+    const found = memorySubmissionsCache.find((r) => r.id === id);
+    if (found) return found;
+  }
+  // Check session storage
+  const sessionData = loadFromSessionCache();
+  if (sessionData) {
+    const found = sessionData.find((r) => r.id === id);
+    if (found) return found;
+  }
+
   const submissionRef = doc(db, "submissions", id);
   const snapshot = await getDoc(submissionRef);
   if (!snapshot.exists()) return null;
-  return { ...(snapshot.data() as SubmissionRecord), id: snapshot.id };
+  const record = { ...(snapshot.data() as SubmissionRecord), id: snapshot.id };
+
+  if (memorySubmissionsCache) {
+    const idx = memorySubmissionsCache.findIndex((r) => r.id === id);
+    if (idx >= 0) {
+      memorySubmissionsCache[idx] = record;
+    } else {
+      memorySubmissionsCache.push(record);
+    }
+    saveToSessionCache(memorySubmissionsCache);
+  }
+  return record;
 }
 
 /**
@@ -257,6 +353,7 @@ export async function updateSubmissionStatus(
   id: string,
   status: SubmissionStatus
 ): Promise<void> {
+  updateLocalCacheRecord(id, (rec) => ({ ...rec, status }));
   const submissionRef = doc(db, "submissions", id);
   await updateDoc(submissionRef, { status });
 }
@@ -268,6 +365,7 @@ export async function updateSubmissionNotes(
   id: string,
   privateNotes: string
 ): Promise<void> {
+  updateLocalCacheRecord(id, (rec) => ({ ...rec, privateNotes }));
   const submissionRef = doc(db, "submissions", id);
   await updateDoc(submissionRef, { privateNotes });
 }
@@ -279,6 +377,7 @@ export async function updateSubmissionEditorialBrief(
   id: string,
   editorialBrief: string
 ): Promise<void> {
+  updateLocalCacheRecord(id, (rec) => ({ ...rec, editorialBrief }));
   const submissionRef = doc(db, "submissions", id);
   await updateDoc(submissionRef, { editorialBrief });
 }
@@ -290,6 +389,7 @@ export async function updateSubmissionInterviewQuestions(
   id: string,
   interviewQuestions: string
 ): Promise<void> {
+  updateLocalCacheRecord(id, (rec) => ({ ...rec, interviewQuestions }));
   const submissionRef = doc(db, "submissions", id);
   await updateDoc(submissionRef, { interviewQuestions });
 }
@@ -301,7 +401,18 @@ export async function updateSubmissionCheatSheet(
   id: string,
   cheatSheet: string
 ): Promise<void> {
+  updateLocalCacheRecord(id, (rec) => ({ ...rec, cheatSheet }));
   const submissionRef = doc(db, "submissions", id);
   await updateDoc(submissionRef, { cheatSheet });
 }
+
+/**
+ * Admin: Permanently delete a submission.
+ */
+export async function deleteSubmission(id: string): Promise<void> {
+  removeFromLocalCache(id);
+  const submissionRef = doc(db, "submissions", id);
+  await deleteDoc(submissionRef);
+}
+
 

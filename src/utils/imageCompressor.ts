@@ -19,7 +19,7 @@ export async function compressImage(file: File): Promise<string> {
     reader.onload = (e) => {
       const img = new Image();
       img.onload = () => {
-        const MAX_DIMENSION = 1600;
+        const MAX_DIMENSION = 1280;
         let width = img.width;
         let height = img.height;
 
@@ -44,13 +44,25 @@ export async function compressImage(file: File): Promise<string> {
           return;
         }
 
-        // Clean white background for transparent images converted to JPEG
+        // Clean white background for transparent images converted to JPEG/WebP
         ctx.fillStyle = "#FFFFFF";
         ctx.fillRect(0, 0, width, height);
 
         ctx.drawImage(img, 0, 0, width, height);
 
-        const compressedDataUrl = canvas.toDataURL("image/jpeg", 0.8);
+        // Try WebP first for 30-40% smaller payload; fallback to JPEG
+        let compressedDataUrl = "";
+        try {
+          const webpData = canvas.toDataURL("image/webp", 0.82);
+          if (webpData.startsWith("data:image/webp")) {
+            compressedDataUrl = webpData;
+          }
+        } catch {
+          // fallback
+        }
+        if (!compressedDataUrl) {
+          compressedDataUrl = canvas.toDataURL("image/jpeg", 0.82);
+        }
         resolve(compressedDataUrl);
       };
 

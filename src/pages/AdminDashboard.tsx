@@ -16,9 +16,16 @@ import {
   Calendar,
   Clock,
   Sparkles,
+  Trash2,
+  AlertTriangle,
+  X,
 } from "lucide-react";
 import { SubmissionRecord, SubmissionStatus } from "../types/questionnaire.ts";
-import { getSubmissions, updateSubmissionStatus } from "../lib/submissions.ts";
+import {
+  getSubmissions,
+  updateSubmissionStatus,
+  deleteSubmission,
+} from "../lib/submissions.ts";
 import { exportToPdf, exportToDocx } from "../utils/exportBrief.ts";
 import { STUDIO_NAME, STUDIO_LOGO_URL } from "../constants.ts";
 
@@ -41,11 +48,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [sortBy, setSortBy] = useState<"newest_submitted" | "wedding_soonest">(
     "newest_submitted"
   );
+  const [visibleCount, setVisibleCount] = useState<number>(20);
 
   // Active download dropdown for a row
   const [activeDownloadMenuId, setActiveDownloadMenuId] = useState<string | null>(
     null
   );
+
+  // Delete confirmation state
+  const [submissionToDelete, setSubmissionToDelete] = useState<SubmissionRecord | null>(null);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Fetch submissions on mount
   useEffect(() => {
@@ -85,6 +98,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       await updateSubmissionStatus(id, newStatus);
     } catch (err) {
       console.error("Failed to update status on server:", err);
+    }
+  };
+
+  // Permanently delete a submission after user confirmation
+  const handleConfirmDelete = async () => {
+    if (!submissionToDelete) return;
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteSubmission(submissionToDelete.id);
+      // Remove from local list
+      setSubmissions((prev) => prev.filter((item) => item.id !== submissionToDelete.id));
+      setSubmissionToDelete(null);
+    } catch (err: any) {
+      console.error("Failed to delete submission:", err);
+      setDeleteError(err?.message || "Failed to delete submission. Please try again.");
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -271,11 +302,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
         </div>
 
-        {/* Loading State */}
+        {/* Loading State - Skeleton Cards */}
         {isLoading && (
-          <div className="bg-white border border-[#E5DDD2] rounded-2xl p-12 text-center space-y-3">
-            <div className="w-8 h-8 border-2 border-[#B08D57] border-t-transparent rounded-full animate-spin mx-auto" />
-            <p className="text-sm text-[#7A756D]">Loading couple submissions...</p>
+          <div className="space-y-3 animate-pulse" aria-label="Loading submissions">
+            {[1, 2, 3].map((n) => (
+              <div
+                key={n}
+                className="bg-white border border-[#E5DDD2] rounded-2xl p-4 sm:p-5 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-4"
+              >
+                <div className="flex items-start sm:items-center gap-3.5">
+                  <div className="w-12 h-7 bg-[#FAF7F2] rounded-lg border border-[#E8DFD3]" />
+                  <div className="space-y-2">
+                    <div className="w-48 h-5 bg-[#F2ECE1] rounded-md" />
+                    <div className="w-28 h-3 bg-[#F2ECE1]/60 rounded-md" />
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-32 h-7 bg-[#FAF8F5] border border-[#E5DDD2] rounded-xl" />
+                  <div className="w-20 h-6 bg-[#FAF7F2] rounded-full" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-20 h-8 bg-[#FAF8F5] rounded-xl" />
+                  <div className="w-24 h-8 bg-[#1A1A1A]/10 rounded-xl" />
+                </div>
+              </div>
+            ))}
           </div>
         )}
 
@@ -305,7 +356,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         {/* Submissions List: Table on desktop, Cards on mobile */}
         {!isLoading && !error && filteredSubmissions.length > 0 && (
           <div className="space-y-3">
-            {filteredSubmissions.map((couple) => {
+            {filteredSubmissions.slice(0, visibleCount).map((couple) => {
               const countdown = getWeddingCountdown(couple.weddingDate);
 
               return (
@@ -433,10 +484,133 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         </div>
                       )}
                     </div>
+                    {/* Delete Button */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDeleteError(null);
+                        setSubmissionToDelete(couple);
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium text-red-600 bg-red-50/70 hover:bg-red-100 hover:text-red-700 border border-red-200/70 transition-colors cursor-pointer"
+                      title={`Delete ${couple.partner1} & ${couple.partner2}'s submission`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Delete</span>
+                    </button>
                   </div>
                 </div>
               );
             })}
+
+            {filteredSubmissions.length > visibleCount && (
+              <div className="pt-3 text-center">
+                <button
+                  type="button"
+                  onClick={() => setVisibleCount((prev) => prev + 20)}
+                  className="px-6 py-2.5 rounded-xl border border-[#E5DDD2] bg-white hover:bg-[#FAF7F2] text-xs font-semibold text-[#1A1A1A] transition-colors cursor-pointer shadow-2xs"
+                >
+                  Load more couples ({filteredSubmissions.length - visibleCount} remaining)
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Delete Confirmation Modal */}
+        {submissionToDelete && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-150"
+            onClick={() => {
+              if (!isDeleting) {
+                setSubmissionToDelete(null);
+                setDeleteError(null);
+              }
+            }}
+          >
+            <div
+              className="bg-white rounded-2xl max-w-md w-full border border-[#E5DDD2] shadow-2xl p-6 space-y-4 animate-in zoom-in-95 duration-150"
+              onClick={(e) => e.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+            >
+              <div className="flex items-start justify-between">
+                <div className="w-12 h-12 rounded-full bg-red-50 border border-red-200 flex items-center justify-center text-red-600 shrink-0">
+                  <Trash2 className="w-6 h-6" />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!isDeleting) {
+                      setSubmissionToDelete(null);
+                      setDeleteError(null);
+                    }
+                  }}
+                  disabled={isDeleting}
+                  className="p-1.5 rounded-lg text-[#7A756D] hover:text-[#1A1A1A] hover:bg-[#FAF7F2] transition-colors cursor-pointer disabled:opacity-50"
+                  title="Cancel"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-1.5">
+                <h3 className="font-cormorant text-2xl font-semibold text-[#1A1A1A]">
+                  Delete Submission?
+                </h3>
+                <p className="text-xs text-[#5F5F5F] leading-relaxed">
+                  Are you sure you want to permanently delete the submitted form for{" "}
+                  <strong className="text-[#1A1A1A] font-semibold">
+                    {submissionToDelete.partner1} &amp; {submissionToDelete.partner2}
+                  </strong>{" "}
+                  (<span className="font-mono text-[#8C7043] font-bold">{submissionToDelete.displayId}</span>)?
+                </p>
+              </div>
+
+              <div className="bg-red-50/80 border border-red-200 rounded-xl p-3 text-xs text-red-900 leading-relaxed flex items-start gap-2.5">
+                <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                <span>
+                  <strong>Warning:</strong> This cannot be undone. All questionnaire responses, editorial briefs, interview questions, cheat sheets, and media will be permanently removed.
+                </span>
+              </div>
+
+              {deleteError && (
+                <div className="p-2.5 bg-red-100 text-red-800 text-xs rounded-xl font-medium">
+                  {deleteError}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#F0EBE1]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSubmissionToDelete(null);
+                    setDeleteError(null);
+                  }}
+                  disabled={isDeleting}
+                  className="px-4 py-2 text-xs font-medium text-[#5F5F5F] hover:text-[#1A1A1A] hover:bg-[#FAF7F2] rounded-xl border border-[#E5DDD2] transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDelete}
+                  disabled={isDeleting}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-white bg-red-600 hover:bg-red-700 rounded-xl transition-colors cursor-pointer shadow-xs disabled:opacity-60"
+                >
+                  {isDeleting ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Deleting...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Yes, Confirm Delete</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </main>

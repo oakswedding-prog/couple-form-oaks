@@ -22,14 +22,34 @@ import { ChapterCard } from "./components/ChapterCard.tsx";
 import { VoiceTextarea } from "./components/VoiceTextarea.tsx";
 import { OptionCard } from "./components/OptionCard.tsx";
 import { ImageUploader } from "./components/ImageUploader.tsx";
-import { FamilyTreeBuilder } from "./components/FamilyTreeBuilder.tsx";
-import { ReviewScreen } from "./components/ReviewScreen.tsx";
-import { ThankYouScreen } from "./components/ThankYouScreen.tsx";
-import { AdminLogin } from "./pages/AdminLogin.tsx";
-import { AdminDashboard } from "./pages/AdminDashboard.tsx";
-import { AdminCoupleDetail } from "./pages/AdminCoupleDetail.tsx";
 import { useAdminAuth } from "./lib/auth.ts";
 import { Analytics } from "@vercel/analytics/react";
+
+const FamilyTreeBuilder = React.lazy(() =>
+  import("./components/FamilyTreeBuilder.tsx").then((m) => ({ default: m.FamilyTreeBuilder }))
+);
+const ReviewScreen = React.lazy(() =>
+  import("./components/ReviewScreen.tsx").then((m) => ({ default: m.ReviewScreen }))
+);
+const ThankYouScreen = React.lazy(() =>
+  import("./components/ThankYouScreen.tsx").then((m) => ({ default: m.ThankYouScreen }))
+);
+const AdminLogin = React.lazy(() =>
+  import("./pages/AdminLogin.tsx").then((m) => ({ default: m.AdminLogin }))
+);
+const AdminDashboard = React.lazy(() =>
+  import("./pages/AdminDashboard.tsx").then((m) => ({ default: m.AdminDashboard }))
+);
+const AdminCoupleDetail = React.lazy(() =>
+  import("./pages/AdminCoupleDetail.tsx").then((m) => ({ default: m.AdminCoupleDetail }))
+);
+
+const ScreenSkeleton: React.FC = () => (
+  <div className="min-h-[50vh] flex flex-col items-center justify-center space-y-3 p-8 animate-in fade-in duration-150">
+    <div className="w-8 h-8 border-2 border-[#B08D57] border-t-transparent rounded-full animate-spin" />
+    <span className="text-xs text-[#7A756D] font-medium tracking-wide">Loading...</span>
+  </div>
+);
 
 const INITIAL_ANSWERS: QuestionnaireAnswers = {
   partner1: "",
@@ -384,7 +404,7 @@ export default function App() {
       } else {
         handleNext();
       }
-    }, 350);
+    }, 180);
   };
 
   const handleChapterProceed = () => {
@@ -435,13 +455,19 @@ export default function App() {
       );
     }
     if (!user || !isAdmin) {
-      return <AdminLogin onBackToForm={() => navigateTo("/")} />;
+      return (
+        <React.Suspense fallback={<ScreenSkeleton />}>
+          <AdminLogin onBackToForm={() => navigateTo("/")} />
+        </React.Suspense>
+      );
     }
     return (
-      <AdminCoupleDetail
-        submissionId={coupleId}
-        onBack={() => navigateTo("/admin")}
-      />
+      <React.Suspense fallback={<ScreenSkeleton />}>
+        <AdminCoupleDetail
+          submissionId={coupleId}
+          onBack={() => navigateTo("/admin")}
+        />
+      </React.Suspense>
     );
   }
 
@@ -456,13 +482,19 @@ export default function App() {
       );
     }
     if (!user || !isAdmin) {
-      return <AdminLogin onBackToForm={() => navigateTo("/")} />;
+      return (
+        <React.Suspense fallback={<ScreenSkeleton />}>
+          <AdminLogin onBackToForm={() => navigateTo("/")} />
+        </React.Suspense>
+      );
     }
     return (
-      <AdminDashboard
-        onSelectCouple={(id) => navigateTo(`/admin/couple/${id}`)}
-        onSignOut={signOut}
-      />
+      <React.Suspense fallback={<ScreenSkeleton />}>
+        <AdminDashboard
+          onSelectCouple={(id) => navigateTo(`/admin/couple/${id}`)}
+          onSignOut={signOut}
+        />
+      </React.Suspense>
     );
   }
 
@@ -526,21 +558,27 @@ export default function App() {
   // Review Screen (Step 24)
   if (currentStep === 24) {
     return (
-      <ReviewScreen
-        answers={answers}
-        onEditQuestion={(stepNum) => {
-          setEditingFromReview(true);
-          setCurrentStep(stepNum);
-        }}
-        onBack={() => setCurrentStep(23)}
-        onSubmitted={() => setCurrentStep(25)}
-      />
+      <React.Suspense fallback={<ScreenSkeleton />}>
+        <ReviewScreen
+          answers={answers}
+          onEditQuestion={(stepNum) => {
+            setEditingFromReview(true);
+            setCurrentStep(stepNum);
+          }}
+          onBack={() => setCurrentStep(23)}
+          onSubmitted={() => setCurrentStep(25)}
+        />
+      </React.Suspense>
     );
   }
 
   // Thank You Screen (Step 25)
   if (currentStep === 25) {
-    return <ThankYouScreen answers={answers} onReset={handleReset} />;
+    return (
+      <React.Suspense fallback={<ScreenSkeleton />}>
+        <ThankYouScreen answers={answers} onReset={handleReset} />
+      </React.Suspense>
+    );
   }
 
   // Question Screens (1-23)
@@ -561,7 +599,7 @@ export default function App() {
       />
 
       {/* Main One-Question Container */}
-      <main className="flex-1 max-w-[640px] w-full mx-auto px-5 py-6 sm:py-10 flex flex-col justify-between animate-in fade-in duration-300">
+      <main className="flex-1 max-w-[640px] w-full mx-auto px-5 py-6 sm:py-10 flex flex-col justify-between animate-in fade-in duration-150 will-change-[opacity,transform]">
         <div className="space-y-6">
           {/* QUESTION 1 */}
           {currentStep === 1 && (
@@ -961,31 +999,33 @@ export default function App() {
                 title="Who are the most important people you want us to capture please give a family tree?"
                 helper="Add VIP family members, snap a photo of a tree sketch, or write it out."
               />
-              <FamilyTreeBuilder
-                partner1={p1}
-                partner2={p2}
-                members={answers.q10_people.familyMembers}
-                onMembersChange={(m) =>
-                  setAnswers((prev) => ({
-                    ...prev,
-                    q10_people: { ...prev.q10_people, familyMembers: m },
-                  }))
-                }
-                treePhotoUrl={answers.q10_people.treePhotoUrl}
-                onTreePhotoChange={(url) =>
-                  setAnswers((prev) => ({
-                    ...prev,
-                    q10_people: { ...prev.q10_people, treePhotoUrl: url },
-                  }))
-                }
-                treeNotes={answers.q10_people.treeNotes}
-                onTreeNotesChange={(n) =>
-                  setAnswers((prev) => ({
-                    ...prev,
-                    q10_people: { ...prev.q10_people, treeNotes: n },
-                  }))
-                }
-              />
+              <React.Suspense fallback={<ScreenSkeleton />}>
+                <FamilyTreeBuilder
+                  partner1={p1}
+                  partner2={p2}
+                  members={answers.q10_people.familyMembers}
+                  onMembersChange={(m) =>
+                    setAnswers((prev) => ({
+                      ...prev,
+                      q10_people: { ...prev.q10_people, familyMembers: m },
+                    }))
+                  }
+                  treePhotoUrl={answers.q10_people.treePhotoUrl}
+                  onTreePhotoChange={(url) =>
+                    setAnswers((prev) => ({
+                      ...prev,
+                      q10_people: { ...prev.q10_people, treePhotoUrl: url },
+                    }))
+                  }
+                  treeNotes={answers.q10_people.treeNotes}
+                  onTreeNotesChange={(n) =>
+                    setAnswers((prev) => ({
+                      ...prev,
+                      q10_people: { ...prev.q10_people, treeNotes: n },
+                    }))
+                  }
+                />
+              </React.Suspense>
             </div>
           )}
 

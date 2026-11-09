@@ -31,6 +31,15 @@
     outline: 2px solid #B08D57;
     outline-offset: 2px;
   }
+
+  /* Eliminate 300ms mobile touch delay & gray tap flash */
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  button, input, textarea, select, a, [role="button"] {
+    touch-action: manipulation;
+  }
 }
 
 /* Serif font for questions & editorial headers */

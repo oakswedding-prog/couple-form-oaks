@@ -17,6 +17,8 @@ import {
   Lock,
   Sparkles,
   Mic,
+  Trash2,
+  AlertTriangle,
 } from "lucide-react";
 import { SubmissionRecord, SubmissionStatus } from "../types/questionnaire.ts";
 import {
@@ -26,6 +28,7 @@ import {
   updateSubmissionEditorialBrief,
   updateSubmissionInterviewQuestions,
   updateSubmissionCheatSheet,
+  deleteSubmission,
 } from "../lib/submissions.ts";
 import { ShootDayCheatSheet } from "../components/ShootDayCheatSheet.tsx";
 import { EditorialBriefView } from "../components/EditorialBriefView.tsx";
@@ -58,6 +61,11 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
 
   // Image lightbox modal
   const [enlargedImage, setEnlargedImage] = useState<string | null>(null);
+
+  // Delete modal state
+  const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Load submission on mount
   useEffect(() => {
@@ -151,11 +159,51 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
     }
   };
 
+  // Permanently delete submission after confirmation
+  const handleConfirmDelete = async () => {
+    if (!submission) return;
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteSubmission(submission.id);
+      onBack();
+    } catch (err: any) {
+      console.error("Failed to delete submission:", err);
+      setDeleteError(err?.message || "Failed to delete submission. Please try again.");
+      setIsDeleting(false);
+    }
+  };
+
   if (isLoading) {
     return (
-      <div className="min-h-[100dvh] bg-[#FAF8F5] flex flex-col items-center justify-center space-y-3">
-        <div className="w-8 h-8 border-2 border-[#B08D57] border-t-transparent rounded-full animate-spin" />
-        <p className="text-sm text-[#7A756D]">Loading couple's responses...</p>
+      <div className="min-h-[100dvh] bg-[#FAF8F5] text-[#1A1A1A] safe-bottom pb-16 animate-pulse">
+        {/* Skeleton Top Bar */}
+        <header className="bg-white border-b border-[#E5DDD2] sticky top-0 z-30">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 h-18 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-xl bg-[#FAF7F2]" />
+              <div className="w-12 h-6 rounded bg-[#FAF7F2]" />
+              <div className="w-48 h-6 rounded bg-[#F2ECE1]" />
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-20 h-7 rounded-full bg-[#FAF7F2]" />
+              <div className="w-24 h-7 rounded-xl bg-[#FAF7F2]" />
+            </div>
+          </div>
+        </header>
+
+        {/* Skeleton Content Area */}
+        <main className="max-w-6xl mx-auto px-4 sm:px-6 pt-6 space-y-6">
+          <div className="h-10 w-full max-w-md bg-white border border-[#E5DDD2] rounded-xl" />
+          <div className="bg-white border border-[#E5DDD2] rounded-2xl p-6 sm:p-8 space-y-4 shadow-2xs">
+            <div className="w-64 h-7 bg-[#F2ECE1] rounded-md" />
+            <div className="space-y-2 pt-2">
+              <div className="w-full h-4 bg-[#FAF7F2] rounded" />
+              <div className="w-5/6 h-4 bg-[#FAF7F2] rounded" />
+              <div className="w-3/4 h-4 bg-[#FAF7F2] rounded" />
+            </div>
+          </div>
+        </main>
       </div>
     );
   }
@@ -272,6 +320,20 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
                 </div>
               )}
             </div>
+
+            {/* Delete Submission */}
+            <button
+              type="button"
+              onClick={() => {
+                setDeleteError(null);
+                setShowDeleteModal(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium text-red-600 bg-red-50/70 hover:bg-red-100 hover:text-red-700 border border-red-200/70 transition-colors cursor-pointer"
+              title="Delete this submission"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Delete</span>
+            </button>
           </div>
         </div>
       </header>
@@ -992,6 +1054,104 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
             className="max-h-[90vh] max-w-[90vw] object-contain rounded-lg shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           />
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-150"
+          onClick={() => {
+            if (!isDeleting) {
+              setShowDeleteModal(false);
+              setDeleteError(null);
+            }
+          }}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-md w-full border border-[#E5DDD2] shadow-2xl p-6 space-y-4 animate-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-start justify-between">
+              <div className="w-12 h-12 rounded-full bg-red-50 border border-red-200 flex items-center justify-center text-red-600 shrink-0">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isDeleting) {
+                    setShowDeleteModal(false);
+                    setDeleteError(null);
+                  }
+                }}
+                disabled={isDeleting}
+                className="p-1.5 rounded-lg text-[#7A756D] hover:text-[#1A1A1A] hover:bg-[#FAF7F2] transition-colors cursor-pointer disabled:opacity-50"
+                title="Cancel"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-1.5">
+              <h3 className="font-cormorant text-2xl font-semibold text-[#1A1A1A]">
+                Delete Submission?
+              </h3>
+              <p className="text-xs text-[#5F5F5F] leading-relaxed">
+                Are you sure you want to permanently delete the submission for{" "}
+                <strong className="text-[#1A1A1A] font-semibold">
+                  {p1} &amp; {p2}
+                </strong>{" "}
+                (<span className="font-mono text-[#8C7043] font-bold">{submission.displayId}</span>)?
+              </p>
+            </div>
+
+            <div className="bg-red-50/80 border border-red-200 rounded-xl p-3 text-xs text-red-900 leading-relaxed flex items-start gap-2.5">
+              <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+              <span>
+                <strong>Warning:</strong> This cannot be undone. All questionnaire responses, editorial briefs, interview questions, cheat sheets, and uploaded images will be permanently removed.
+              </span>
+            </div>
+
+            {deleteError && (
+              <div className="p-2.5 bg-red-100 text-red-800 text-xs rounded-xl font-medium">
+                {deleteError}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#F0EBE1]">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDeleteModal(false);
+                  setDeleteError(null);
+                }}
+                disabled={isDeleting}
+                className="px-4 py-2 text-xs font-medium text-[#5F5F5F] hover:text-[#1A1A1A] hover:bg-[#FAF7F2] rounded-xl border border-[#E5DDD2] transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                disabled={isDeleting}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-white bg-red-600 hover:bg-red-700 rounded-xl transition-colors cursor-pointer shadow-xs disabled:opacity-60"
+              >
+                {isDeleting ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Yes, Confirm Delete</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

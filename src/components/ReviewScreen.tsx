@@ -5,7 +5,6 @@
 
 import React, { useState } from "react";
 import { ArrowLeft, Send, Edit3, Loader2, AlertCircle } from "lucide-react";
-import confetti from "canvas-confetti";
 import { QuestionnaireAnswers } from "../types/questionnaire.ts";
 import { STUDIO_NAME, ACCENT_COLOR, STORAGE_KEY } from "../constants.ts";
 import { createSubmission } from "../lib/submissions.ts";
@@ -44,8 +43,9 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
         // ignore
       }
 
-      // Celebratory luxury confetti
+      // Celebratory luxury confetti (dynamically imported)
       try {
+        const confetti = (await import("canvas-confetti")).default;
         confetti({
           particleCount: 80,
           spread: 70,

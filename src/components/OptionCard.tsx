@@ -31,12 +31,12 @@ export const OptionCard: React.FC<OptionCardProps> = ({
       onClick={onSelect}
       disabled={disabled}
       aria-pressed={isSelected}
-      className={`group relative w-full text-left rounded-2xl transition-all duration-200 min-h-[58px] flex items-center justify-between p-4 sm:p-5 select-none ${
+      className={`group relative w-full text-left rounded-2xl transition-all duration-100 ease-out min-h-[58px] flex items-center justify-between p-4 sm:p-5 select-none touch-manipulation ${
         disabled
           ? "opacity-40 cursor-not-allowed bg-[#FAFAFA] border border-[#E8E8E8]"
           : isSelected
           ? "bg-[#1A1A1A] text-white shadow-md border-transparent scale-[1.01]"
-          : "bg-white text-[#1A1A1A] border border-[#E8E8E8] hover:border-[#1A1A1A]/40 hover:bg-[#FAFAFA] active:scale-[0.99] shadow-2xs"
+          : "bg-white text-[#1A1A1A] border border-[#E8E8E8] hover:border-[#1A1A1A]/40 hover:bg-[#FAFAFA] active:scale-[0.98] shadow-2xs"
       }`}
     >
       <div className="flex items-center gap-4 flex-1">

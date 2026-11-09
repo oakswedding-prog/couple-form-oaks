@@ -86,6 +86,8 @@ export const VoiceTextarea: React.FC<VoiceTextareaProps> = ({
     },
   });
 
+  const [isActivatingMic, setIsActivatingMic] = useState(false);
+
   // Auto-resize textarea to fit content
   useEffect(() => {
     if (textareaRef.current && !singleLine) {
@@ -98,6 +100,14 @@ export const VoiceTextarea: React.FC<VoiceTextareaProps> = ({
     }
   }, [value, interimText, rows, singleLine]);
 
+  useEffect(() => {
+    if (isListening || friendlyError) {
+      setIsActivatingMic(false);
+    }
+  }, [isListening, friendlyError]);
+
+  const isActiveListening = isListening || isActivatingMic;
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (singleLine && e.key === "Enter") {
       e.preventDefault();
@@ -107,18 +117,21 @@ export const VoiceTextarea: React.FC<VoiceTextareaProps> = ({
 
   const handleMicClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!isListening) {
+    if (!isActiveListening) {
+      setIsActivatingMic(true);
       startListening(value ?? "");
     }
   };
 
   const handleCancel = (e: React.MouseEvent) => {
     e.stopPropagation();
+    setIsActivatingMic(false);
     stopSession(false);
   };
 
   const handleDone = (e: React.MouseEvent) => {
     e.stopPropagation();
+    setIsActivatingMic(false);
     stopSession(true);
   };
 
@@ -140,7 +153,7 @@ export const VoiceTextarea: React.FC<VoiceTextareaProps> = ({
           textareaRef.current?.focus();
         }}
         className={`relative w-full rounded-2xl border transition-all duration-200 bg-white cursor-text ${
-          isListening
+          isActiveListening
             ? "border-[#B08D57] ring-4 ring-[#B08D57]/20 shadow-lg"
             : "border-[#E8E8E8] hover:border-[#1A1A1A]/40 focus-within:border-[#1A1A1A] focus-within:ring-2 focus-within:ring-[#1A1A1A]/10 shadow-xs"
         }`}
@@ -164,7 +177,7 @@ export const VoiceTextarea: React.FC<VoiceTextareaProps> = ({
         />
 
         {/* Live interim transcript display overlay streaming as you speak */}
-        {isListening && interimText && (
+        {isActiveListening && interimText && (
           <div className="px-5 pb-3 text-[18px] text-[#5F5F5F]/80 italic">
             <span>{interimText}</span>
           </div>
@@ -186,7 +199,7 @@ export const VoiceTextarea: React.FC<VoiceTextareaProps> = ({
                 aria-expanded={showLangMenu}
               >
                 <Globe className="w-3.5 h-3.5 text-[#5F5F5F] shrink-0" />
-                <span className={isListening ? "hidden sm:inline" : "inline"}>
+                <span className={isActiveListening ? "hidden sm:inline" : "inline"}>
                   {activeLangLabel}
                 </span>
               </button>
@@ -221,7 +234,7 @@ export const VoiceTextarea: React.FC<VoiceTextareaProps> = ({
             </div>
 
             {/* Listening Waveform Animation & State */}
-            {isListening ? (
+            {isActiveListening ? (
               <div className="flex items-center gap-2 sm:gap-3 shrink-0">
                 <div className="flex items-center gap-1 px-2.5 sm:px-3 py-1 bg-white border border-[#B08D57]/40 rounded-full shadow-2xs shrink-0">
                   <div className="w-1.5 h-3 bg-[#B08D57] rounded-full animate-wave-1" />

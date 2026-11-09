@@ -3,20 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { jsPDF } from "jspdf";
-import {
-  Document,
-  Packer,
-  Paragraph,
-  TextRun,
-  HeadingLevel,
-  Table,
-  TableRow,
-  TableCell,
-  WidthType,
-  BorderStyle,
-  AlignmentType,
-} from "docx";
 import { SubmissionRecord } from "../types/questionnaire.ts";
 import { STUDIO_NAME } from "../constants.ts";
 import { synthesizeEditorialBrief } from "./editorialBriefGenerator.ts";
@@ -47,6 +33,7 @@ function downloadBlob(blob: Blob, filename: string) {
  * Export submission as branded PDF using jsPDF
  */
 export async function exportToPdf(submission: SubmissionRecord) {
+  const { jsPDF } = await import("jspdf");
   const doc = new jsPDF({
     orientation: "portrait",
     unit: "mm",
@@ -563,6 +550,8 @@ export async function exportToDocx(submission: SubmissionRecord) {
   const docxInterviewText = (!submission.interviewQuestions || isOutdatedInterviewV1Docx)
     ? synthesizeInterviewQuestions(submission.answers)
     : submission.interviewQuestions;
+
+  const { Document, Packer, Paragraph, TextRun, HeadingLevel } = await import("docx");
 
   const doc = new Document({
     sections: [
