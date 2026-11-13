@@ -8,6 +8,7 @@ import { ArrowLeft, Send, Edit3, Loader2, AlertCircle } from "lucide-react";
 import { QuestionnaireAnswers } from "../types/questionnaire.ts";
 import { STUDIO_NAME, ACCENT_COLOR, STORAGE_KEY } from "../constants.ts";
 import { createSubmission } from "../lib/submissions.ts";
+import { getMissingMandatoryQuestions } from "../utils/questionnaireValidation.ts";
 
 interface ReviewScreenProps {
   answers: QuestionnaireAnswers;
@@ -28,8 +29,16 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
 
   const p1 = answers.partner1 || "Partner 1";
   const p2 = answers.partner2 || "Partner 2";
+  const missingMandatorySteps = getMissingMandatoryQuestions(answers);
+  const hasMissingMandatory = missingMandatorySteps.length > 0;
 
   const handleSend = async () => {
+    if (hasMissingMandatory) {
+      setErrorMessage(
+        "Please complete the highlighted required questions above before sending your story."
+      );
+      return;
+    }
     setIsSubmitting(true);
     setErrorMessage(null);
 
@@ -102,7 +111,25 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
         <ReviewItem
           num={1}
           question="What do you call each other?"
-          answer={`${p1} calls ${p2}: "${answers.q1_calls.aCallsB || "—"}" • ${p2} calls ${p1}: "${answers.q1_calls.bCallsA || "—"}"`}
+          answer={
+            <div className="space-y-2">
+              <p>
+                {`${p1} calls ${p2}: "${answers.q1_calls.aCallsB || "—"}" • ${p2} calls ${p1}: "${answers.q1_calls.bCallsA || "—"}"`}
+              </p>
+              {answers.couplePhotoUrl && (
+                <div className="flex items-center gap-2.5">
+                  <img
+                    src={answers.couplePhotoUrl}
+                    alt={`${p1} & ${p2}`}
+                    className="w-12 h-12 rounded-lg object-cover border border-[#E8DFD3] shrink-0"
+                  />
+                  <span className="text-sm text-[#B08D57] font-medium">
+                    ✓ Couple photo attached
+                  </span>
+                </div>
+              )}
+            </div>
+          }
           onEdit={() => onEditQuestion(1)}
         />
         <ReviewItem
@@ -270,7 +297,7 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
         />
         <ReviewItem
           num={13}
-          question="Have you finalised your wedding outfits? We'd love to know about your wardrobe plans."
+          question="Have you finalised your wedding wardrobe? Share your outfit plans, colour preferences, and styling ideas. Knowing these details helps us plan your photography and films more thoughtfully."
           answer={
             <div>
               {answers.weddingOutfits?.links && answers.weddingOutfits.links.length > 0 && (
@@ -403,27 +430,12 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
         />
         <ReviewItem
           num={22}
-          question="What matters most to you when choosing a wedding photography and filmmaking team?"
-          answer={
-            [
-              ...(answers.q19_whatMattersMost.selected || []),
-              answers.q19_whatMattersMost.other
-                ? `Other: ${answers.q19_whatMattersMost.other}`
-                : null,
-            ]
-              .filter(Boolean)
-              .join(", ") || "Skipped"
-          }
+          question="How comfortable are you with being guided or directed during portraits and filming?"
+          answer={answers.q20_guidanceComfort || "Skipped"}
           onEdit={() => onEditQuestion(22)}
         />
         <ReviewItem
           num={23}
-          question="How comfortable are you with being guided or directed during portraits and filming?"
-          answer={answers.q20_guidanceComfort || "Skipped"}
-          onEdit={() => onEditQuestion(23)}
-        />
-        <ReviewItem
-          num={24}
           question="Is there anything that would help you feel more comfortable in front of the camera?"
           answer={
             [
@@ -435,16 +447,16 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
               .filter(Boolean)
               .join(", ") || "Skipped"
           }
+          onEdit={() => onEditQuestion(23)}
+        />
+        <ReviewItem
+          num={24}
+          question="What do you hope to feel when you watch your wedding film years from now?"
+          answer={answers.q22_futureFeeling || "Skipped"}
           onEdit={() => onEditQuestion(24)}
         />
         <ReviewItem
           num={25}
-          question="What do you hope to feel when you watch your wedding film years from now?"
-          answer={answers.q22_futureFeeling || "Skipped"}
-          onEdit={() => onEditQuestion(25)}
-        />
-        <ReviewItem
-          num={26}
           question="Who should be our primary point of contact for wedding-related communication and coordination?"
           answer={
             answers.primaryContact?.role ? (
@@ -452,8 +464,15 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
                 <div className="font-medium text-[#1A1A1A]">
                   {answers.primaryContact.role}
                   {answers.primaryContact.role === "Someone else" &&
-                  (answers.primaryContact.side || answers.primaryContact.gender)
-                    ? ` (${[answers.primaryContact.side, answers.primaryContact.gender].filter(Boolean).join(" · ")})`
+                  (answers.primaryContact.side ||
+                    answers.primaryContact.designation ||
+                    answers.primaryContact.gender)
+                    ? ` (${[
+                        answers.primaryContact.side,
+                        answers.primaryContact.designation || answers.primaryContact.gender,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")})`
                     : ""}
                 </div>
                 {(answers.primaryContact.name || answers.primaryContact.phone) && (
@@ -467,7 +486,7 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
               "Not provided"
             )
           }
-          onEdit={() => onEditQuestion(26)}
+          onEdit={() => onEditQuestion(25)}
         />
       </section>
 
@@ -475,13 +494,13 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
       <section className="mt-10 space-y-4">
         <ChapterHeader title="One Last Thing" />
         <ReviewItem
-          num={27}
+          num={26}
           question="Last but not least, we'd love to hear your story. How did your journey begin, and what would you love us to know about the two of you?"
           answer={answers.loveStoryNarrative || "Skipped"}
-          onEdit={() => onEditQuestion(27)}
+          onEdit={() => onEditQuestion(26)}
         />
         <ReviewItem
-          num={28}
+          num={27}
           question="Is there anything else you'd like to let us know?"
           answer={
             <div>
@@ -493,9 +512,40 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
               )}
             </div>
           }
-          onEdit={() => onEditQuestion(28)}
+          onEdit={() => onEditQuestion(27)}
         />
       </section>
+
+      {/* Missing mandatory questions banner */}
+      {hasMissingMandatory && (
+        <div className="mt-8 p-4 sm:p-5 rounded-2xl bg-[#FAF7F2] border border-[#E8DFD3] space-y-3">
+          <div className="flex items-start gap-2.5 text-[#8C7043]">
+            <AlertCircle className="w-5 h-5 shrink-0 mt-0.5 text-[#B08D57]" />
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-[#1A1A1A]">
+                {missingMandatorySteps.length === 1
+                  ? "1 required question still needs your answer"
+                  : `${missingMandatorySteps.length} required questions still need your answers`}
+              </p>
+              <p className="text-xs sm:text-sm text-[#5F5F5F]">
+                Tap a question below to complete it before sending your story.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 pl-7">
+            {missingMandatorySteps.map((step) => (
+              <button
+                key={step}
+                type="button"
+                onClick={() => onEditQuestion(step)}
+                className="px-3 py-1.5 rounded-lg bg-white border border-[#E8DFD3] hover:border-[#1A1A1A] text-xs font-medium text-[#1A1A1A] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                Question {step}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Error alert if sending fails */}
       {errorMessage && (
@@ -509,15 +559,21 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
       <div className="sticky bottom-4 z-20 pt-8 pb-4 bg-white/95 backdrop-blur-xs">
         <button
           type="button"
-          disabled={isSubmitting}
+          disabled={isSubmitting || hasMissingMandatory}
           onClick={handleSend}
-          className="w-full min-h-[58px] py-4 px-6 rounded-2xl bg-[#1A1A1A] hover:bg-[#333333] active:scale-[0.99] text-white font-medium text-[19px] shadow-lg transition-all flex items-center justify-center gap-3 cursor-pointer"
+          className={`w-full min-h-[58px] py-4 px-6 rounded-2xl font-medium text-[19px] shadow-lg transition-all flex items-center justify-center gap-3 ${
+            isSubmitting || hasMissingMandatory
+              ? "bg-[#E8E8E8] text-[#7A756D] cursor-not-allowed"
+              : "bg-[#1A1A1A] hover:bg-[#333333] active:scale-[0.99] text-white cursor-pointer"
+          }`}
         >
           {isSubmitting ? (
             <>
               <Loader2 className="w-5 h-5 animate-spin text-[#B08D57]" />
               <span>Sending your story to {STUDIO_NAME}...</span>
             </>
+          ) : hasMissingMandatory ? (
+            <span>Complete required questions to send</span>
           ) : (
             <>
               <Send className="w-5 h-5 text-[#B08D57]" />

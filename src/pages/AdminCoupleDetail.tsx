@@ -528,7 +528,7 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
             }`}
           >
             <FileText className="w-4 h-4 text-[#7A756D]" />
-            <span>Full Responses (Q1–28)</span>
+            <span>Full Responses (Q1–27)</span>
           </button>
 
           <button
@@ -665,23 +665,53 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
               num={1}
               question="What do you call each other?"
               content={
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-                  <div className="bg-[#FAF8F5] p-3 rounded-xl border border-[#E8DFD3]">
-                    <span className="text-xs text-[#7A756D] font-medium block mb-0.5">
-                      {p1} calls {p2}:
-                    </span>
-                    <span className="font-medium text-[#1A1A1A]">
-                      {ans.q1_calls?.aCallsB || <NotAnswered />}
-                    </span>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                    <div className="bg-[#FAF8F5] p-3 rounded-xl border border-[#E8DFD3]">
+                      <span className="text-xs text-[#7A756D] font-medium block mb-0.5">
+                        {p1} calls {p2}:
+                      </span>
+                      <span className="font-medium text-[#1A1A1A]">
+                        {ans.q1_calls?.aCallsB || <NotAnswered />}
+                      </span>
+                    </div>
+                    <div className="bg-[#FAF8F5] p-3 rounded-xl border border-[#E8DFD3]">
+                      <span className="text-xs text-[#7A756D] font-medium block mb-0.5">
+                        {p2} calls {p1}:
+                      </span>
+                      <span className="font-medium text-[#1A1A1A]">
+                        {ans.q1_calls?.bCallsA || <NotAnswered />}
+                      </span>
+                    </div>
                   </div>
-                  <div className="bg-[#FAF8F5] p-3 rounded-xl border border-[#E8DFD3]">
-                    <span className="text-xs text-[#7A756D] font-medium block mb-0.5">
-                      {p2} calls {p1}:
-                    </span>
-                    <span className="font-medium text-[#1A1A1A]">
-                      {ans.q1_calls?.bCallsA || <NotAnswered />}
-                    </span>
-                  </div>
+
+                  {ans.couplePhotoUrl && (
+                    <div className="space-y-1.5">
+                      <span className="text-xs font-semibold text-[#4A453E] block">
+                        Couple Photo:
+                      </span>
+                      <div className="bg-[#FAF8F5] p-3 rounded-xl border border-[#E8DFD3] inline-block">
+                        <SafeImageThumbnail
+                          src={ans.couplePhotoUrl}
+                          alt={`${p1} & ${p2}`}
+                          onClick={() =>
+                            openLightbox([
+                              {
+                                url: ans.couplePhotoUrl!,
+                                title: `${p1} & ${p2}`,
+                                subtitle: "Couple photo uploaded with Question 1",
+                              },
+                            ])
+                          }
+                          className="max-h-56 w-auto min-w-[180px]"
+                        />
+                        <div className="mt-2 flex items-center justify-between text-[11px] text-[#7A756D]">
+                          <span>Click photo to view full screen</span>
+                          <span className="font-semibold text-[#8C7043]">1 image</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               }
             />
@@ -1043,7 +1073,7 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
             {/* Q13: WEDDING OUTFITS */}
             <AnswerBlock
               num={13}
-              question="Have you finalised your wedding outfits? We'd love to know about your wardrobe plans."
+              question="Have you finalised your wedding wardrobe? Share your outfit plans, colour preferences, and styling ideas. Knowing these details helps us plan your photography and films more thoughtfully."
               content={
                 <div className="space-y-4">
                   {ans.weddingOutfits?.notes ? (
@@ -1205,7 +1235,7 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
           <ChapterSection
             chapter="Chapter 5"
             title="Working Together"
-            range="Questions 20–26"
+            range="Questions 20–25"
           >
             {/* Q20 (previously Q18) */}
             <AnswerBlock
@@ -1221,33 +1251,16 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
               content={<TextAnswer text={ans.choosingOaks} />}
             />
 
-            {/* Q22 (previously Q20) */}
+            {/* Q22 (previously Q23) */}
             <AnswerBlock
               num={22}
-              question="What matters most to you when choosing a wedding photography and filmmaking team?"
-              content={
-                <div className="space-y-2">
-                  <ChipList items={ans.q19_whatMattersMost?.selected || []} />
-                  {ans.q19_whatMattersMost?.other && (
-                    <p className="text-sm text-[#4A453E]">
-                      <span className="font-medium text-[#1A1A1A]">Other:</span>{" "}
-                      {ans.q19_whatMattersMost.other}
-                    </p>
-                  )}
-                </div>
-              }
-            />
-
-            {/* Q23 (previously Q21) */}
-            <AnswerBlock
-              num={23}
               question="How comfortable are you with being guided or directed during portraits and filming?"
               content={<TextAnswer text={ans.q20_guidanceComfort} />}
             />
 
-            {/* Q24 (previously Q22) */}
+            {/* Q23 (previously Q24) */}
             <AnswerBlock
-              num={24}
+              num={23}
               question="Is there anything that would help you feel more comfortable in front of the camera?"
               content={
                 <div className="space-y-2">
@@ -1262,16 +1275,16 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
               }
             />
 
-            {/* Q25 (previously Q23) */}
+            {/* Q24 (previously Q25) */}
             <AnswerBlock
-              num={25}
+              num={24}
               question="What do you hope to feel when you watch your wedding film years from now?"
               content={<TextAnswer text={ans.q22_futureFeeling} />}
             />
 
-            {/* Q26: YOUR PRIMARY POINT OF CONTACT */}
+            {/* Q25 (previously Q26): YOUR PRIMARY POINT OF CONTACT */}
             <AnswerBlock
-              num={26}
+              num={25}
               question="Who should be our primary point of contact for wedding-related communication and coordination?"
               content={
                 ans.primaryContact?.role ? (
@@ -1287,9 +1300,9 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
                           </span>
                         )}
                       {ans.primaryContact.role === "Someone else" &&
-                        ans.primaryContact.gender && (
+                        (ans.primaryContact.designation || ans.primaryContact.gender) && (
                           <span className="inline-flex items-center px-3 py-1 rounded-full bg-white border border-[#E8DFD3] text-[#5F5F5F]">
-                            {ans.primaryContact.gender}
+                            {ans.primaryContact.designation || ans.primaryContact.gender}
                           </span>
                         )}
                     </div>
@@ -1315,16 +1328,16 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
           <ChapterSection
             chapter="Chapter 6"
             title="One Last Thing"
-            range="Questions 27–28"
+            range="Questions 26–27"
           >
             <AnswerBlock
-              num={27}
+              num={26}
               question="Last but not least, we'd love to hear your story. How did your journey begin, and what would you love us to know about the two of you?"
               content={<TextAnswer text={ans.loveStoryNarrative} />}
             />
 
             <AnswerBlock
-              num={28}
+              num={27}
               question="Is there anything else you'd like to let us know?"
               content={
                 <div className="space-y-4">

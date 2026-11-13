@@ -103,15 +103,23 @@ export default defineConfig(() => {
               }
               const { answers, systemPrompt } = JSON.parse(bodyStr || '{}');
 
-              const userPrompt = `Here are the couple's responses to the OAKS Wedding Questionnaire:
+              const userPrompt = `Here are the couple's responses to all 28 questions in the OAKS Wedding Questionnaire:
 ${JSON.stringify(answers, null, 2)}
 
-IMPORTANT INSTRUCTIONS:
-- Write a short, simple and beautiful wedding brief (~350–500 words, 2–3 min read for the photography and cinema team).
-- NEVER copy long answers or paragraphs directly from the questionnaire. Understand and rewrite them in your own words.
-- Write in simple English with a six-year-old reading-ease target (short sentences, simple common words, no fancy jargon).
-- Follow the exact Riya & Roshan benchmark structure and divider lines (==================================================).
-- Produce ONLY the finished couple brief starting with the couple's names.`;
+IMPORTANT INSTRUCTIONS FOR EDITORIAL CREATIVE BRIEF (ALL 28 QUESTIONS):
+- Cover ALL 28 questions (Q01 through Q28) in their exact original order, grouped under the 6 chapters separated by \`==================================================\`:
+  * CHAPTER 1 — YOUR STORY (Q1–Q9)
+  * CHAPTER 2 — YOUR PEOPLE (Q10)
+  * CHAPTER 3 — THE LOOK AND FEEL (Q11–Q15)
+  * CHAPTER 4 — YOUR DAY (Q16–Q19)
+  * CHAPTER 5 — WORKING TOGETHER (Q20–Q26)
+  * CHAPTER 6 — ONE LAST THING (Q27–Q28)
+- NEVER reproduce lengthy raw answers verbatim. Convert long responses into 2–4 concise, clear bullet points preserving key details, names, preferences, emotions, and expectations.
+- Keep short answers equally short (1 concise bullet point; never pad or expand).
+- If a question has no answer provided, output strictly: \`- Not provided\`.
+- Do NOT invent details or add assumptions the couple has not stated.
+- Write in simple, clear English so the photography and film team can understand all 28 responses in a few minutes.
+- Output ONLY the finished brief starting with the couple's names.`;
 
               const text = await callGemini(
                 systemPrompt || 'You are the Couple Brief Writer at OAKS WEDDING.',

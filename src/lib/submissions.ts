@@ -24,7 +24,15 @@ import {
   SubmissionRecord,
   SubmissionStatus,
   ProductionChecklistData,
+  CustomProductionEvent,
+  EventSubmissionRecord,
+  ChecklistItemStatus,
+  FileDetailEntry,
 } from "../types/questionnaire.ts";
+import {
+  buildCustomEventDeleteChecklistData,
+  buildCustomEventUpsertChecklistData,
+} from "../constants/productionChecklist.ts";
 import { synthesizeEditorialBrief } from "../utils/editorialBriefGenerator.ts";
 import { synthesizeInterviewQuestions } from "../utils/interviewQuestionsGenerator.ts";
 import { synthesizeCheatSheet } from "../utils/cheatSheetGenerator.ts";
@@ -88,6 +96,11 @@ export async function resolveSubmissionMedia(record: SubmissionRecord): Promise<
 
   const cloned: SubmissionRecord = JSON.parse(JSON.stringify(record));
   const ans = cloned.answers;
+
+  // Resolve Q1 couple photo
+  if (ans.couplePhotoUrl) {
+    ans.couplePhotoUrl = await resolveMediaUrl(ans.couplePhotoUrl);
+  }
 
   // Resolve Q10 tree photo
   if (ans.q10_people?.treePhotoUrl) {
@@ -224,6 +237,15 @@ async function processAllImages(
   submissionFolder: string
 ): Promise<QuestionnaireAnswers> {
   const updatedAnswers: QuestionnaireAnswers = JSON.parse(JSON.stringify(answers));
+
+  // Process Q1 couple photo if present
+  if (updatedAnswers.couplePhotoUrl?.startsWith("data:image/")) {
+    updatedAnswers.couplePhotoUrl = await uploadMediaFile(
+      submissionFolder,
+      "couple_photo",
+      updatedAnswers.couplePhotoUrl
+    );
+  }
 
   // Process family tree photo if present
   if (updatedAnswers.q10_people?.treePhotoUrl?.startsWith("data:image/")) {
@@ -627,6 +649,60 @@ export async function deleteSubmission(id: string): Promise<void> {
   await deleteDoc(submissionRef);
 }
 
+function stripUndefinedDeep<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function logAndThrowFirestoreError(
+  error: unknown,
+  operationType: "create" | "update" | "delete" | "get" | "write",
+  path: string,
+  fallbackMessage: string
+): never {
+  const errInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    operationType,
+    path,
+    authInfo: {
+      userId: auth.currentUser?.uid ?? null,
+      email: auth.currentUser?.email ?? null,
+      emailVerified: auth.currentUser?.emailVerified ?? null,
+    },
+  };
+  console.error("Firestore Error:", JSON.stringify(errInfo));
+  throw new Error(error instanceof Error ? error.message : fallbackMessage);
+}
+
+function isPermissionDeniedError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  if (code === "permission-denied") return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return message.toLowerCase().includes("missing or insufficient permissions");
+}
+
+async function canFallbackToMainChecklistCustomEvents(
+  submissionId: string,
+  eventId: string
+): Promise<boolean> {
+  try {
+    const snap = await getDoc(
+      doc(db, "submissions", submissionId, "productionEvents", eventId)
+    );
+    // If subcollection read succeeds and doc exists, subcollection rules ARE deployed.
+    // Never fall back if the subcollection doc is already locked.
+    if (snap.exists()) {
+      const data = snap.data() as Partial<CustomProductionEvent> | undefined;
+      if (data?.submitted || data?.submission) {
+        return false;
+      }
+    }
+    return !snap.exists();
+  } catch (readErr) {
+    // Subcollection read itself denied -> subcollection rules are not yet published
+    return isPermissionDeniedError(readErr);
+  }
+}
+
 /**
  * Admin: Save updated Wedding Production Checklist status map for a couple.
  */
@@ -634,28 +710,65 @@ export async function updateSubmissionChecklist(
   id: string,
   productionChecklist: ProductionChecklistData
 ): Promise<void> {
-  updateLocalCacheRecord(id, (rec) => ({ ...rec, productionChecklist }));
+  const cleanChecklist = stripUndefinedDeep(productionChecklist);
+  updateLocalCacheRecord(id, (rec) => ({ ...rec, productionChecklist: cleanChecklist }));
   const path = `submissions/${id}`;
   try {
     const submissionRef = doc(db, "submissions", id);
-    await updateDoc(submissionRef, { productionChecklist });
+    await updateDoc(submissionRef, { productionChecklist: cleanChecklist });
   } catch (error) {
-    const errInfo = {
-      error: error instanceof Error ? error.message : String(error),
-      operationType: "update",
+    logAndThrowFirestoreError(
+      error,
+      "update",
       path,
-      authInfo: {
-        userId: auth.currentUser?.uid ?? null,
-        email: auth.currentUser?.email ?? null,
-        emailVerified: auth.currentUser?.emailVerified ?? null,
-      },
-    };
-    console.error("Firestore Error:", JSON.stringify(errInfo));
-    throw new Error(
-      error instanceof Error
-        ? error.message
-        : "Failed to save checklist changes to Firestore."
+      "Failed to save checklist changes to Firestore."
     );
+  }
+}
+
+/**
+ * Admin: Submit and permanently lock a standard production event
+ * ('sangeet' | 'wedding' | 'reception').
+ * Writes the lock & complete submission metadata onto the primary couple submission
+ * document first so submission succeeds immediately under live admin rules, then
+ * mirrors a write-once archival copy to eventSubmissions when subcollection rules allow.
+ */
+export async function submitStandardChecklistEvent(
+  id: string,
+  nextChecklist: ProductionChecklistData,
+  submissionRecord: EventSubmissionRecord
+): Promise<void> {
+  const cleanChecklist = stripUndefinedDeep(nextChecklist);
+  const cleanRecord = stripUndefinedDeep(submissionRecord);
+  const path = `submissions/${id}`;
+
+  try {
+    await updateDoc(doc(db, "submissions", id), {
+      productionChecklist: cleanChecklist,
+    });
+    updateLocalCacheRecord(id, (rec) => ({
+      ...rec,
+      productionChecklist: cleanChecklist,
+    }));
+  } catch (error) {
+    logAndThrowFirestoreError(
+      error,
+      "update",
+      path,
+      "Failed to submit and lock event in Firestore."
+    );
+  }
+
+  // Secondary write-once archive mirror (non-blocking if subcollection rules are pending deployment)
+  try {
+    await setDoc(
+      doc(db, "submissions", id, "eventSubmissions", submissionRecord.eventId),
+      cleanRecord
+    );
+  } catch (archiveErr) {
+    if (!isPermissionDeniedError(archiveErr)) {
+      console.warn("Non-blocking eventSubmissions archive write failed:", archiveErr);
+    }
   }
 }
 
@@ -700,6 +813,309 @@ export function subscribeSubmissionChecklist(
     }
   );
 }
+
+/**
+ * Admin: Subscribe to custom production events created for a couple.
+ * Gracefully degrades to empty list if subcollection rules are not yet deployed.
+ */
+export function subscribeCustomProductionEvents(
+  submissionId: string,
+  onUpdate: (events: CustomProductionEvent[]) => void,
+  onError: (err: Error) => void
+): () => void {
+  const path = `submissions/${submissionId}/productionEvents`;
+  const q = query(
+    collection(db, "submissions", submissionId, "productionEvents"),
+    orderBy("createdAt", "asc")
+  );
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const list: CustomProductionEvent[] = [];
+      snapshot.forEach((docSnap) => {
+        list.push({ ...(docSnap.data() as CustomProductionEvent), id: docSnap.id });
+      });
+      onUpdate(list);
+    },
+    (error) => {
+      if (isPermissionDeniedError(error)) {
+        onUpdate([]);
+        return;
+      }
+      console.error("Firestore Custom Events Listener Error:", path, error);
+      onError(
+        error instanceof Error
+          ? error
+          : new Error("Failed to sync custom wedding events.")
+      );
+    }
+  );
+}
+
+/**
+ * Admin: Subscribe to immutable archived event submission receipts.
+ * Gracefully degrades to empty map if subcollection rules are not yet deployed.
+ */
+export function subscribeEventSubmissions(
+  submissionId: string,
+  onUpdate: (archivedByEventId: Record<string, EventSubmissionRecord>) => void,
+  onError: (err: Error) => void
+): () => void {
+  const path = `submissions/${submissionId}/eventSubmissions`;
+  return onSnapshot(
+    collection(db, "submissions", submissionId, "eventSubmissions"),
+    (snapshot) => {
+      const map: Record<string, EventSubmissionRecord> = {};
+      snapshot.forEach((docSnap) => {
+        map[docSnap.id] = docSnap.data() as EventSubmissionRecord;
+      });
+      onUpdate(map);
+    },
+    (error) => {
+      if (isPermissionDeniedError(error)) {
+        onUpdate({});
+        return;
+      }
+      console.error("Firestore Event Submissions Listener Error:", path, error);
+      onError(
+        error instanceof Error
+          ? error
+          : new Error("Failed to sync submitted event records.")
+      );
+    }
+  );
+}
+
+/**
+ * Admin: Create a new unsubmitted custom production event for a couple.
+ */
+export async function createCustomProductionEvent(
+  submissionId: string,
+  eventId: string,
+  name: string,
+  createdBy: string,
+  previousChecklist?: ProductionChecklistData
+): Promise<{ event: CustomProductionEvent; fallbackChecklist?: ProductionChecklistData }> {
+  const now = new Date().toISOString();
+  const payload: CustomProductionEvent = stripUndefinedDeep({
+    id: eventId,
+    name: name.trim(),
+    isCustom: true,
+    items: {},
+    fileDetails: [],
+    submitted: false,
+    createdAt: now,
+    createdBy,
+    updatedAt: now,
+    updatedBy: createdBy,
+  });
+  const path = `submissions/${submissionId}/productionEvents/${eventId}`;
+  try {
+    await setDoc(doc(db, "submissions", submissionId, "productionEvents", eventId), payload);
+    return { event: payload };
+  } catch (error) {
+    if (isPermissionDeniedError(error)) {
+      const fallbackChecklist = stripUndefinedDeep(
+        buildCustomEventUpsertChecklistData(previousChecklist, payload, createdBy)
+      );
+      await updateSubmissionChecklist(submissionId, fallbackChecklist);
+      return { event: payload, fallbackChecklist };
+    }
+    logAndThrowFirestoreError(error, "create", path, "Failed to create custom event.");
+  }
+}
+
+/**
+ * Admin: Update an unsubmitted custom event's checklist items and/or file details.
+ * Firestore security rules reject this automatically once submitted == true.
+ */
+export async function updateCustomProductionEvent(
+  submissionId: string,
+  event: CustomProductionEvent,
+  updates: {
+    items?: Record<string, ChecklistItemStatus>;
+    fileDetails?: FileDetailEntry[];
+    updatedBy?: string;
+  },
+  previousChecklist?: ProductionChecklistData
+): Promise<{ fallbackChecklist?: ProductionChecklistData }> {
+  const now = new Date().toISOString();
+  const cleanUpdates = stripUndefinedDeep({
+    ...updates,
+    updatedAt: now,
+  });
+  const path = `submissions/${submissionId}/productionEvents/${event.id}`;
+
+  if (previousChecklist?.customEvents?.[event.id]) {
+    const updatedEvent: CustomProductionEvent = stripUndefinedDeep({
+      ...event,
+      ...cleanUpdates,
+    });
+    const fallbackChecklist = stripUndefinedDeep(
+      buildCustomEventUpsertChecklistData(
+        previousChecklist,
+        updatedEvent,
+        updates.updatedBy || "Admin"
+      )
+    );
+    await updateSubmissionChecklist(submissionId, fallbackChecklist);
+    return { fallbackChecklist };
+  }
+
+  try {
+    await updateDoc(
+      doc(db, "submissions", submissionId, "productionEvents", event.id),
+      cleanUpdates
+    );
+    return {};
+  } catch (error) {
+    if (
+      isPermissionDeniedError(error) &&
+      (await canFallbackToMainChecklistCustomEvents(submissionId, event.id))
+    ) {
+      const updatedEvent: CustomProductionEvent = stripUndefinedDeep({
+        ...event,
+        ...cleanUpdates,
+      });
+      const fallbackChecklist = stripUndefinedDeep(
+        buildCustomEventUpsertChecklistData(
+          previousChecklist,
+          updatedEvent,
+          updates.updatedBy || "Admin"
+        )
+      );
+      await updateSubmissionChecklist(submissionId, fallbackChecklist);
+      return { fallbackChecklist };
+    }
+    logAndThrowFirestoreError(
+      error,
+      "update",
+      path,
+      "Failed to update custom event. Submitted events cannot be modified."
+    );
+  }
+}
+
+/**
+ * Admin: Submit and permanently lock a custom event and mirror its immutable archive doc.
+ */
+export async function submitCustomProductionEvent(
+  submissionId: string,
+  nextCustomEvent: CustomProductionEvent,
+  submissionRecord: EventSubmissionRecord,
+  previousChecklist?: ProductionChecklistData
+): Promise<{ fallbackChecklist?: ProductionChecklistData }> {
+  const cleanEvent = stripUndefinedDeep(nextCustomEvent);
+  const cleanRecord = stripUndefinedDeep(submissionRecord);
+  const path = `submissions/${submissionId}/productionEvents/${nextCustomEvent.id}`;
+  let fallbackChecklistResult: ProductionChecklistData | undefined;
+
+  if (previousChecklist?.customEvents?.[nextCustomEvent.id]) {
+    const fallbackChecklist = stripUndefinedDeep(
+      buildCustomEventUpsertChecklistData(
+        previousChecklist,
+        cleanEvent,
+        cleanEvent.updatedBy || cleanRecord.submittedBy
+      )
+    );
+    await updateSubmissionChecklist(submissionId, fallbackChecklist);
+    fallbackChecklistResult = fallbackChecklist;
+  } else {
+    try {
+      await updateDoc(
+        doc(db, "submissions", submissionId, "productionEvents", nextCustomEvent.id),
+        {
+          items: cleanEvent.items,
+          fileDetails: cleanEvent.fileDetails,
+          submitted: true,
+          submission: cleanRecord,
+          updatedAt: cleanRecord.submittedAt,
+          updatedBy: cleanEvent.updatedBy || cleanRecord.submittedBy,
+        }
+      );
+    } catch (error) {
+      if (
+        isPermissionDeniedError(error) &&
+        (await canFallbackToMainChecklistCustomEvents(submissionId, nextCustomEvent.id))
+      ) {
+        const fallbackChecklist = stripUndefinedDeep(
+          buildCustomEventUpsertChecklistData(
+            previousChecklist,
+            cleanEvent,
+            cleanEvent.updatedBy || cleanRecord.submittedBy
+          )
+        );
+        await updateSubmissionChecklist(submissionId, fallbackChecklist);
+        fallbackChecklistResult = fallbackChecklist;
+      } else {
+        logAndThrowFirestoreError(
+          error,
+          "write",
+          path,
+          "Failed to submit and permanently lock custom event."
+        );
+      }
+    }
+  }
+
+  // Secondary write-once archive mirror (non-blocking if subcollection rules are pending)
+  try {
+    await setDoc(
+      doc(db, "submissions", submissionId, "eventSubmissions", nextCustomEvent.id),
+      cleanRecord
+    );
+  } catch (archiveErr) {
+    if (!isPermissionDeniedError(archiveErr)) {
+      console.warn("Non-blocking eventSubmissions archive write failed:", archiveErr);
+    }
+  }
+
+  return { fallbackChecklist: fallbackChecklistResult };
+}
+
+/**
+ * Admin: Delete an unsubmitted custom event. Submitted or standard events cannot be deleted.
+ */
+export async function deleteCustomProductionEvent(
+  submissionId: string,
+  eventId: string,
+  updatedBy: string = "Admin",
+  previousChecklist?: ProductionChecklistData
+): Promise<{ fallbackChecklist?: ProductionChecklistData }> {
+  const path = `submissions/${submissionId}/productionEvents/${eventId}`;
+
+  if (previousChecklist?.customEvents?.[eventId]) {
+    const fallbackChecklist = stripUndefinedDeep(
+      buildCustomEventDeleteChecklistData(previousChecklist, eventId, updatedBy)
+    );
+    await updateSubmissionChecklist(submissionId, fallbackChecklist);
+    return { fallbackChecklist };
+  }
+
+  try {
+    await deleteDoc(doc(db, "submissions", submissionId, "productionEvents", eventId));
+    return {};
+  } catch (error) {
+    if (
+      isPermissionDeniedError(error) &&
+      (await canFallbackToMainChecklistCustomEvents(submissionId, eventId))
+    ) {
+      const fallbackChecklist = stripUndefinedDeep(
+        buildCustomEventDeleteChecklistData(previousChecklist, eventId, updatedBy)
+      );
+      await updateSubmissionChecklist(submissionId, fallbackChecklist);
+      return { fallbackChecklist };
+    }
+    logAndThrowFirestoreError(
+      error,
+      "delete",
+      path,
+      "Failed to delete custom event. Submitted events cannot be deleted."
+    );
+  }
+}
+
+
 
 
 

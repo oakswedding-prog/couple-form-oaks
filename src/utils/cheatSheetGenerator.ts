@@ -17,9 +17,9 @@ export const OAKS_CHEATSHEET_SYSTEM_PROMPT = `# OAKS WEDDING — SHOOT DAY CHEAT
 You are the Lead Shoot Coordinator and Production Brief Specialist at OAKS WEDDING, a premium wedding photography and cinematography studio.
 
 ### 1. MAIN OBJECTIVE
-Read all 28 questionnaire answers, identify the most important information, remove unnecessary details and convert the findings into a short, practical production brief.
+Read all 27 questionnaire answers, identify the most important information, remove unnecessary details and convert the findings into a short, practical production brief.
 
-The Shoot Day Cheat Sheet is NOT a summary of all 28 questionnaire answers. It is a quick-reference document for the photography and filmmaking team to use on the actual wedding day.
+The Shoot Day Cheat Sheet is NOT a summary of all 27 questionnaire answers. It is a quick-reference document for the photography and filmmaking team to use on the actual wedding day.
 
 A team member should be able to scan it in 30–60 seconds and immediately understand the couple's most important preferences, people, moments and instructions.
 
@@ -406,9 +406,10 @@ export function synthesizeCheatSheet(
   sections.push(`During the day: ${duringDay}`);
   if (answers.primaryContact?.role && (answers.primaryContact.name || answers.primaryContact.phone)) {
     const pc = answers.primaryContact;
+    const contactRoleExtra = pc.designation || pc.gender;
     const roleDetail =
-      pc.role === "Someone else" && (pc.side || pc.gender)
-        ? `${pc.role} (${[pc.side, pc.gender].filter(Boolean).join(", ")})`
+      pc.role === "Someone else" && (pc.side || contactRoleExtra)
+        ? `${pc.role} (${[pc.side, contactRoleExtra].filter(Boolean).join(", ")})`
         : pc.role;
     const contactLabel = `${pc.name || roleDetail} (${roleDetail})${pc.phone ? ` · ${pc.phone}` : ""}`;
     sections.push(`Primary contact: ${contactLabel}`);

@@ -4,459 +4,795 @@
  */
 
 import { QuestionnaireAnswers } from "../types/questionnaire.ts";
+import { cleanSentenceText } from "./textCleaner.ts";
 
-/**
- * System prompt definition for the OAKS WEDDING — Editorial Couple Brief Generator Version 2.0.
- * Follows the simple, human, and team-ready standard, using Riya & Roshan as the exact benchmark.
- */
 export const OAKS_BRIEF_SYSTEM_PROMPT = `
-# OAKS WEDDING — EDITORIAL COUPLE BRIEF GENERATOR
-## VERSION 2.0 — SIMPLE, HUMAN & TEAM-READY
+# OAKS WEDDING — EDITORIAL CREATIVE BRIEF GENERATOR
+## ALL 27 QUESTIONS · QUICK-REFERENCE SUMMARY
 
 ### YOUR ROLE
-You are the Couple Brief Writer at OAKS WEDDING, a premium wedding photography and filmmaking studio.
-Your job is to read all the answers submitted by a couple and turn them into a short, beautiful and easy-to-read wedding brief.
-The brief will be read by photographers and filmmakers before the wedding.
-They should be able to read it in 2–3 minutes (approx 350–500 words total) and quickly understand who the couple are, what matters to them and what they want us to capture.
+You are the Creative Brief Editor at OAKS WEDDING, a premium wedding photography and filmmaking studio.
+Your job is to produce a crisp, fast-reading reference brief covering **ALL 27 questions** from the couple's questionnaire in their exact original order, grouped under the **6 questionnaire chapters**.
+The photography and cinematography crew should be able to scan all 27 answers in just a few minutes without reading long raw paragraphs.
 
-### 1. THE MOST IMPORTANT RULE: UNDERSTAND, DON'T COPY
-- Read all the couple's answers before writing anything.
-- Understand the full story and identify the most important details.
-- Then rewrite those details in your own words using simple, natural English.
-- NEVER copy long answers or paragraphs directly from the questionnaire.
-- Summarise, combine related points, and remove unnecessary fluff.
+### STRICT RULES
+1. **Include all 27 questions (Q01 through Q27)** in the exact chapter order below. Never skip or merge questions.
+2. **Do not reproduce lengthy original paragraphs verbatim.** Convert long responses (e.g. 150–250+ words) into **2–4 short, meaningful bullet points** capturing exact facts, names, relationships, emotions, venues, preferences, and instructions while stripping repetition, greetings, and filler.
+3. **Keep short answers equally short.** If an answer is already brief (one name, phrase, or short sentence), summarise it in **1 short bullet point** — never pad or expand it.
+4. **If a question is unanswered**, output strictly: \`- Not provided\`
+5. **Zero assumptions.** Never invent, guess, or extrapolate details the couple did not provide.
+6. **Simple, clear English** readable at a glance by the photography and film crew.
 
-### 2. WRITING STYLE & READING EASE
-- Write in simple English that a six-year-old could easily understand (reading-ease target, not childish).
-- Use short sentences.
-- Use simple, common words.
-- Keep paragraphs short.
-- Use a natural, warm, human tone.
-- DO NOT use fancy or academic jargon (avoid "emotional cornerstone", "distinctive relationship dynamic", "documentary honesty", "emotional anchors", "guiding north star", "cinematography cues").
-- Use simple alternatives: "Family is very important to them", "Keep the photos natural", "Capture these moments".
-
-### 3. EXACT BENCHMARK TEMPLATE (RIYA & ROSHAN)
-Follow this exact formatting, divider lines, and section structure:
-
+### EXACT OUTPUT STRUCTURE
+Start with:
 [PARTNER 1 FULL NAME] & [PARTNER 2 FULL NAME]
-THE COUPLE STORY & WEDDING BRIEF
+EDITORIAL CREATIVE BRIEF — ALL 27 QUESTIONS
+
+Then use these exact 6 chapter blocks separated by \`==================================================\`:
 
 ==================================================
-01 — THEIR STORY
+CHAPTER 1 — YOUR STORY (Q1–Q9)
 ==================================================
-[1-2 short paragraphs explaining how they met, how their relationship started, and the proposal. Rewritten in simple words. No raw quotes.]
-
-==================================================
-02 — THE LITTLE THINGS THEY LOVE
-==================================================
-[1-2 short sentences summarizing what they enjoy doing together, their hobbies, and everyday company.]
-
-==================================================
-03 — THEIR FAMILY MATTERS
-==================================================
-Family is an important part of their story. The people they particularly want us to look out for are:
-
-- [Name] — [Relationship] ([Side])
-- ...
-
-[1 short paragraph highlighting grandparents/parents, their blessings, emotional reactions, and generational connection.]
+Q01. What do you call each other?
+Q02. What do you both do for a living and what are you truly passionate about?
+Q03. How did you first meet?
+Q04. What was your first impression of each other?
+Q05. How would you describe yourselves as a couple in three words?
+Q06. What do you enjoy doing together?
+Q07. What do you love most about each other?
+Q08. Is there a funny story, inside joke, or special moment that defines your relationship?
+Q09. How did the proposal happen?
 
 ==================================================
-04 — THEIR VISUAL LANGUAGE
+CHAPTER 2 — YOUR PEOPLE (Q10)
 ==================================================
-They want their wedding to feel [film feel styles].
-
-Their vision is a combination of [brief summary of visual look].
-
-They have also chosen [number] defining wedding tones:
-
-- [Tone 1]
-- [Tone 2]
-
-The goal is to [1 sentence on the visual balance].
+Q10. Who are the most important people you want us to capture?
 
 ==================================================
-05 — MOMENTS THEY ARE LOOKING FORWARD TO
+CHAPTER 3 — THE LOOK AND FEEL (Q11–Q15)
 ==================================================
-The moments they particularly want documented include:
-
-- [Moment 1]
-- [Moment 2]
-- [Moment 3]
-...
-
-[1 short sentence on how to approach these moments, plus any must-capture or avoid requests turned into clear action.]
+Q11. How do you want your wedding photographs and films to feel?
+Q12. Are there any photographers, films, or Pinterest references you love?
+Q13. Have you finalised your wedding wardrobe? Share your outfit plans, colour preferences, and styling ideas. Knowing these details helps us plan your photography and films more thoughtfully.
+Q14. Do you have a wedding decor mood board or visual references?
+Q15. What tone are you expecting to set for your wedding day?
 
 ==================================================
-06 — THEIR COMFORT IN FRONT OF THE CAMERA
+CHAPTER 4 — YOUR DAY (Q16–Q19)
 ==================================================
-[Simple description of their camera comfort, emotional expectations, and what helps them feel relaxed, like practice shots or previews.]
+Q16. What are the moments you are most looking forward to?
+Q17. Is there anything you definitely want us to capture or avoid?
+Q18. What are your non-negotiables in your films and photographs?
+Q19. Who do you think is going to be more emotional during the wedding?
 
 ==================================================
-07 — WHAT MATTERS WHEN CHOOSING THEIR TEAM
+CHAPTER 5 — WORKING TOGETHER (Q20–Q25)
 ==================================================
-Their biggest priorities are:
-
-- [Priority 1]
-- [Priority 2]
-- [Priority 3]
-
-[1 short sentence explaining what they value in the team.]
-
-==================================================
-08 — WHAT THEY WANT TO REMEMBER
-==================================================
-[Short, warm paragraph about wanting to remember how everything felt—laughter, tears, parents' expressions, hearing voices years from now.]
+Q20. How versatile are you with the camera?
+Q21. What mattered most when choosing OAKS Wedding?
+Q22. How comfortable are you with being guided or directed during portraits and filming?
+Q23. Is there anything that would help you feel more comfortable in front of the camera?
+Q24. What do you hope to feel when you watch your wedding film years from now?
+Q25. Who should be our primary point of contact?
 
 ==================================================
-THE FINAL THOUGHT
+CHAPTER 6 — ONE LAST THING (Q26–Q27)
 ==================================================
-For [Partner 1] and [Partner 2], this isn't just about documenting a wedding. It's about preserving the beginning of a new chapter, surrounded by the people who made their journey special.
-
-Let's give them something that feels alive, deeply personal and timeless — photographs and films that become even more valuable with every passing year.
+Q26. What is your story and journey together?
+Q27. Is there anything else you would like us to know?
 `;
 
-/**
- * Condenses and cleans user text into simple, plain English without long rambles or quotes.
- */
-function simplifyText(text: string | undefined, maxWords = 35): string {
-  if (!text) return "";
-  let clean = text.replace(/["“”'‘’]/g, "").trim();
-  // Remove boilerplate greetings or filler
-  clean = clean.replace(/^(well|so|basically|actually|to be honest|we think that|i think that)\s*,?\s*/i, "");
-  const words = clean.split(/\s+/);
-  if (words.length <= maxWords) {
-    return clean;
+const CHAPTER_DIVIDER = "==================================================";
+
+const STOP_WORDS = new Set([
+  "the", "and", "for", "that", "with", "this", "from", "they", "them", "were",
+  "have", "been", "very", "just", "really", "actually", "basically", "about",
+  "when", "where", "which", "what", "there", "their", "then", "also", "into",
+  "our", "your", "both", "each", "other", "more", "some", "would", "could",
+  "like", "feel", "felt", "made", "make", "much", "such", "than", "over",
+]);
+
+function stripFillerPrefixes(raw: string): string {
+  return raw
+    .replace(/^(well|so|basically|actually|honestly|to be honest|truthfully|seriously|you know|i think that|we think that|i feel like|we feel like|we would say that|just wanted to say that|to be fair|in short|overall)[,\s]+/i, "")
+    .replace(/\b(in order to)\b/gi, "to")
+    .replace(/\b(due to the fact that)\b/gi, "because")
+    .replace(/\b(at the end of the day)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function trimSentenceToMaxWords(sentence: string, maxWords: number): string {
+  const words = sentence.split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords) return sentence;
+  const slice = words.slice(0, maxWords).join(" ").replace(/[,;:\-]+$/, "");
+  return `${slice}…`;
+}
+
+function tokenSet(sentence: string): Set<string> {
+  const tokens = sentence
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !STOP_WORDS.has(w));
+  return new Set(tokens);
+}
+
+function isNearDuplicate(a: string, b: string): boolean {
+  const setA = tokenSet(a);
+  const setB = tokenSet(b);
+  if (setA.size === 0 || setB.size === 0) {
+    return a.toLowerCase() === b.toLowerCase();
   }
-  return words.slice(0, maxWords).join(" ") + "...";
+  let intersection = 0;
+  for (const tok of setA) {
+    if (setB.has(tok)) intersection += 1;
+  }
+  const union = setA.size + setB.size - intersection;
+  return union > 0 && intersection / union >= 0.58;
+}
+
+function scoreSentenceInformation(sentence: string): number {
+  let score = 0;
+  // Proper nouns / names / places mid-sentence
+  const midCapitals = sentence.slice(1).match(/\b[A-Z][a-z]{2,}\b/g);
+  if (midCapitals) score += midCapitals.length * 2;
+  // Numbers / dates / durations
+  if (/\d/.test(sentence)) score += 2;
+  // Key wedding/production signals
+  if (
+    /\b(avoid|never|must|always|prefer|want|love|emotional|tears|parents|grandparents|audio|vows|candid|surprise|song|entry|dance|outfit|decor|palette|proposal|met|college|school|friend|family)\b/i.test(
+      sentence
+    )
+  ) {
+    score += 3;
+  }
+  const wordCount = sentence.split(/\s+/).filter(Boolean).length;
+  if (wordCount >= 5 && wordCount <= 26) score += 2;
+  return score;
 }
 
 /**
- * High-fidelity, deterministic synthesis engine adhering strictly to Version 2.0
- * and the Riya & Roshan benchmark.
- * - Rewrites and summarises instead of copying.
- * - Uses simple, 6-year-old reading-ease English.
- * - Length: 350–500 words.
- * - Formatted with ================================================== dividers.
+ * Summarises raw text cleanly:
+ * - Short single answers (<= 22 words, single sentence) remain 1 concise bullet without inflation.
+ * - Lengthy narratives are distilled into 2–4 concise, non-redundant bullet points
+ *   preserving names, specifics, preferences, and emotions.
+ */
+export function summarizeToPoints(
+  rawText: string | undefined,
+  options?: { maxBullets?: number; maxWordsPerBullet?: number }
+): string[] {
+  if (!rawText) return [];
+  const normalized = stripFillerPrefixes(
+    cleanSentenceText(rawText.replace(/["“”]/g, ""))
+  );
+  if (!normalized) return [];
+
+  const maxBullets = options?.maxBullets ?? 4;
+  const maxWordsPerBullet = options?.maxWordsPerBullet ?? 24;
+
+  // Split into meaningful clauses/sentences
+  const rawSegments = normalized
+    .split(/(?<=[.!?])\s+|\n+|;\s+/)
+    .map((seg) => stripFillerPrefixes(seg).replace(/^[•\-–—*\d.)\s]+/, "").trim())
+    .filter((seg) => seg.length > 1);
+
+  if (rawSegments.length === 0) return [];
+
+  const totalWords = normalized.split(/\s+/).filter(Boolean).length;
+
+  // Short answers stay concise in 1 bullet
+  if (rawSegments.length === 1 && totalWords <= 22) {
+    return [rawSegments[0].replace(/\.$/, "")];
+  }
+
+  // If a single long run-on sentence (> 26 words), split by comma/conjunction clauses cleanly
+  let candidates = rawSegments;
+  if (rawSegments.length === 1 && totalWords > 26) {
+    const clauseParts = rawSegments[0]
+      .split(/,\s+(?=(?:and|but|so|then|also|while|because|where)\s)/i)
+      .map((part) => part.replace(/^(?:and|but|so|then|also)\s+/i, "").trim())
+      .filter((part) => part.split(/\s+/).filter(Boolean).length >= 3);
+    if (clauseParts.length >= 2) {
+      candidates = clauseParts;
+    }
+  }
+
+  // Deduplicate repeated thoughts
+  const unique: string[] = [];
+  for (const cand of candidates) {
+    if (!unique.some((existing) => isNearDuplicate(existing, cand))) {
+      unique.push(cand);
+    }
+  }
+
+  if (unique.length <= maxBullets) {
+    return unique.map((item) => trimSentenceToMaxWords(item.replace(/\.$/, ""), maxWordsPerBullet));
+  }
+
+  // Score by information density while retaining chronological order
+  const rankedIndices = unique
+    .map((text, idx) => ({ idx, score: scoreSentenceInformation(text) + (idx === 0 ? 1 : 0) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, maxBullets)
+    .map((entry) => entry.idx)
+    .sort((a, b) => a - b);
+
+  return rankedIndices.map((idx) =>
+    trimSentenceToMaxWords(unique[idx].replace(/\.$/, ""), maxWordsPerBullet)
+  );
+}
+
+function formatPartnerPairSummary(
+  p1: string,
+  valA: string | undefined,
+  p2: string,
+  valB: string | undefined
+): string[] {
+  const bullets: string[] = [];
+  const ptsA = summarizeToPoints(valA, { maxBullets: 2, maxWordsPerBullet: 22 });
+  const ptsB = summarizeToPoints(valB, { maxBullets: 2, maxWordsPerBullet: 22 });
+
+  if (ptsA.length === 1) {
+    bullets.push(`${p1}: ${ptsA[0]}`);
+  } else if (ptsA.length > 1) {
+    bullets.push(`${p1}: ${ptsA[0]}`);
+    for (let i = 1; i < ptsA.length; i++) {
+      bullets.push(`${p1} (cont.): ${ptsA[i]}`);
+    }
+  }
+
+  if (ptsB.length === 1) {
+    bullets.push(`${p2}: ${ptsB[0]}`);
+  } else if (ptsB.length > 1) {
+    bullets.push(`${p2}: ${ptsB[0]}`);
+    for (let i = 1; i < ptsB.length; i++) {
+      bullets.push(`${p2} (cont.): ${ptsB[i]}`);
+    }
+  }
+
+  return bullets;
+}
+
+function summarizeMediaAndNotes(
+  media: { links?: string[]; images?: string[]; notes?: string } | undefined,
+  labelPrefix: string
+): string[] {
+  if (!media) return [];
+  const bullets: string[] = [];
+  const links = (media.links || []).map((l) => l.trim()).filter(Boolean);
+  const images = (media.images || []).filter(Boolean);
+  const notePts = summarizeToPoints(media.notes, { maxBullets: 3, maxWordsPerBullet: 22 });
+
+  for (const pt of notePts) {
+    bullets.push(pt);
+  }
+  if (links.length > 0) {
+    const domains = links.map((link) => {
+      try {
+        return new URL(link).hostname.replace(/^www\./, "");
+      } catch {
+        return link;
+      }
+    });
+    bullets.push(`${labelPrefix} links (${links.length}): ${domains.slice(0, 3).join(", ")}${links.length > 3 ? ` +${links.length - 3} more` : ""}`);
+  }
+  if (images.length > 0) {
+    bullets.push(`Uploaded reference image${images.length > 1 ? "s" : ""}: ${images.length}`);
+  }
+  return bullets;
+}
+
+function summarizeSelectionsAndNotes(
+  selected: string[] | undefined,
+  notes: string | undefined,
+  notePrefix?: string
+): string[] {
+  const cleanSelected = (selected || []).map((s) => s.trim()).filter(Boolean);
+  const notePts = summarizeToPoints(notes, { maxBullets: 2, maxWordsPerBullet: 22 });
+  const bullets: string[] = [];
+
+  if (cleanSelected.length > 0) {
+    bullets.push(cleanSelected.join(", "));
+  }
+  for (const pt of notePts) {
+    bullets.push(notePrefix ? `${notePrefix}: ${pt}` : pt);
+  }
+  return bullets;
+}
+
+function pushQuestion(lines: string[], code: string, question: string, bullets: string[]): void {
+  lines.push(`${code}. ${question}`);
+  if (bullets.length === 0) {
+    lines.push(`- Not provided`);
+  } else {
+    for (const b of bullets) {
+      lines.push(`- ${b}`);
+    }
+  }
+  lines.push("");
+}
+
+/**
+ * Deterministic 27-question Editorial Creative Brief synthesizer.
+ * Covers all 27 questionnaire questions in exact original order, grouped across the 6 chapters.
  */
 export function synthesizeEditorialBrief(answers: QuestionnaireAnswers): string {
   const p1 = (answers.partner1 || "Partner 1").trim();
   const p2 = (answers.partner2 || "Partner 2").trim();
   const coupleHeader = `${p1.toUpperCase()} & ${p2.toUpperCase()}`;
 
-  // 1. Their Story
-  const meet = answers.q3_firstMeet?.trim();
-  const loveStory = answers.loveStoryNarrative?.trim();
-  const proposal = answers.q9_proposal?.choice === "story" ? answers.q9_proposal.story?.trim() : "";
-  const threeWords = (answers.q5_threeWords || []).filter(Boolean);
-  const p1Impression = answers.q4_firstImpression?.partnerA?.trim();
-  const p2Impression = answers.q4_firstImpression?.partnerB?.trim();
+  const lines: string[] = [];
+  lines.push(coupleHeader);
+  lines.push("EDITORIAL CREATIVE BRIEF — ALL 27 QUESTIONS");
+  lines.push("");
 
-  // 2. Little Things
-  const activities = [
-    ...(answers.q6_activities?.selected || []),
-    answers.q6_activities?.other ? answers.q6_activities.other.trim() : "",
-  ].filter(Boolean);
-  const p1Work = answers.q2_workPassion?.partnerA?.trim();
-  const p2Work = answers.q2_workPassion?.partnerB?.trim();
+  // CHAPTER 1: YOUR STORY (Q1–Q9)
+  lines.push(CHAPTER_DIVIDER);
+  lines.push("CHAPTER 1 — YOUR STORY (Q1–Q9)");
+  lines.push(CHAPTER_DIVIDER);
+  lines.push("");
+
+  // Q01
+  const q1Bullets: string[] = [];
   const aCallsB = answers.q1_calls?.aCallsB?.trim();
   const bCallsA = answers.q1_calls?.bCallsA?.trim();
+  if (aCallsB) q1Bullets.push(`${p1} calls ${p2}: ${aCallsB}`);
+  if (bCallsA) q1Bullets.push(`${p2} calls ${p1}: ${bCallsA}`);
+  if (answers.couplePhotoUrl?.trim()) q1Bullets.push("Couple photo uploaded");
+  pushQuestion(lines, "Q01", "What do you call each other?", q1Bullets);
 
-  // 3. Family
-  const familyMembers = answers.q10_people?.familyMembers || [];
-  const vipMembers = familyMembers.filter((m) => m.mustCapture);
-  const otherMembers = familyMembers.filter((m) => !m.mustCapture);
-  const emotionalPerson = answers.q17_emotional?.trim();
+  // Q02
+  const q2Bullets = formatPartnerPairSummary(
+    p1,
+    answers.q2_workPassion?.partnerA,
+    p2,
+    answers.q2_workPassion?.partnerB
+  );
+  pushQuestion(
+    lines,
+    "Q02",
+    "What do you both do for a living and what are you truly passionate about?",
+    q2Bullets
+  );
 
-  // 4. Visual Language, Outfits, Decor & Tone
-  const filmFeel = [
-    ...(answers.q11_filmFeel?.selected || []),
-    answers.q11_filmFeel?.other ? answers.q11_filmFeel.other.trim() : "",
-  ].filter(Boolean);
-  const outfitNotes = answers.weddingOutfits?.notes?.trim();
-  const decorNotes = answers.decorMoodBoard?.notes?.trim();
-  const tones = [
-    ...(answers.q13_tone?.selected || []),
-    answers.q13_tone?.other ? answers.q13_tone.other.trim() : "",
-  ].filter(Boolean);
+  // Q03
+  pushQuestion(
+    lines,
+    "Q03",
+    "How did you first meet?",
+    summarizeToPoints(answers.q3_firstMeet, { maxBullets: 4, maxWordsPerBullet: 24 })
+  );
 
-  // 5. Moments
-  const moments = [
-    ...(answers.q14_moments?.selected || []),
-    answers.q14_moments?.other ? answers.q14_moments.other.trim() : "",
-  ].filter(Boolean);
-  const definitelyCapture = answers.q15_captureAvoid?.definitelyCapture?.trim();
-  const pleaseAvoid = answers.q15_captureAvoid?.pleaseAvoid?.trim();
-  const nonNegotiables = answers.q16_nonNegotiables?.trim();
+  // Q04
+  pushQuestion(
+    lines,
+    "Q04",
+    "What was your first impression of each other?",
+    formatPartnerPairSummary(
+      p1,
+      answers.q4_firstImpression?.partnerA,
+      p2,
+      answers.q4_firstImpression?.partnerB
+    )
+  );
 
-  // 6. Camera Comfort
-  const cameraVersatility = answers.q18_cameraVersatility?.trim();
-  const guidanceComfort = answers.q20_guidanceComfort?.trim();
-  const comfortTips = [
-    ...(answers.q21_comfortTips?.selected || []),
-    answers.q21_comfortTips?.notes ? answers.q21_comfortTips.notes.trim() : "",
-  ].filter(Boolean);
+  // Q05
+  const threeWords = (answers.q5_threeWords || []).map((w) => w.trim()).filter(Boolean);
+  pushQuestion(
+    lines,
+    "Q05",
+    "How would you describe yourselves as a couple in three words?",
+    threeWords.length > 0 ? [threeWords.join(" · ")] : []
+  );
 
-  // 7. Team Priorities & Why OAKS Wedding
-  const choosingOaks = answers.choosingOaks?.trim();
-  const priorities = [
-    ...(answers.q19_whatMattersMost?.selected || []),
-    answers.q19_whatMattersMost?.other ? answers.q19_whatMattersMost.other.trim() : "",
-  ].filter(Boolean);
+  // Q06
+  pushQuestion(
+    lines,
+    "Q06",
+    "What do you enjoy doing together?",
+    summarizeSelectionsAndNotes(answers.q6_activities?.selected, answers.q6_activities?.other, "Also")
+  );
 
-  // 8. Future feeling
-  const futureFeeling = answers.q22_futureFeeling?.trim();
+  // Q07
+  pushQuestion(
+    lines,
+    "Q07",
+    "What do you love most about each other?",
+    formatPartnerPairSummary(
+      p1,
+      answers.q7_loveMost?.partnerA,
+      p2,
+      answers.q7_loveMost?.partnerB
+    )
+  );
 
-  const divider = "==================================================";
-  const lines: string[] = [];
+  // Q08
+  pushQuestion(
+    lines,
+    "Q08",
+    "Is there a funny story, inside joke, or special moment that defines your relationship?",
+    summarizeToPoints(answers.q8_funnyStory, { maxBullets: 4, maxWordsPerBullet: 24 })
+  );
 
-  // TITLE BANNER
-  lines.push(coupleHeader);
-  lines.push(`THE COUPLE STORY & WEDDING BRIEF`);
+  // Q09
+  const q9Bullets: string[] = [];
+  if (answers.q9_proposal?.choice === "na") {
+    q9Bullets.push("Not applicable — decided together without a formal proposal");
+  } else if (answers.q9_proposal?.story?.trim()) {
+    q9Bullets.push(
+      ...summarizeToPoints(answers.q9_proposal.story, { maxBullets: 4, maxWordsPerBullet: 24 })
+    );
+  } else if (answers.q9_proposal?.choice === "story") {
+    q9Bullets.push("Proposal story selected (details not provided)");
+  }
+  pushQuestion(lines, "Q09", "How did the proposal happen?", q9Bullets);
+
+  // CHAPTER 2: YOUR PEOPLE (Q10)
+  lines.push(CHAPTER_DIVIDER);
+  lines.push("CHAPTER 2 — YOUR PEOPLE (Q10)");
+  lines.push(CHAPTER_DIVIDER);
   lines.push("");
 
-  // SECTION 01 — THEIR STORY
-  lines.push(divider);
-  lines.push(`01 — THEIR STORY`);
-  lines.push(divider);
+  const q10Bullets: string[] = [];
+  const members = answers.q10_people?.familyMembers || [];
+  const sortedMembers = [...members].sort(
+    (a, b) => Number(Boolean(b.mustCapture)) - Number(Boolean(a.mustCapture))
+  );
+  for (const m of sortedMembers.slice(0, 12)) {
+    const sideLabel =
+      m.side === "sideA" ? `${p1}'s side` : m.side === "sideB" ? `${p2}'s side` : "Both sides";
+    const mustFlag = m.mustCapture ? " · Must capture" : "";
+    q10Bullets.push(`${m.name} — ${m.relationship} (${sideLabel})${mustFlag}`);
+  }
+  if (sortedMembers.length > 12) {
+    q10Bullets.push(`+ ${sortedMembers.length - 12} additional family members listed in directory`);
+  }
+  const treeNotes = summarizeToPoints(answers.q10_people?.treeNotes, {
+    maxBullets: 2,
+    maxWordsPerBullet: 24,
+  });
+  for (const note of treeNotes) {
+    q10Bullets.push(`Family note: ${note}`);
+  }
+  if (answers.q10_people?.treePhotoUrl) {
+    q10Bullets.push("Family tree reference photo uploaded");
+  }
+  pushQuestion(
+    lines,
+    "Q10",
+    "Who are the most important people you want us to capture?",
+    q10Bullets
+  );
+
+  // CHAPTER 3: THE LOOK AND FEEL (Q11–Q15)
+  lines.push(CHAPTER_DIVIDER);
+  lines.push("CHAPTER 3 — THE LOOK AND FEEL (Q11–Q15)");
+  lines.push(CHAPTER_DIVIDER);
   lines.push("");
 
-  let storyP1 = "";
-  if (meet) {
-    const cleanMeet = simplifyText(meet, 30);
-    storyP1 = `${p1} and ${p2}'s story began when they met (${cleanMeet}). What started as a simple connection soon blossomed into a deep, loving relationship.`;
-    if (loveStory) {
-      const cleanLoveStory = simplifyText(loveStory, 25);
-      storyP1 += ` Looking back on their journey (${cleanLoveStory}), their bond stands out for its quiet warmth and shared history.`;
+  // Q11
+  pushQuestion(
+    lines,
+    "Q11",
+    "How do you want your wedding photographs and films to feel?",
+    summarizeSelectionsAndNotes(answers.q11_filmFeel?.selected, answers.q11_filmFeel?.other, "Note")
+  );
+
+  // Q12
+  pushQuestion(
+    lines,
+    "Q12",
+    "Are there any photographers, films, or Pinterest references you love?",
+    summarizeMediaAndNotes(answers.q12_references, "Reference")
+  );
+
+  // Q13
+  pushQuestion(
+    lines,
+    "Q13",
+    "Have you finalised your wedding wardrobe? Share your outfit plans, colour preferences, and styling ideas. Knowing these details helps us plan your photography and films more thoughtfully.",
+    summarizeMediaAndNotes(answers.weddingOutfits, "Outfit")
+  );
+
+  // Q14
+  pushQuestion(
+    lines,
+    "Q14",
+    "Do you have a wedding decor mood board or visual references?",
+    summarizeMediaAndNotes(answers.decorMoodBoard, "Decor")
+  );
+
+  // Q15
+  pushQuestion(
+    lines,
+    "Q15",
+    "What tone are you expecting to set for your wedding day?",
+    summarizeSelectionsAndNotes(answers.q13_tone?.selected, answers.q13_tone?.other, "Note")
+  );
+
+  // CHAPTER 4: YOUR DAY (Q16–Q19)
+  lines.push(CHAPTER_DIVIDER);
+  lines.push("CHAPTER 4 — YOUR DAY (Q16–Q19)");
+  lines.push(CHAPTER_DIVIDER);
+  lines.push("");
+
+  // Q16
+  pushQuestion(
+    lines,
+    "Q16",
+    "What are the moments you are most looking forward to?",
+    summarizeSelectionsAndNotes(answers.q14_moments?.selected, answers.q14_moments?.other, "Custom")
+  );
+
+  // Q17
+  const q17Bullets: string[] = [];
+  const capPts = summarizeToPoints(answers.q15_captureAvoid?.definitelyCapture, {
+    maxBullets: 2,
+    maxWordsPerBullet: 24,
+  });
+  const avoidPts = summarizeToPoints(answers.q15_captureAvoid?.pleaseAvoid, {
+    maxBullets: 2,
+    maxWordsPerBullet: 24,
+  });
+  for (const c of capPts) q17Bullets.push(`Definitely capture: ${c}`);
+  for (const a of avoidPts) q17Bullets.push(`Please avoid: ${a}`);
+  pushQuestion(
+    lines,
+    "Q17",
+    "Is there anything you definitely want us to capture or avoid?",
+    q17Bullets
+  );
+
+  // Q18
+  pushQuestion(
+    lines,
+    "Q18",
+    "What are your non-negotiables in your films and photographs?",
+    summarizeToPoints(answers.q16_nonNegotiables, { maxBullets: 4, maxWordsPerBullet: 24 })
+  );
+
+  // Q19
+  pushQuestion(
+    lines,
+    "Q19",
+    "Who do you think is going to be more emotional during the wedding?",
+    summarizeToPoints(answers.q17_emotional, { maxBullets: 2, maxWordsPerBullet: 20 })
+  );
+
+  // CHAPTER 5: WORKING TOGETHER (Q20–Q25)
+  lines.push(CHAPTER_DIVIDER);
+  lines.push("CHAPTER 5 — WORKING TOGETHER (Q20–Q25)");
+  lines.push(CHAPTER_DIVIDER);
+  lines.push("");
+
+  // Q20
+  pushQuestion(
+    lines,
+    "Q20",
+    "How versatile are you with the camera?",
+    summarizeToPoints(answers.q18_cameraVersatility, { maxBullets: 2, maxWordsPerBullet: 20 })
+  );
+
+  // Q21
+  pushQuestion(
+    lines,
+    "Q21",
+    "What mattered most when choosing OAKS Wedding?",
+    summarizeToPoints(answers.choosingOaks, { maxBullets: 4, maxWordsPerBullet: 24 })
+  );
+
+  // Q22
+  pushQuestion(
+    lines,
+    "Q22",
+    "How comfortable are you with being guided or directed during portraits and filming?",
+    summarizeToPoints(answers.q20_guidanceComfort, { maxBullets: 2, maxWordsPerBullet: 20 })
+  );
+
+  // Q23
+  pushQuestion(
+    lines,
+    "Q23",
+    "Is there anything that would help you feel more comfortable in front of the camera?",
+    summarizeSelectionsAndNotes(
+      answers.q21_comfortTips?.selected,
+      answers.q21_comfortTips?.notes,
+      "Note"
+    )
+  );
+
+  // Q24
+  pushQuestion(
+    lines,
+    "Q24",
+    "What do you hope to feel when you watch your wedding film years from now?",
+    summarizeToPoints(answers.q22_futureFeeling, { maxBullets: 3, maxWordsPerBullet: 24 })
+  );
+
+  // Q25
+  const q25Bullets: string[] = [];
+  const pc = answers.primaryContact;
+  if (pc && (pc.role || pc.name || pc.phone)) {
+    const roleParts = [pc.role, pc.side, pc.designation || pc.gender].filter(Boolean);
+    if (roleParts.length > 0) {
+      q25Bullets.push(`Role: ${roleParts.join(" · ")}`);
     }
-  } else if (loveStory) {
-    const cleanLoveStory = simplifyText(loveStory, 35);
-    storyP1 = `${p1} and ${p2}'s journey together reflects real warmth and dedication (${cleanLoveStory}). Over time, their connection grew into a deep, loving partnership.`;
-  } else if (p1Impression || p2Impression) {
-    storyP1 = `${p1} and ${p2} quickly realized they had found someone special. From their first conversations, their warmth and mutual respect made everything feel natural and easy.`;
-  } else {
-    storyP1 = `${p1} and ${p2} have built a beautiful journey together based on trust, laughter, and shared values.`;
+    const contactLine = [pc.name, pc.phone].filter(Boolean).join(" · ");
+    if (contactLine) {
+      q25Bullets.push(`Contact: ${contactLine}`);
+    }
   }
+  pushQuestion(
+    lines,
+    "Q25",
+    "Who should be our primary point of contact?",
+    q25Bullets
+  );
 
-  if (proposal) {
-    const cleanProposal = simplifyText(proposal, 35);
-    storyP1 += ` Their story took a memorable turn when they got engaged: ${cleanProposal}. It was an unforgettable milestone filled with joy.`;
-  }
-  lines.push(storyP1);
+  // CHAPTER 6: ONE LAST THING (Q26–Q27)
+  lines.push(CHAPTER_DIVIDER);
+  lines.push("CHAPTER 6 — ONE LAST THING (Q26–Q27)");
+  lines.push(CHAPTER_DIVIDER);
   lines.push("");
 
-  if (threeWords.length > 0) {
-    lines.push(`They describe their relationship as ${threeWords.join(", ").toLowerCase()} — words that truly reflect how they treat each other every single day.`);
-    lines.push("");
-  }
+  // Q26
+  pushQuestion(
+    lines,
+    "Q26",
+    "What is your story and journey together?",
+    summarizeToPoints(answers.loveStoryNarrative, { maxBullets: 4, maxWordsPerBullet: 24 })
+  );
 
-  // SECTION 02 — THE LITTLE THINGS THEY LOVE
-  lines.push(divider);
-  lines.push(`02 — THE LITTLE THINGS THEY LOVE`);
-  lines.push(divider);
-  lines.push("");
-
-  const activityList = activities.length > 0
-    ? activities.map((a) => a.toLowerCase()).join(", ")
-    : "spending quality time together, traveling, and sharing quiet moments";
-
-  let littleThings = `They enjoy ${activityList}. They appreciate simple everyday moments, little adventures and simply enjoying each other's company.`;
-  if (aCallsB || bCallsA) {
-    littleThings += ` In private, they affectionately call each other "${[aCallsB, bCallsA].filter(Boolean).join('" and "')}".`;
-  }
-  lines.push(littleThings);
-  lines.push("");
-
-  // SECTION 03 — THEIR FAMILY MATTERS
-  lines.push(divider);
-  lines.push(`03 — THEIR FAMILY MATTERS`);
-  lines.push(divider);
-  lines.push("");
-
-  lines.push(`Family is an important part of their story. The people they particularly want us to look out for are:`);
-  lines.push("");
-
-  const allKeyMembers = [...vipMembers, ...otherMembers].slice(0, 7);
-  if (allKeyMembers.length > 0) {
-    allKeyMembers.forEach((m) => {
-      const sideText = m.side === "sideA" ? ` (${p1}'s side)` : m.side === "sideB" ? ` (${p2}'s side)` : "";
-      lines.push(`- ${m.name} — ${m.relationship}${sideText}`);
-    });
-  } else {
-    lines.push(`- Immediate parents, siblings, and close family elders`);
-  }
-  lines.push("");
-
-  lines.push(`Their grandparents and parents are especially important to them. Their blessings, expressions, emotional reactions and little interactions deserve special attention. They want photographs that preserve the love and connections between generations.`);
-  lines.push("");
-
-  // SECTION 04 — THEIR VISUAL LANGUAGE
-  lines.push(divider);
-  lines.push(`04 — THEIR VISUAL LANGUAGE`);
-  lines.push(divider);
-  lines.push("");
-
-  const feelSummary = filmFeel.length > 0
-    ? filmFeel.map((f) => f.toLowerCase()).join(", ")
-    : "natural and candid, elegant and editorial";
-  lines.push(`They want their wedding to feel ${feelSummary}.`);
-  lines.push("");
-
-  lines.push(`Their vision is a combination of timeless cinematic storytelling and elegant portraits, with genuine emotions and spontaneous interactions at its heart.`);
-  lines.push("");
-
-  if (tones.length > 0) {
-    lines.push(`They have also chosen ${tones.length > 1 ? tones.length : "a"} defining wedding tone${tones.length > 1 ? "s" : ""}:`);
-    lines.push("");
-    tones.forEach((t) => {
-      lines.push(`- ${t}`);
-    });
-    lines.push("");
-  }
-
-  lines.push(`The goal is to balance sophisticated portraits and beautiful compositions with the energy, traditions and emotions of a grand wedding celebration.`);
-  if (outfitNotes || decorNotes) {
-    const visualDetails: string[] = [];
-    if (outfitNotes) visualDetails.push(`Wardrobe plans: ${simplifyText(outfitNotes, 22)}`);
-    if (decorNotes) visualDetails.push(`Decor & palette: ${simplifyText(decorNotes, 22)}`);
-    lines.push("");
-    lines.push(`${visualDetails.join(". ")}.`);
-  }
-  lines.push("");
-
-  // SECTION 05 — MOMENTS THEY ARE LOOKING FORWARD TO
-  lines.push(divider);
-  lines.push(`05 — MOMENTS THEY ARE LOOKING FORWARD TO`);
-  lines.push(divider);
-  lines.push("");
-
-  lines.push(`The moments they particularly want documented include:`);
-  lines.push("");
-
-  const keyMoments = moments.length > 0 ? moments.slice(0, 8) : [
-    "Getting ready",
-    "First look / ceremony entry",
-    "Ceremony and vows",
-    "Family blessings",
-    "Couple portraits",
-    "Grand entry and toasts",
-  ];
-  keyMoments.forEach((m) => {
-    lines.push(`- ${m}`);
+  // Q27
+  const q27Bullets = summarizeToPoints(answers.q23_oneLastThing?.notes, {
+    maxBullets: 4,
+    maxWordsPerBullet: 24,
   });
-  lines.push("");
-
-  if (definitelyCapture || pleaseAvoid || nonNegotiables) {
-    const customNotes: string[] = [];
-    if (definitelyCapture) customNotes.push(`Make sure to capture: ${simplifyText(definitelyCapture, 20)}.`);
-    if (pleaseAvoid) customNotes.push(`Please keep in mind: avoid ${simplifyText(pleaseAvoid, 20)}.`);
-    if (nonNegotiables) customNotes.push(`Key request: ${simplifyText(nonNegotiables, 20)}.`);
-    lines.push(customNotes.join(" "));
-    lines.push("");
+  const q27Images = (answers.q23_oneLastThing?.images || []).filter(Boolean);
+  if (q27Images.length > 0) {
+    q27Bullets.push(`Uploaded parting image${q27Images.length > 1 ? "s" : ""}: ${q27Images.length}`);
   }
-
-  lines.push(`Every moment should be approached with care, from the anticipation before the ceremony to the emotions shared during family blessings and speeches.`);
-  lines.push("");
-
-  // SECTION 06 — THEIR COMFORT IN FRONT OF THE CAMERA
-  lines.push(divider);
-  lines.push(`06 — THEIR COMFORT IN FRONT OF THE CAMERA`);
-  lines.push(divider);
-  lines.push("");
-
-  let comfortDesc = "";
-  if (emotionalPerson) {
-    comfortDesc = `${emotionalPerson} may be particularly emotional during the wedding ceremonies. `;
-  } else {
-    comfortDesc = `Both ${p1} and ${p2} expect to feel the emotions of the day deeply. `;
-  }
-
-  if (cameraVersatility && cameraVersatility.toLowerCase().includes("comfortable")) {
-    comfortDesc += `They are comfortable in front of the camera and appreciate gentle guidance during portraits and filming.`;
-  } else {
-    comfortDesc += `They prefer a relaxed approach with gentle, friendly guidance rather than stiff poses.`;
-  }
-  lines.push(comfortDesc);
-  lines.push("");
-
-  let relaxedTips = "A few practice shots before the main photographs and seeing previews as the day progresses will help them feel even more comfortable.";
-  if (comfortTips.length > 0) {
-    relaxedTips = `What helps them most: ${comfortTips.join(", ").toLowerCase()}. Taking short pauses and gentle conversational cues will keep them completely relaxed.`;
-  }
-  lines.push(relaxedTips);
-  lines.push("");
-
-  // SECTION 07 — WHAT MATTERS WHEN CHOOSING THEIR TEAM
-  lines.push(divider);
-  lines.push(`07 — WHAT MATTERS WHEN CHOOSING THEIR TEAM`);
-  lines.push(divider);
-  lines.push("");
-
-  lines.push(`Their biggest priorities are:`);
-  lines.push("");
-  const prioList = priorities.length > 0 ? priorities.slice(0, 4) : [
-    "Storytelling and film quality",
-    "Personality and how comfortable they feel",
-    "Great communication",
-  ];
-  prioList.forEach((p) => {
-    lines.push(`- ${p}`);
-  });
-  lines.push("");
-
-  if (choosingOaks) {
-    lines.push(`Why they chose OAKS Wedding: ${simplifyText(choosingOaks, 25)}.`);
-    lines.push("");
-  }
-
-  lines.push(`They value a team that understands their personalities, communicates well and can translate their story into something meaningful.`);
-  lines.push("");
-
-  // SECTION 08 — WHAT THEY WANT TO REMEMBER
-  lines.push(divider);
-  lines.push(`08 — WHAT THEY WANT TO REMEMBER`);
-  lines.push(divider);
-  lines.push("");
-
-  lines.push(`More than perfectly posed photographs, they want to remember how everything felt.`);
-  lines.push("");
-  lines.push(`The laughter, the tears, their parents' expressions, their grandparents' blessings, the excitement of the celebrations and the little moments they might otherwise miss.`);
-  lines.push("");
-
-  if (futureFeeling) {
-    lines.push(`When they watch their wedding film years from now, it should take them straight back to that day — allowing them to relive the feeling of "${simplifyText(futureFeeling, 25)}" and hear the voices of the people they love all over again.`);
-  } else {
-    lines.push(`When they watch their wedding film years from now, it should take them straight back to that day — allowing them to relive the emotions, hear the voices of the people they love and feel the same excitement all over again.`);
-  }
-  lines.push("");
-
-  // THE FINAL THOUGHT
-  lines.push(divider);
-  lines.push(`THE FINAL THOUGHT`);
-  lines.push(divider);
-  lines.push("");
-
-  lines.push(`For ${p1} and ${p2}, this isn't just about documenting a wedding. It's about preserving the beginning of a new chapter, surrounded by the people who made their journey special.`);
-  lines.push("");
-  lines.push(`Let's give them something that feels alive, deeply personal and timeless — photographs and films that become even more valuable with every passing year.`);
+  pushQuestion(
+    lines,
+    "Q27",
+    "Is there anything else you would like us to know?",
+    q27Bullets
+  );
 
   return lines.join("\n").trim();
 }
 
 /**
- * Generates an Intelligent Editorial Brief.
- * Sends the strict Version 2.0 prompt and Riya & Roshan benchmark to Gemini,
- * falling back instantly to the deterministic synthesis engine if offline.
+ * Checks whether a saved Editorial Brief uses an older format (v1, 8-section v2, or pre-Q22-removal 28-question format)
+ * instead of the complete 27-question format.
+ */
+export function isOutdatedEditorialBrief(briefText?: string): boolean {
+  if (!briefText || !briefText.trim()) return true;
+  if (
+    briefText.includes("bring a distinctive energy") ||
+    briefText.includes("CREATIVE DIRECTION SUMMARY") ||
+    briefText.includes("Their proposal unfolded with personal significance") ||
+    briefText.includes("01 — THEIR STORY") ||
+    briefText.includes("ALL 28 QUESTIONS") ||
+    briefText.includes("Q22. What matters most when choosing")
+  ) {
+    return true;
+  }
+  const questionMatches = briefText.match(/^Q\d{2}\.\s+/gm) || [];
+  return questionMatches.length < 27;
+}
+
+export interface ParsedBriefQuestion {
+  code: string;
+  question: string;
+  bullets: string[];
+  isNotProvided: boolean;
+}
+
+export interface ParsedBriefChapter {
+  title: string;
+  questions: ParsedBriefQuestion[];
+  rawBody: string;
+}
+
+/**
+ * Parses either the 6-chapter 27-question brief or arbitrary edited brief sections
+ * for structured rendering in EditorialBriefView.
+ */
+export function parseEditorialBriefDocument(text: string): ParsedBriefChapter[] {
+  const sections: { title: string; body: string }[] = [];
+
+  if (text.includes("====")) {
+    const pattern = /={20,}\s*\n([^\n]+)\n\s*={20,}/g;
+    const titles: { title: string; index: number; length: number }[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = pattern.exec(text)) !== null) {
+      titles.push({
+        title: m[1].trim(),
+        index: m.index,
+        length: m[0].length,
+      });
+    }
+
+    for (let i = 0; i < titles.length; i++) {
+      const cur = titles[i];
+      const nextIndex = i + 1 < titles.length ? titles[i + 1].index : text.length;
+      const body = text.substring(cur.index + cur.length, nextIndex).trim();
+      sections.push({ title: cur.title, body });
+    }
+  } else {
+    const rawSections = text.split(/(?=###\s+)/);
+    for (const chunk of rawSections) {
+      const match = chunk.match(/###\s+(.+)\n([\s\S]*)/);
+      if (match) {
+        sections.push({ title: match[1].trim(), body: match[2].trim() });
+      }
+    }
+  }
+
+  return sections.map((sec) => {
+    const questions: ParsedBriefQuestion[] = [];
+    const lines = sec.body.split("\n");
+    let currentQ: ParsedBriefQuestion | null = null;
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+
+      const qMatch = line.match(/^(Q\d{2})\.\s+(.+)$/);
+      if (qMatch) {
+        if (currentQ) {
+          currentQ.isNotProvided =
+            currentQ.bullets.length === 0 ||
+            (currentQ.bullets.length === 1 &&
+              currentQ.bullets[0].toLowerCase() === "not provided");
+          questions.push(currentQ);
+        }
+        currentQ = {
+          code: qMatch[1],
+          question: qMatch[2].trim(),
+          bullets: [],
+          isNotProvided: false,
+        };
+      } else if (currentQ) {
+        const cleanedBullet = line.replace(/^[-•*]\s*/, "").trim();
+        if (cleanedBullet) {
+          currentQ.bullets.push(cleanedBullet);
+        }
+      }
+    }
+
+    if (currentQ) {
+      currentQ.isNotProvided =
+        currentQ.bullets.length === 0 ||
+        (currentQ.bullets.length === 1 &&
+          currentQ.bullets[0].toLowerCase() === "not provided");
+      questions.push(currentQ);
+    }
+
+    return {
+      title: sec.title,
+      questions,
+      rawBody: sec.body,
+    };
+  });
+}
+
+/**
+ * Generates an Intelligent 27-Question Editorial Brief.
+ * Sends the 27-question prompt to Gemini (/api/generate-brief),
+ * verifying all 27 questions are present and falling back gracefully to the deterministic engine.
  */
 export async function generateEditorialBrief(
   answers: QuestionnaireAnswers,
-  options?: { forceAI?: boolean }
+  _options?: { forceAI?: boolean }
 ): Promise<string> {
   const fallback = synthesizeEditorialBrief(answers);
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    const timeoutId = setTimeout(() => controller.abort(), 35000);
 
     const res = await fetch("/api/generate-brief", {
       method: "POST",
@@ -471,12 +807,17 @@ export async function generateEditorialBrief(
 
     if (res.ok) {
       const data = await res.json();
-      if (data && typeof data.brief === "string" && data.brief.trim().length > 150) {
+      if (
+        data &&
+        typeof data.brief === "string" &&
+        data.brief.trim().length > 300 &&
+        !isOutdatedEditorialBrief(data.brief)
+      ) {
         return data.brief.trim();
       }
     }
   } catch {
-    // fallback gracefully to deterministic synthesizer
+    // fallback gracefully to deterministic 27-question synthesizer
   }
 
   return fallback;

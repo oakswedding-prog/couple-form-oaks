@@ -35,6 +35,9 @@ export function generateBriefSummary(
   lines.push(`1. What do you call each other?`);
   lines.push(`   • ${p1} calls ${p2}: "${answers.q1_calls.aCallsB || '—'}"`);
   lines.push(`   • ${p2} calls ${p1}: "${answers.q1_calls.bCallsA || '—'}"`);
+  if (answers.couplePhotoUrl) {
+    lines.push(`   • Couple photo attached: Yes`);
+  }
   lines.push("");
 
   lines.push(`2. What do you both do for living and what are you truly passionate about doing?`);
@@ -154,7 +157,7 @@ export function generateBriefSummary(
   }
   lines.push("");
 
-  lines.push(`13. Have you finalised your wedding outfits? We'd love to know about your wardrobe plans.`);
+  lines.push(`13. Have you finalised your wedding wardrobe? Share your outfit plans, colour preferences, and styling ideas. Knowing these details helps us plan your photography and films more thoughtfully.`);
   if (answers.weddingOutfits?.notes) {
     lines.push(`   • Wardrobe details: ${answers.weddingOutfits.notes}`);
   }
@@ -233,15 +236,7 @@ export function generateBriefSummary(
   lines.push(`   ${answers.choosingOaks ? answers.choosingOaks : '—'}`);
   lines.push("");
 
-  const priorities = [
-    ...(answers.q19_whatMattersMost.selected || []),
-    answers.q19_whatMattersMost.other ? `Other: ${answers.q19_whatMattersMost.other}` : null,
-  ].filter(Boolean).join("; ");
-  lines.push(`22. What matters most to you when choosing a wedding photography and filmmaking team?`);
-  lines.push(`   ${priorities ? priorities : '—'}`);
-  lines.push("");
-
-  lines.push(`23. How comfortable are you with being guided or directed during portraits and filming?`);
+  lines.push(`22. How comfortable are you with being guided or directed during portraits and filming?`);
   lines.push(`   ${answers.q20_guidanceComfort ? answers.q20_guidanceComfort : '—'}`);
   lines.push("");
 
@@ -249,20 +244,24 @@ export function generateBriefSummary(
     ...(answers.q21_comfortTips.selected || []),
     answers.q21_comfortTips.notes ? `Note: ${answers.q21_comfortTips.notes}` : null,
   ].filter(Boolean).join("; ");
-  lines.push(`24. Is there anything that would help you feel more comfortable in front of the camera?`);
+  lines.push(`23. Is there anything that would help you feel more comfortable in front of the camera?`);
   lines.push(`   ${comfortTips ? comfortTips : '—'}`);
   lines.push("");
 
-  lines.push(`25. What do you hope to feel when you watch your wedding film years from now?`);
+  lines.push(`24. What do you hope to feel when you watch your wedding film years from now?`);
   lines.push(`   ${answers.q22_futureFeeling ? answers.q22_futureFeeling : '—'}`);
   lines.push("");
 
-  lines.push(`26. Who should be our primary point of contact for wedding-related communication and coordination?`);
+  lines.push(`25. Who should be our primary point of contact for wedding-related communication and coordination?`);
   if (answers.primaryContact?.role) {
     lines.push(`   • Role: ${answers.primaryContact.role}`);
     if (answers.primaryContact.role === "Someone else") {
       if (answers.primaryContact.side) lines.push(`   • Side: ${answers.primaryContact.side}`);
-      if (answers.primaryContact.gender) lines.push(`   • Gender: ${answers.primaryContact.gender}`);
+      if (answers.primaryContact.designation) {
+        lines.push(`   • Role designation: ${answers.primaryContact.designation}`);
+      } else if (answers.primaryContact.gender) {
+        lines.push(`   • Role designation: ${answers.primaryContact.gender}`);
+      }
     }
     lines.push(`   • Name: ${answers.primaryContact.name || '—'}`);
     lines.push(`   • Phone / WhatsApp: ${answers.primaryContact.phone || '—'}`);
@@ -274,11 +273,11 @@ export function generateBriefSummary(
   // ONE LAST THING
   lines.push(`ONE LAST THING`);
   lines.push(subDivider);
-  lines.push(`27. Last but not least, we'd love to hear your story. How did your journey begin, and what would you love us to know about the two of you?`);
+  lines.push(`26. Last but not least, we'd love to hear your story. How did your journey begin, and what would you love us to know about the two of you?`);
   lines.push(`   ${answers.loveStoryNarrative ? answers.loveStoryNarrative : '—'}`);
   lines.push("");
 
-  lines.push(`28. Is there anything else you'd like to let us know?`);
+  lines.push(`27. Is there anything else you'd like to let us know?`);
   lines.push(`   ${answers.q23_oneLastThing.notes ? answers.q23_oneLastThing.notes : '—'}`);
   if (answers.q23_oneLastThing.images?.length) {
     lines.push(`   • Attached photos: ${answers.q23_oneLastThing.images.length} photos`);

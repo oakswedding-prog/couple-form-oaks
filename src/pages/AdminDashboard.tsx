@@ -195,38 +195,41 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     <div className="min-h-[100dvh] bg-[#FAF8F5] text-[#1A1A1A] safe-bottom pb-12">
       {/* Admin Header */}
       <header className="bg-white border-b border-[#E5DDD2] sticky top-0 z-30 shadow-2xs">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-18 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-2.5 sm:py-0 sm:h-18 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
             <img
               src={
                 STUDIO_LOGO_URL ||
                 "https://res.cloudinary.com/pcodbmuo/image/upload/v1792483927/Black_OAKS_uctgsb.webp"
               }
               alt={STUDIO_NAME}
-              className="h-9 w-auto object-contain"
+              className="h-7 sm:h-9 w-auto object-contain shrink-0"
             />
-            <div className="h-5 w-px bg-[#E5DDD2]" />
-            <h1 className="font-cormorant text-2xl font-semibold text-[#1A1A1A]">
-              Couples <span className="text-[#8C7043] font-normal text-lg">({totalCount})</span>
+            <div className="h-5 w-px bg-[#E5DDD2] shrink-0" />
+            <h1 className="font-cormorant text-xl sm:text-2xl font-semibold text-[#1A1A1A] whitespace-nowrap">
+              Couples{" "}
+              <span className="text-[#8C7043] font-normal text-base sm:text-lg tabular-nums">
+                ({totalCount})
+              </span>
             </h1>
           </div>
 
-          <div className="flex items-center gap-2.5 sm:gap-3">
+          <div className="flex items-center justify-between sm:justify-end gap-2 sm:gap-3 w-full sm:w-auto pt-2 sm:pt-0 border-t sm:border-t-0 border-[#F0E9DF]">
             <button
               type="button"
               onClick={onOpenChecklist}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium text-[#1A1A1A] bg-[#FAF7F2] hover:bg-[#F2ECE1] border border-[#E5DDD2] transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              className="flex-1 sm:flex-initial min-h-[40px] sm:min-h-[36px] inline-flex items-center justify-center gap-1.5 px-3.5 py-2 sm:py-1.5 rounded-xl sm:rounded-full text-xs font-medium text-[#1A1A1A] bg-[#FAF7F2] hover:bg-[#F2ECE1] border border-[#E5DDD2] transition-colors cursor-pointer whitespace-nowrap shrink-0"
             >
-              <ClipboardList className="w-3.5 h-3.5 text-[#8C7043]" />
+              <ClipboardList className="w-3.5 h-3.5 text-[#8C7043] shrink-0" />
               <span>Wedding Checklist</span>
             </button>
 
             <button
               type="button"
               onClick={onSignOut}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium text-[#5F5F5F] hover:text-[#1A1A1A] hover:bg-[#FAF7F2] border border-[#E5DDD2] transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              className="min-h-[40px] sm:min-h-[36px] inline-flex items-center justify-center gap-1.5 px-3.5 sm:px-3 py-2 sm:py-1.5 rounded-xl sm:rounded-full text-xs font-medium text-[#5F5F5F] hover:text-[#1A1A1A] hover:bg-[#FAF7F2] border border-[#E5DDD2] transition-colors cursor-pointer whitespace-nowrap shrink-0"
             >
-              <LogOut className="w-3.5 h-3.5 text-[#8C7043]" />
+              <LogOut className="w-3.5 h-3.5 text-[#8C7043] shrink-0" />
               <span>Sign out</span>
             </button>
           </div>

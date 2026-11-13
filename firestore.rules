@@ -9,6 +9,132 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/admins/$(request.auth.token.email.lower()));
     }
 
+    // Helper: Checks whether an immutable event submission receipt exists for this eventId
+    function isEventArchived(submissionId, eventId) {
+      return exists(/databases/$(database)/documents/submissions/$(submissionId)/eventSubmissions/$(eventId));
+    }
+
+    // Helper: Checks whether a standard event ('sangeet', 'wedding', 'reception') is marked submitted
+    function isStandardEventSubmitted(data, eventKey) {
+      return ('productionChecklist' in data)
+        && (data.productionChecklist is map)
+        && ('events' in data.productionChecklist)
+        && (data.productionChecklist.events is map)
+        && (eventKey in data.productionChecklist.events)
+        && (data.productionChecklist.events[eventKey] is map)
+        && (
+          data.productionChecklist.events[eventKey].get('submitted', false) == true
+          || ('submission' in data.productionChecklist.events[eventKey] && data.productionChecklist.events[eventKey].submission != null)
+        );
+    }
+
+    // Helper: Ensures once a standard event is submitted/archived, its entire map stays byte-for-byte unchanged
+    function standardEventPreserved(oldData, newData, eventKey) {
+      return ('productionChecklist' in oldData)
+        && (oldData.productionChecklist is map)
+        && ('events' in oldData.productionChecklist)
+        && (oldData.productionChecklist.events is map)
+        && (eventKey in oldData.productionChecklist.events)
+        ? (
+            ('productionChecklist' in newData)
+            && (newData.productionChecklist is map)
+            && ('events' in newData.productionChecklist)
+            && (newData.productionChecklist.events is map)
+            && (eventKey in newData.productionChecklist.events)
+            && newData.productionChecklist.events[eventKey] == oldData.productionChecklist.events[eventKey]
+          )
+        : (
+            !('productionChecklist' in newData)
+            || !('events' in newData.productionChecklist)
+            || !(eventKey in newData.productionChecklist.events)
+            || newData.productionChecklist.events[eventKey].get('submitted', false) == true
+          );
+    }
+
+    // Helper: Protects legacy top-level wedding checklist mirrors once 'wedding' is submitted
+    function weddingLegacyMirrorsPreserved(oldData, newData) {
+      return (
+        !('productionChecklist' in oldData)
+        || !(oldData.productionChecklist is map)
+        || !('items' in oldData.productionChecklist)
+        || (
+          ('productionChecklist' in newData)
+          && (newData.productionChecklist is map)
+          && ('items' in newData.productionChecklist)
+          && newData.productionChecklist.items == oldData.productionChecklist.items
+        )
+      ) && (
+        !('productionChecklist' in oldData)
+        || !(oldData.productionChecklist is map)
+        || !('fileDetails' in oldData.productionChecklist)
+        || (
+          ('productionChecklist' in newData)
+          && (newData.productionChecklist is map)
+          && ('fileDetails' in newData.productionChecklist)
+          && newData.productionChecklist.fileDetails == oldData.productionChecklist.fileDetails
+        )
+      );
+    }
+
+    // Helper: Validates required permanent submission metadata on lock transition
+    function hasValidSubmissionPayload(containerMap, eventId) {
+      return ('submission' in containerMap)
+        && (containerMap.submission is map)
+        && containerMap.submission.eventId == eventId
+        && containerMap.submission.eventName is string
+        && containerMap.submission.eventName.size() > 0
+        && containerMap.submission.eventName.size() <= 100
+        && containerMap.submission.submittedBy is string
+        && containerMap.submission.submittedBy.size() > 0
+        && containerMap.submission.submittedBy.size() <= 120
+        && containerMap.submission.submissionDate is string
+        && containerMap.submission.submissionDate.size() > 0
+        && containerMap.submission.submissionTime is string
+        && containerMap.submission.submissionTime.size() > 0
+        && containerMap.submission.submittedAt is string
+        && containerMap.submission.submittedAt.size() > 0
+        && (containerMap.submission.items is map)
+        && (containerMap.submission.fileDetails is list);
+    }
+
+    // Helper: Validates transition/immutability of a single standard event key
+    function standardEventTransitionValid(oldData, newData, submissionId, eventKey) {
+      let wasLocked = isStandardEventSubmitted(oldData, eventKey) || isEventArchived(submissionId, eventKey);
+      let isNowSubmitted = isStandardEventSubmitted(newData, eventKey);
+      return (!wasLocked || standardEventPreserved(oldData, newData, eventKey))
+        && (!isNowSubmitted || hasValidSubmissionPayload(newData.productionChecklist.events[eventKey], eventKey));
+    }
+
+    // Helper: Validates immutable archive document schema in eventSubmissions subcollection
+    function isValidEventSubmissionRecord(data, eventId) {
+      return data.keys().hasAll([
+          'eventId', 'eventName', 'isCustom', 'submittedBy',
+          'submissionDate', 'submissionTime', 'submittedAt', 'items', 'fileDetails'
+        ])
+        && data.eventId == eventId
+        && data.eventName is string && data.eventName.size() > 0 && data.eventName.size() <= 100
+        && data.isCustom is bool
+        && data.submittedBy is string && data.submittedBy.size() > 0 && data.submittedBy.size() <= 120
+        && data.submissionDate is string && data.submissionDate.size() > 0
+        && data.submissionTime is string && data.submissionTime.size() > 0
+        && data.submittedAt is string && data.submittedAt.size() > 0
+        && data.items is map
+        && data.fileDetails is list;
+    }
+
+    // Helper: Validates custom event document structure in productionEvents subcollection
+    function isValidCustomProductionEvent(data, eventId) {
+      return data.keys().hasAll(['id', 'name', 'isCustom', 'items', 'fileDetails', 'submitted', 'createdAt', 'updatedAt'])
+        && data.id == eventId
+        && data.isCustom == true
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.items is map
+        && data.fileDetails is list
+        && data.submitted is bool
+        && data.createdAt is string && data.createdAt.size() > 0
+        && data.updatedAt is string && data.updatedAt.size() > 0;
+    }
+
     // Admin Allow-List:
     // Any signed-in user can read admin docs to verify their access status.
     // Only existing admins can add or modify admin emails.
@@ -25,11 +151,57 @@ service cloud.firestore {
 
     // Submissions:
     // - Couples can ONLY create a new submission document (write-only).
-    //   Couples can never read, update, or delete any submissions.
-    // - Only verified team admins can read, update status/notes, or delete.
+    // - Only verified team admins can read/update/delete, and any submitted/locked
+    //   standard event ('sangeet', 'wedding', 'reception') is permanently immutable at DB level.
     match /submissions/{submissionId} {
       allow create: if true;
-      allow read, update, delete: if isAdmin();
+      allow read, delete: if isAdmin();
+      allow update: if isAdmin()
+        && standardEventTransitionValid(resource.data, request.resource.data, submissionId, 'sangeet')
+        && standardEventTransitionValid(resource.data, request.resource.data, submissionId, 'wedding')
+        && standardEventTransitionValid(resource.data, request.resource.data, submissionId, 'reception')
+        && (
+          (!isStandardEventSubmitted(resource.data, 'wedding') && !isEventArchived(submissionId, 'wedding'))
+          || weddingLegacyMirrorsPreserved(resource.data, request.resource.data)
+        );
+
+      // Custom Production Events:
+      // - Editable & deletable ONLY before submission
+      // - Permanently read-only & non-deletable once submitted == true or archived
+      match /productionEvents/{eventId} {
+        allow read: if isAdmin();
+        allow create: if isAdmin()
+          && !isEventArchived(submissionId, eventId)
+          && isValidCustomProductionEvent(request.resource.data, eventId)
+          && request.resource.data.submitted == false
+          && !('submission' in request.resource.data);
+        allow update: if isAdmin()
+          && resource.data.get('submitted', false) != true
+          && !('submission' in resource.data && resource.data.submission != null)
+          && !isEventArchived(submissionId, eventId)
+          && isValidCustomProductionEvent(request.resource.data, eventId)
+          && request.resource.data.id == resource.data.id
+          && request.resource.data.createdAt == resource.data.createdAt
+          && (
+            request.resource.data.submitted != true
+            || hasValidSubmissionPayload(request.resource.data, eventId)
+          );
+        allow delete: if isAdmin()
+          && resource.data.get('submitted', false) != true
+          && !('submission' in resource.data && resource.data.submission != null)
+          && !isEventArchived(submissionId, eventId);
+      }
+
+      // Immutable Event Submission Receipts (write-once permanent archive):
+      // - Stores Event Name, Submitted By, Submission Date, Submission Time,
+      //   Final Checklist Data, and Final File Details for both standard and custom events.
+      match /eventSubmissions/{eventId} {
+        allow read: if isAdmin();
+        allow create: if isAdmin()
+          && !exists(/databases/$(database)/documents/submissions/$(submissionId)/eventSubmissions/$(eventId))
+          && isValidEventSubmissionRecord(request.resource.data, eventId);
+        allow update, delete: if false;
+      }
     }
   }
 }

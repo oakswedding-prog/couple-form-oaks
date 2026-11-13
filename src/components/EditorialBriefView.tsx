@@ -16,7 +16,12 @@ import {
   BookOpen,
 } from "lucide-react";
 import { QuestionnaireAnswers, SubmissionRecord } from "../types/questionnaire.ts";
-import { generateEditorialBrief, synthesizeEditorialBrief } from "../utils/editorialBriefGenerator.ts";
+import {
+  generateEditorialBrief,
+  isOutdatedEditorialBrief,
+  parseEditorialBriefDocument,
+  synthesizeEditorialBrief,
+} from "../utils/editorialBriefGenerator.ts";
 import { exportToPdf } from "../utils/exportBrief.ts";
 
 interface EditorialBriefViewProps {
@@ -38,22 +43,17 @@ export const EditorialBriefView: React.FC<EditorialBriefViewProps> = ({
   onSaveBrief,
   readOnly = false,
 }) => {
-  // If initialBrief is missing or contains the outdated copied-answers boilerplate from v1, use the fresh v2 brief
-  const isOutdatedV1 = Boolean(
-    initialBrief &&
-      (initialBrief.includes("bring a distinctive energy") ||
-        initialBrief.includes("CREATIVE DIRECTION SUMMARY") ||
-        initialBrief.includes("Their proposal unfolded with personal significance"))
-  );
+  const needsUpgrade = isOutdatedEditorialBrief(initialBrief);
 
   const [briefText, setBriefText] = useState<string>(
-    !initialBrief || isOutdatedV1 ? synthesizeEditorialBrief(answers) : initialBrief
+    needsUpgrade ? synthesizeEditorialBrief(answers) : (initialBrief as string)
   );
   const [copied, setCopied] = useState<boolean>(false);
   const [isRegenerating, setIsRegenerating] = useState<boolean>(false);
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [editedText, setEditedText] = useState<string>(briefText);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState<boolean>(false);
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
 
   const handleDownloadPdf = async () => {
     if (isDownloadingPdf) return;
@@ -67,7 +67,7 @@ export const EditorialBriefView: React.FC<EditorialBriefViewProps> = ({
         weddingDate: weddingDate || "",
         answers,
         editorialBrief: briefText,
-      } as any;
+      } as SubmissionRecord;
       await exportToPdf(dummyRecord);
     } catch (err) {
       console.error("Failed to export PDF:", err);
@@ -77,13 +77,12 @@ export const EditorialBriefView: React.FC<EditorialBriefViewProps> = ({
     }
   };
 
-  // If outdated brief was upgraded on mount, persist it to storage
+  // Auto-upgrade legacy 8-section or v1 briefs on open and persist if callback exists
   React.useEffect(() => {
-    if (isOutdatedV1 && onSaveBrief) {
+    if (needsUpgrade && onSaveBrief) {
       onSaveBrief(briefText).catch(() => {});
     }
-  }, [isOutdatedV1]);
-  const [saveStatus, setSaveStatus] = useState<string | null>(null);
+  }, [needsUpgrade]);
 
   // Copy to clipboard
   const handleCopy = async () => {
@@ -133,78 +132,39 @@ export const EditorialBriefView: React.FC<EditorialBriefViewProps> = ({
     }
   };
 
-  // Parse sections for beautiful editorial presentation
-  const parseSections = (text: string) => {
-    const parsed: { title: string; body: string }[] = [];
-
-    // Check if the text uses ================================================== dividers (Riya & Roshan benchmark format)
-    if (text.includes("====")) {
-      const pattern = /={20,}\s*\n([^\n]+)\n\s*={20,}/g;
-      const titles: { title: string; index: number; length: number }[] = [];
-      let m: RegExpExecArray | null;
-      while ((m = pattern.exec(text)) !== null) {
-        titles.push({
-          title: m[1].trim(),
-          index: m.index,
-          length: m[0].length,
-        });
-      }
-
-      for (let i = 0; i < titles.length; i++) {
-        const cur = titles[i];
-        const nextIndex = i + 1 < titles.length ? titles[i + 1].index : text.length;
-        const body = text.substring(cur.index + cur.length, nextIndex).trim();
-        parsed.push({
-          title: cur.title,
-          body,
-        });
-      }
-    } else {
-      // Markdown ### fallback
-      const rawSections = text.split(/(?=###\s+)/);
-      for (const chunk of rawSections) {
-        const match = chunk.match(/###\s+(.+)\n([\s\S]*)/);
-        if (match) {
-          parsed.push({
-            title: match[1].trim(),
-            body: match[2].trim(),
-          });
-        }
-      }
-    }
-
-    return parsed;
-  };
-
-  const sections = parseSections(briefText);
+  const chapters = parseEditorialBriefDocument(briefText);
 
   return (
     <div className="bg-white border border-[#E5DDD2] rounded-3xl p-6 sm:p-10 shadow-xs relative overflow-hidden space-y-8">
       {/* Editorial Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-[#E8DFD3]">
         <div className="space-y-1.5">
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-[#FAF7F2] text-[#8C7043] border border-[#E8DFD3]">
-              <Sparkles className="w-3.5 h-3.5 text-[#B08D57]" />
-              Editorial Creative Brief
-            </span>
+          <div className="flex items-center gap-2 text-xs text-[#8C7043]">
+            <Sparkles className="w-3.5 h-3.5 text-[#B08D57]" />
+            <span className="font-semibold">Editorial Creative Brief</span>
             {displayId && (
-              <span className="font-mono text-xs font-bold text-[#7A756D] bg-[#F5F2ED] px-2 py-0.5 rounded">
-                {displayId}
-              </span>
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="font-mono font-bold text-[#7A756D] tabular-nums">
+                  {displayId}
+                </span>
+              </>
             )}
             {saveStatus && (
-              <span className="text-xs text-emerald-600 font-medium animate-in fade-in">
-                ✓ {saveStatus}
-              </span>
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="text-emerald-600 font-medium animate-in fade-in">
+                  ✓ {saveStatus}
+                </span>
+              </>
             )}
           </div>
           <h2 className="font-cormorant text-2xl sm:text-3xl font-semibold text-[#1A1A1A] tracking-tight">
             The Couple Story &amp; Wedding Brief
           </h2>
           <p className="text-xs sm:text-sm text-[#7A756D]">
-            Simple, human wedding brief for {coupleNames}
-            {weddingDate ? ` · ${weddingDate}` : ""} (2–3 min read · ~350–500 words)
+            All 27 questionnaire answers summarised for {coupleNames}
+            {weddingDate ? ` · ${weddingDate}` : ""} (Quick team reference · 6 chapters)
           </p>
         </div>
 
@@ -321,44 +281,89 @@ export const EditorialBriefView: React.FC<EditorialBriefViewProps> = ({
           </div>
         </div>
       ) : (
-        /* Formatted Editorial Brief Magazine Layout */
+        /* Formatted 6-Chapter · 27-Question Quick-Reference Layout */
         <div className="space-y-8">
-          {sections.length > 0 ? (
-            sections.map((sec, idx) => (
+          {chapters.length > 0 ? (
+            chapters.map((chapter, idx) => (
               <div
                 key={idx}
-                className="space-y-2.5 pb-6 border-b border-[#F2ECE4] last:border-b-0 last:pb-0"
+                className="space-y-4 pb-7 border-b border-[#F2ECE4] last:border-b-0 last:pb-0"
               >
-                <div className="flex items-center gap-2">
-                  <h3 className="font-cormorant text-lg sm:text-xl font-semibold text-[#1A1A1A] tracking-wide">
-                    {sec.title}
+                <div className="flex items-center justify-between gap-2 pb-1">
+                  <h3 className="font-cormorant text-xl sm:text-2xl font-semibold text-[#1A1A1A] tracking-wide">
+                    {chapter.title}
                   </h3>
+                  {chapter.questions.length > 0 && (
+                    <span className="text-xs text-[#8C7043] tabular-nums shrink-0">
+                      {chapter.questions.length}{" "}
+                      {chapter.questions.length === 1 ? "question" : "questions"}
+                    </span>
+                  )}
                 </div>
-                <div className="text-sm sm:text-[15px] text-[#33302C] leading-relaxed space-y-3 font-serif">
-                  {sec.body.split("\n\n").map((block, pIdx) => {
-                    const cleanBlock = block.trim();
-                    if (!cleanBlock) return null;
-                    const lines = cleanBlock.split("\n").map((l) => l.trim()).filter(Boolean);
-                    const isBulletList = lines.every((l) => l.startsWith("- ") || l.startsWith("• "));
-                    if (isBulletList) {
+
+                {chapter.questions.length > 0 ? (
+                  <div className="divide-y divide-[#F5EFE6]">
+                    {chapter.questions.map((q) => (
+                      <div key={q.code} className="py-3.5 first:pt-1 last:pb-1 space-y-2">
+                        <div className="flex items-baseline gap-2.5">
+                          <span className="font-mono text-xs font-semibold text-[#8C7043] tabular-nums shrink-0">
+                            {q.code}
+                          </span>
+                          <h4 className="text-sm sm:text-[15px] font-semibold text-[#1A1A1A] leading-snug">
+                            {q.question}
+                          </h4>
+                        </div>
+
+                        {q.isNotProvided ? (
+                          <p className="pl-9 text-sm text-[#9A948C] italic">
+                            Not provided
+                          </p>
+                        ) : (
+                          <ul className="pl-9 space-y-1.5">
+                            {q.bullets.map((bullet, bIdx) => (
+                              <li
+                                key={bIdx}
+                                className="flex items-start gap-2.5 text-sm sm:text-[15px] text-[#33302C] leading-relaxed"
+                              >
+                                <span
+                                  aria-hidden="true"
+                                  className="w-1.5 h-1.5 rounded-full bg-[#B08D57] mt-2 shrink-0"
+                                />
+                                <span>{bullet}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-sm sm:text-[15px] text-[#33302C] leading-relaxed space-y-3 font-serif">
+                    {chapter.rawBody.split("\n\n").map((block, pIdx) => {
+                      const cleanBlock = block.trim();
+                      if (!cleanBlock) return null;
+                      const lines = cleanBlock.split("\n").map((l) => l.trim()).filter(Boolean);
+                      const isBulletList = lines.every((l) => l.startsWith("- ") || l.startsWith("• "));
+                      if (isBulletList) {
+                        return (
+                          <ul key={pIdx} className="space-y-1.5 pl-1 my-2">
+                            {lines.map((l, lIdx) => (
+                              <li key={lIdx} className="flex items-start gap-2.5 text-sm sm:text-[15px] text-[#1A1A1A]">
+                                <span className="w-1.5 h-1.5 rounded-full bg-[#B08D57] mt-2 shrink-0" />
+                                <span>{l.replace(/^[-•]\s*/, "")}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        );
+                      }
                       return (
-                        <ul key={pIdx} className="space-y-1.5 pl-1 my-2">
-                          {lines.map((l, lIdx) => (
-                            <li key={lIdx} className="flex items-start gap-2.5 text-sm sm:text-[15px] text-[#1A1A1A]">
-                              <span className="w-1.5 h-1.5 rounded-full bg-[#B08D57] mt-2 shrink-0" />
-                              <span>{l.replace(/^[-•]\s*/, "")}</span>
-                            </li>
-                          ))}
-                        </ul>
+                        <p key={pIdx} className="leading-relaxed whitespace-pre-line">
+                          {cleanBlock}
+                        </p>
                       );
-                    }
-                    return (
-                      <p key={pIdx} className="leading-relaxed whitespace-pre-line">
-                        {cleanBlock}
-                      </p>
-                    );
-                  })}
-                </div>
+                    })}
+                  </div>
+                )}
               </div>
             ))
           ) : (

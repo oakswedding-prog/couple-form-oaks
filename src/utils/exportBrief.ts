@@ -5,7 +5,10 @@
 
 import { SubmissionRecord } from "../types/questionnaire.ts";
 import { STUDIO_NAME } from "../constants.ts";
-import { synthesizeEditorialBrief } from "./editorialBriefGenerator.ts";
+import {
+  isOutdatedEditorialBrief,
+  synthesizeEditorialBrief,
+} from "./editorialBriefGenerator.ts";
 import {
   synthesizeInterviewQuestions,
   parseInterviewDocument,
@@ -352,16 +355,10 @@ export async function exportToPdf(submission: SubmissionRecord) {
     }
   });
 
-  // PAGE 3: EDITORIAL CREATIVE BRIEF
-  const isOutdatedV1 = Boolean(
-    submission.editorialBrief &&
-      (submission.editorialBrief.includes("bring a distinctive energy") ||
-        submission.editorialBrief.includes("CREATIVE DIRECTION SUMMARY") ||
-        submission.editorialBrief.includes("Their proposal unfolded with personal significance"))
-  );
-  const briefText = (!submission.editorialBrief || isOutdatedV1)
+  // PAGE 3: EDITORIAL CREATIVE BRIEF (ALL 27 QUESTIONS)
+  const briefText = isOutdatedEditorialBrief(submission.editorialBrief)
     ? synthesizeEditorialBrief(submission.answers)
-    : submission.editorialBrief;
+    : (submission.editorialBrief as string);
   doc.addPage();
   y = 20;
 
@@ -380,7 +377,7 @@ export async function exportToPdf(submission: SubmissionRecord) {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
   doc.setTextColor(100, 100, 100);
-  doc.text(`${title} · 3–5 min read for photography & cinema crew`, left, y);
+  doc.text(`${title} · All 27 questionnaire answers summarised across 6 chapters`, left, y);
 
   y += 4;
   doc.setDrawColor(229, 221, 210);
@@ -392,25 +389,44 @@ export async function exportToPdf(submission: SubmissionRecord) {
   briefLines.forEach((line) => {
     const trimmed = line.trim();
     if (!trimmed) {
-      y += 2.5;
+      y += 2;
       return;
     }
-    const isSectionHeading = /^\d{2}\s*—/.test(trimmed) || trimmed === "THE FINAL THOUGHT" || trimmed.startsWith("### ");
-    if (isSectionHeading) {
+    const isChapterHeading =
+      /^CHAPTER\s+\d+/i.test(trimmed) ||
+      /^\d{2}\s*—/.test(trimmed) ||
+      trimmed === "THE FINAL THOUGHT" ||
+      trimmed.startsWith("### ");
+    const isQuestionHeading = /^Q\d{2}\.\s+/.test(trimmed);
+
+    if (isChapterHeading) {
       if (y > 255) {
         doc.addPage();
         y = 20;
       }
-      y += 3;
+      y += 3.5;
       doc.setFont("helvetica", "bold");
       doc.setFontSize(10.5);
       doc.setTextColor(176, 141, 87);
       doc.text(trimmed.replace(/^###\s+/, ""), left, y);
       y += 5.5;
+    } else if (isQuestionHeading) {
+      if (y > 262) {
+        doc.addPage();
+        y = 20;
+      }
+      y += 1.5;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(26, 26, 26);
+      const wrappedQ = doc.splitTextToSize(trimmed, contentWidth);
+      doc.text(wrappedQ, left, y);
+      y += wrappedQ.length * 4.2 + 1;
     } else if (
       trimmed.startsWith("OAKS WEDDING") ||
       trimmed.startsWith("---") ||
       trimmed.includes("====") ||
+      trimmed.startsWith("EDITORIAL CREATIVE BRIEF") ||
       trimmed === "THE COUPLE STORY & WEDDING BRIEF" ||
       trimmed === `${p1.toUpperCase()} & ${p2.toUpperCase()}`
     ) {
@@ -420,12 +436,13 @@ export async function exportToPdf(submission: SubmissionRecord) {
         doc.addPage();
         y = 20;
       }
-      doc.setFont("helvetica", "normal");
+      const isNotProvided = trimmed === "- Not provided" || trimmed === "Not provided";
+      doc.setFont("helvetica", isNotProvided ? "italic" : "normal");
       doc.setFontSize(8.5);
-      doc.setTextColor(45, 45, 45);
-      const wrapped = doc.splitTextToSize(trimmed, contentWidth);
-      doc.text(wrapped, left, y);
-      y += wrapped.length * 4.2 + 2;
+      doc.setTextColor(isNotProvided ? 130 : 45, isNotProvided ? 125 : 45, isNotProvided ? 118 : 45);
+      const wrapped = doc.splitTextToSize(trimmed, contentWidth - 4);
+      doc.text(wrapped, left + 2, y);
+      y += wrapped.length * 4 + 1.5;
     }
   });
 
@@ -530,7 +547,10 @@ export async function exportToPdf(submission: SubmissionRecord) {
     : "N/A";
 
   const fullQuestions = [
-    { q: "Q1. What do you call each other?", a: `${p1} calls ${p2}: "${ans.q1_calls?.aCallsB || ""}" · ${p2} calls ${p1}: "${ans.q1_calls?.bCallsA || ""}"` },
+    {
+      q: "Q1. What do you call each other?",
+      a: `${p1} calls ${p2}: "${ans.q1_calls?.aCallsB || ""}" · ${p2} calls ${p1}: "${ans.q1_calls?.bCallsA || ""}"${ans.couplePhotoUrl ? "\nCouple photo attached: Yes" : ""}`,
+    },
     { q: "Q2. What do you do for living & passions?", a: `${p1}: ${ans.q2_workPassion?.partnerA || "N/A"}\n${p2}: ${ans.q2_workPassion?.partnerB || "N/A"}` },
     { q: "Q3. How did you first meet?", a: ans.q3_firstMeet || "Not answered" },
     { q: "Q4. First impression of each other?", a: `${p1}: ${ans.q4_firstImpression?.partnerA || "N/A"}\n${p2}: ${ans.q4_firstImpression?.partnerB || "N/A"}` },
@@ -542,7 +562,7 @@ export async function exportToPdf(submission: SubmissionRecord) {
     { q: "Q10. Family members & tree", a: `${allFamily || "None"} ${ans.q10_people?.treeNotes ? `\nNotes: ${ans.q10_people.treeNotes}` : ""}` },
     { q: "Q11. Film & photo feel?", a: filmFeelStr || "Not answered" },
     { q: "Q12. References & Links", a: `Links: ${(ans.q12_references?.links || []).join(", ") || "None"}\nNotes: ${ans.q12_references?.notes || "None"}` },
-    { q: "Q13. Wedding Outfits & Wardrobe Plans", a: `Notes: ${ans.weddingOutfits?.notes || "None"}\nLinks: ${(ans.weddingOutfits?.links || []).join(", ") || "None"}` },
+    { q: "Q13. Have you finalised your wedding wardrobe? Share your outfit plans, colour preferences, and styling ideas. Knowing these details helps us plan your photography and films more thoughtfully.", a: `Notes: ${ans.weddingOutfits?.notes || "None"}\nLinks: ${(ans.weddingOutfits?.links || []).join(", ") || "None"}` },
     { q: "Q14. Wedding Decor Mood Board & References", a: `Links: ${(ans.decorMoodBoard?.links || []).join(", ") || "None"}\nNotes: ${ans.decorMoodBoard?.notes || "None"}` },
     { q: "Q15. Wedding day tone?", a: toneStr || "Not answered" },
     { q: "Q16. Moments looking forward to?", a: `${(ans.q14_moments?.selected || []).join(", ")} ${ans.q14_moments?.other || ""}` },
@@ -551,17 +571,18 @@ export async function exportToPdf(submission: SubmissionRecord) {
     { q: "Q19. Who will be more emotional?", a: ans.q17_emotional || "Not answered" },
     { q: "Q20. Camera versatility?", a: ans.q18_cameraVersatility || "Not answered" },
     { q: "Q21. What mattered most when choosing OAKS Wedding?", a: ans.choosingOaks || "Not answered" },
-    { q: "Q22. What matters most?", a: `${(ans.q19_whatMattersMost?.selected || []).join(", ")} ${ans.q19_whatMattersMost?.other || ""}` },
-    { q: "Q23. Guidance comfort?", a: ans.q20_guidanceComfort || "Not answered" },
-    { q: "Q24. Comfort tips?", a: `${(ans.q21_comfortTips?.selected || []).join(", ")} ${ans.q21_comfortTips?.notes || ""}` },
-    { q: "Q25. Future film feeling?", a: ans.q22_futureFeeling || "Not answered" },
+    { q: "Q22. Guidance comfort?", a: ans.q20_guidanceComfort || "Not answered" },
+    { q: "Q23. Comfort tips?", a: `${(ans.q21_comfortTips?.selected || []).join(", ")} ${ans.q21_comfortTips?.notes || ""}` },
+    { q: "Q24. Future film feeling?", a: ans.q22_futureFeeling || "Not answered" },
     {
-      q: "Q26. Primary point of contact?",
+      q: "Q25. Primary point of contact?",
       a: ans.primaryContact?.role
         ? [
             `Role: ${ans.primaryContact.role}`,
             ans.primaryContact.role === "Someone else" && ans.primaryContact.side ? `Side: ${ans.primaryContact.side}` : null,
-            ans.primaryContact.role === "Someone else" && ans.primaryContact.gender ? `Gender: ${ans.primaryContact.gender}` : null,
+            ans.primaryContact.role === "Someone else" && (ans.primaryContact.designation || ans.primaryContact.gender)
+              ? `Role designation: ${ans.primaryContact.designation || ans.primaryContact.gender}`
+              : null,
             `Name: ${ans.primaryContact.name || "N/A"}`,
             `Phone / WhatsApp: ${ans.primaryContact.phone || "N/A"}`,
           ]
@@ -569,8 +590,8 @@ export async function exportToPdf(submission: SubmissionRecord) {
             .join("\n")
         : "Not answered",
     },
-    { q: "Q27. Your story & journey?", a: ans.loveStoryNarrative || "Not answered" },
-    { q: "Q28. Is there anything else you'd like to let us know?", a: `${ans.q23_oneLastThing?.notes || "Not answered"}` },
+    { q: "Q26. Your story & journey?", a: ans.loveStoryNarrative || "Not answered" },
+    { q: "Q27. Is there anything else you'd like to let us know?", a: `${ans.q23_oneLastThing?.notes || "Not answered"}` },
   ];
 
   for (const item of fullQuestions) {
@@ -582,8 +603,9 @@ export async function exportToPdf(submission: SubmissionRecord) {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(9.5);
     doc.setTextColor(26, 26, 26);
-    doc.text(item.q, left, y);
-    y += 5;
+    const wrappedQuestion = doc.splitTextToSize(item.q, contentWidth);
+    doc.text(wrappedQuestion, left, y);
+    y += wrappedQuestion.length * 4.5 + 1;
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.5);
@@ -591,6 +613,28 @@ export async function exportToPdf(submission: SubmissionRecord) {
     const splitA = doc.splitTextToSize(item.a, contentWidth);
     doc.text(splitA, left, y);
     y += splitA.length * 4.2 + 3;
+
+    // Embed Q1 Couple Photo
+    if (item.q.startsWith("Q1.") && ans.couplePhotoUrl) {
+      const couplePhotoData = await loadImageAsDataUrl(ans.couplePhotoUrl);
+      if (couplePhotoData) {
+        if (y > 220) {
+          doc.addPage();
+          y = 20;
+        }
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.setTextColor(176, 141, 87);
+        doc.text("Couple Photo Attached:", left, y);
+        y += 4;
+        try {
+          doc.addImage(couplePhotoData, "JPEG", left, y, 42, 42);
+          y += 46;
+        } catch {
+          // ignore
+        }
+      }
+    }
 
     // Embed Q10 Images (Family Tree sketch & VIP photos)
     if (item.q.startsWith("Q10.")) {
@@ -771,8 +815,8 @@ export async function exportToPdf(submission: SubmissionRecord) {
       }
     }
 
-    // Embed Q28 Images (Attached Photos)
-    if (item.q.startsWith("Q28.")) {
+    // Embed Q27 Images (Attached Photos)
+    if (item.q.startsWith("Q27.")) {
       const lastImages = ans.q23_oneLastThing?.images || [];
       if (lastImages.length > 0) {
         if (y > 225) {
@@ -868,6 +912,7 @@ export async function exportToDocx(submission: SubmissionRecord) {
   const { Document, Packer, Paragraph, TextRun, HeadingLevel, ImageRun } = await import("docx");
 
   // Pre-load image bytes asynchronously for embedding
+  const couplePhotoBytes = await loadImageAsUint8Array(ans.couplePhotoUrl);
   const treePhotoBytes = await loadImageAsUint8Array(ans.q10_people?.treePhotoUrl);
   const vipPhotoBytes = await Promise.all(
     (ans.q10_people?.familyMembers || [])
@@ -1023,7 +1068,7 @@ export async function exportToDocx(submission: SubmissionRecord) {
 
           new Paragraph({ text: "" }),
 
-          // Editorial Creative Brief Section
+          // Editorial Creative Brief Section (All 27 Questions)
           new Paragraph({
             text: "EDITORIAL CREATIVE BRIEF",
             heading: HeadingLevel.HEADING_2,
@@ -1031,36 +1076,46 @@ export async function exportToDocx(submission: SubmissionRecord) {
           new Paragraph({
             children: [
               new TextRun({
-                text: `Simple, human wedding brief for ${p1} & ${p2} (2–3 min read · ~350–500 words)`,
+                text: `All 27 questionnaire answers summarised for ${p1} & ${p2} across 6 chapters`,
                 italics: true,
                 color: "666666",
               }),
             ],
           }),
           new Paragraph({ text: "" }),
-          ...((!submission.editorialBrief ||
-            submission.editorialBrief.includes("bring a distinctive energy") ||
-            submission.editorialBrief.includes("CREATIVE DIRECTION SUMMARY") ||
-            submission.editorialBrief.includes("Their proposal unfolded with personal significance"))
+          ...(isOutdatedEditorialBrief(submission.editorialBrief)
             ? synthesizeEditorialBrief(submission.answers)
-            : submission.editorialBrief)
+            : (submission.editorialBrief as string))
             .split("\n")
             .filter((l) => {
               const t = l.trim();
-              return !t.startsWith("OAKS WEDDING") &&
-                     !t.startsWith("---") &&
-                     !t.includes("====") &&
-                     t !== "THE COUPLE STORY & WEDDING BRIEF" &&
-                     t !== `${p1.toUpperCase()} & ${p2.toUpperCase()}`;
+              return (
+                !t.startsWith("OAKS WEDDING") &&
+                !t.startsWith("---") &&
+                !t.includes("====") &&
+                !t.startsWith("EDITORIAL CREATIVE BRIEF") &&
+                t !== "THE COUPLE STORY & WEDDING BRIEF" &&
+                t !== `${p1.toUpperCase()} & ${p2.toUpperCase()}`
+              );
             })
             .map((line) => {
               const t = line.trim();
               if (!t) return new Paragraph({ text: "" });
-              const isSectionHeading = /^\d{2}\s*—/.test(t) || t === "THE FINAL THOUGHT" || t.startsWith("### ");
-              if (isSectionHeading) {
+              const isChapterHeading =
+                /^CHAPTER\s+\d+/i.test(t) ||
+                /^\d{2}\s*—/.test(t) ||
+                t === "THE FINAL THOUGHT" ||
+                t.startsWith("### ");
+              if (isChapterHeading) {
                 return new Paragraph({
                   text: t.replace(/^###\s+/, ""),
                   heading: HeadingLevel.HEADING_3,
+                });
+              }
+              const isQuestionHeading = /^Q\d{2}\.\s+/.test(t);
+              if (isQuestionHeading) {
+                return new Paragraph({
+                  children: [new TextRun({ text: t, bold: true })],
                 });
               }
               return new Paragraph({
@@ -1125,6 +1180,22 @@ export async function exportToDocx(submission: SubmissionRecord) {
           // Q1
           new Paragraph({ children: [new TextRun({ text: "1. What do you call each other?", bold: true })] }),
           new Paragraph({ text: `${p1} calls ${p2}: "${ans.q1_calls?.aCallsB || ""}" · ${p2} calls ${p1}: "${ans.q1_calls?.bCallsA || ""}"` }),
+          ...(couplePhotoBytes
+            ? [
+                new Paragraph({
+                  children: [new TextRun({ text: "Couple Photo Attached:", bold: true, italics: true })],
+                }),
+                new Paragraph({
+                  children: [
+                    new ImageRun({
+                      data: couplePhotoBytes,
+                      transformation: { width: 160, height: 160 },
+                      type: "jpg",
+                    }),
+                  ],
+                }),
+              ]
+            : []),
           new Paragraph({ text: "" }),
 
           // Q2
@@ -1234,7 +1305,14 @@ export async function exportToDocx(submission: SubmissionRecord) {
           new Paragraph({ text: "" }),
 
           // Q13
-          new Paragraph({ children: [new TextRun({ text: "13. Wedding Outfits & Wardrobe Plans", bold: true })] }),
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: "13. Have you finalised your wedding wardrobe? Share your outfit plans, colour preferences, and styling ideas. Knowing these details helps us plan your photography and films more thoughtfully.",
+                bold: true,
+              }),
+            ],
+          }),
           new Paragraph({ text: `Notes: ${ans.weddingOutfits?.notes || "None"} | Links: ${(ans.weddingOutfits?.links || []).join(", ") || "None"}` }),
           ...outfitPhotoBytes
             .filter((b): b is Uint8Array => b !== null)
@@ -1306,35 +1384,35 @@ export async function exportToDocx(submission: SubmissionRecord) {
           new Paragraph({ text: ans.choosingOaks || "Not answered" }),
           new Paragraph({ text: "" }),
 
-          // Q22 (previously Q20)
-          new Paragraph({ children: [new TextRun({ text: "22. What matters most", bold: true })] }),
-          new Paragraph({ text: `${(ans.q19_whatMattersMost?.selected || []).join(", ")} ${ans.q19_whatMattersMost?.other || ""}` }),
-          new Paragraph({ text: "" }),
-
-          // Q23 (previously Q21)
-          new Paragraph({ children: [new TextRun({ text: "23. Guidance comfort", bold: true })] }),
+          // Q22
+          new Paragraph({ children: [new TextRun({ text: "22. Guidance comfort", bold: true })] }),
           new Paragraph({ text: ans.q20_guidanceComfort || "Not answered" }),
           new Paragraph({ text: "" }),
 
-          // Q24 (previously Q22)
-          new Paragraph({ children: [new TextRun({ text: "24. Comfort tips", bold: true })] }),
+          // Q23
+          new Paragraph({ children: [new TextRun({ text: "23. Comfort tips", bold: true })] }),
           new Paragraph({ text: `${(ans.q21_comfortTips?.selected || []).join(", ")} ${ans.q21_comfortTips?.notes || ""}` }),
           new Paragraph({ text: "" }),
 
-          // Q25 (previously Q23)
-          new Paragraph({ children: [new TextRun({ text: "25. Future film feeling", bold: true })] }),
+          // Q24
+          new Paragraph({ children: [new TextRun({ text: "24. Future film feeling", bold: true })] }),
           new Paragraph({ text: ans.q22_futureFeeling || "Not answered" }),
           new Paragraph({ text: "" }),
 
-          // Q26: Primary Point of Contact
-          new Paragraph({ children: [new TextRun({ text: "26. Primary point of contact", bold: true })] }),
+          // Q25: Primary Point of Contact
+          new Paragraph({ children: [new TextRun({ text: "25. Primary point of contact", bold: true })] }),
           new Paragraph({
             text: ans.primaryContact?.role
               ? [
                   `${ans.primaryContact.role}${
                     ans.primaryContact.role === "Someone else" &&
-                    (ans.primaryContact.side || ans.primaryContact.gender)
-                      ? ` (${[ans.primaryContact.side, ans.primaryContact.gender].filter(Boolean).join(", ")})`
+                    (ans.primaryContact.side || ans.primaryContact.designation || ans.primaryContact.gender)
+                      ? ` (${[
+                          ans.primaryContact.side,
+                          ans.primaryContact.designation || ans.primaryContact.gender,
+                        ]
+                          .filter(Boolean)
+                          .join(", ")})`
                       : ""
                   }`,
                   `Name: ${ans.primaryContact.name || "N/A"}`,
@@ -1344,13 +1422,13 @@ export async function exportToDocx(submission: SubmissionRecord) {
           }),
           new Paragraph({ text: "" }),
 
-          // Q27
-          new Paragraph({ children: [new TextRun({ text: "27. Your story & journey", bold: true })] }),
+          // Q26
+          new Paragraph({ children: [new TextRun({ text: "26. Your story & journey", bold: true })] }),
           new Paragraph({ text: ans.loveStoryNarrative || "Not answered" }),
           new Paragraph({ text: "" }),
 
-          // Q28
-          new Paragraph({ children: [new TextRun({ text: "28. Is there anything else you'd like to let us know?", bold: true })] }),
+          // Q27
+          new Paragraph({ children: [new TextRun({ text: "27. Is there anything else you'd like to let us know?", bold: true })] }),
           new Paragraph({ text: ans.q23_oneLastThing?.notes || "Not answered" }),
           ...lastPhotoBytes
             .filter((b): b is Uint8Array => b !== null)

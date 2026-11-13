@@ -18,6 +18,7 @@ export interface QuestionnaireAnswers {
   weddingDate?: string;
   phone?: string;
   email?: string;
+  couplePhotoUrl?: string;
   q1_calls: { aCallsB: string; bCallsA: string };
   q2_workPassion: { partnerA: string; partnerB: string };
   q3_firstMeet: string;
@@ -56,13 +57,14 @@ export interface QuestionnaireAnswers {
   q17_emotional: string;
   q18_cameraVersatility: string;
   choosingOaks?: string;
-  q19_whatMattersMost: { selected: string[]; other: string };
+  q19_whatMattersMost?: { selected: string[]; other: string };
   q20_guidanceComfort: string;
   q21_comfortTips: { selected: string[]; notes: string };
   q22_futureFeeling: string;
   primaryContact?: {
     role: "Bride" | "Groom" | "Someone else" | "";
     side?: "Bride's side" | "Groom's side" | "";
+    designation?: string;
     gender?: "Man" | "Woman" | "";
     name: string;
     phone: string;
@@ -75,6 +77,45 @@ export type SubmissionStatus = "new" | "reviewed" | "shared";
 
 export type ChecklistItemStatus = "got_it" | "missed";
 
+export type ChecklistEventKey = "sangeet" | "wedding" | "reception";
+
+export interface EventSubmissionRecord {
+  eventId: string;
+  eventName: string;
+  isCustom: boolean;
+  submittedBy: string;
+  submittedByEmail?: string;
+  submissionDate: string;
+  submissionTime: string;
+  submittedAt: string;
+  items: Record<string, ChecklistItemStatus>;
+  fileDetails: FileDetailEntry[];
+  productionManagersSnapshot?: string[];
+}
+
+export interface EventChecklistState {
+  items: Record<string, ChecklistItemStatus>;
+  fileDetails?: FileDetailEntry[];
+  submitted?: boolean;
+  submission?: EventSubmissionRecord;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export interface CustomProductionEvent {
+  id: string;
+  name: string;
+  isCustom: true;
+  items: Record<string, ChecklistItemStatus>;
+  fileDetails: FileDetailEntry[];
+  submitted: boolean;
+  submission?: EventSubmissionRecord;
+  createdAt: string;
+  createdBy?: string;
+  updatedAt: string;
+  updatedBy?: string;
+}
+
 export type CrewFileRole =
   | "Photographer"
   | "Videographer"
@@ -84,11 +125,14 @@ export type CrewFileRole =
 
 export type FileSizeUnit = "GB" | "TB";
 
+export type CameraStarredStatus = "Starred" | "Not Starred";
+
 export interface FileDetailEntry {
   id: string;
   memberName: string;
   role: CrewFileRole;
   customRole?: string;
+  cameraStarredStatus?: CameraStarredStatus;
   fileSize: number;
   sizeUnit: FileSizeUnit;
   fileCount: number;
@@ -98,6 +142,8 @@ export interface FileDetailEntry {
 
 export interface ProductionChecklistData {
   items: Record<string, ChecklistItemStatus>;
+  events?: Partial<Record<ChecklistEventKey, EventChecklistState>>;
+  customEvents?: Record<string, CustomProductionEvent>;
   productionManagers?: string[];
   fileDetails?: FileDetailEntry[];
   updatedAt?: string;
