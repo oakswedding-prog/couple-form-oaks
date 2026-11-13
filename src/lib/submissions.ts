@@ -15,13 +15,15 @@ import {
   orderBy,
   runTransaction,
   serverTimestamp,
+  onSnapshot,
 } from "firebase/firestore";
 import { ref, uploadString, getDownloadURL } from "firebase/storage";
-import { db, storage } from "./firebase.ts";
+import { db, storage, auth } from "./firebase.ts";
 import {
   QuestionnaireAnswers,
   SubmissionRecord,
   SubmissionStatus,
+  ProductionChecklistData,
 } from "../types/questionnaire.ts";
 import { synthesizeEditorialBrief } from "../utils/editorialBriefGenerator.ts";
 import { synthesizeInterviewQuestions } from "../utils/interviewQuestionsGenerator.ts";
@@ -624,5 +626,80 @@ export async function deleteSubmission(id: string): Promise<void> {
   const submissionRef = doc(db, "submissions", id);
   await deleteDoc(submissionRef);
 }
+
+/**
+ * Admin: Save updated Wedding Production Checklist status map for a couple.
+ */
+export async function updateSubmissionChecklist(
+  id: string,
+  productionChecklist: ProductionChecklistData
+): Promise<void> {
+  updateLocalCacheRecord(id, (rec) => ({ ...rec, productionChecklist }));
+  const path = `submissions/${id}`;
+  try {
+    const submissionRef = doc(db, "submissions", id);
+    await updateDoc(submissionRef, { productionChecklist });
+  } catch (error) {
+    const errInfo = {
+      error: error instanceof Error ? error.message : String(error),
+      operationType: "update",
+      path,
+      authInfo: {
+        userId: auth.currentUser?.uid ?? null,
+        email: auth.currentUser?.email ?? null,
+        emailVerified: auth.currentUser?.emailVerified ?? null,
+      },
+    };
+    console.error("Firestore Error:", JSON.stringify(errInfo));
+    throw new Error(
+      error instanceof Error
+        ? error.message
+        : "Failed to save checklist changes to Firestore."
+    );
+  }
+}
+
+/**
+ * Admin: Subscribe to real-time updates for a couple's production checklist.
+ */
+export function subscribeSubmissionChecklist(
+  id: string,
+  onUpdate: (checklist: ProductionChecklistData | undefined) => void,
+  onError: (err: Error) => void
+): () => void {
+  const path = `submissions/${id}`;
+  const submissionRef = doc(db, "submissions", id);
+  return onSnapshot(
+    submissionRef,
+    (snapshot) => {
+      if (!snapshot.exists()) return;
+      const data = snapshot.data() as SubmissionRecord;
+      updateLocalCacheRecord(id, (rec) => ({
+        ...rec,
+        productionChecklist: data.productionChecklist,
+      }));
+      onUpdate(data.productionChecklist);
+    },
+    (error) => {
+      const errInfo = {
+        error: error instanceof Error ? error.message : String(error),
+        operationType: "get",
+        path,
+        authInfo: {
+          userId: auth.currentUser?.uid ?? null,
+          email: auth.currentUser?.email ?? null,
+          emailVerified: auth.currentUser?.emailVerified ?? null,
+        },
+      };
+      console.error("Firestore Listener Error:", JSON.stringify(errInfo));
+      onError(
+        error instanceof Error
+          ? error
+          : new Error("Failed to sync checklist updates.")
+      );
+    }
+  );
+}
+
 
 

@@ -43,6 +43,9 @@ const AdminDashboard = React.lazy(() =>
 const AdminCoupleDetail = React.lazy(() =>
   import("./pages/AdminCoupleDetail.tsx").then((m) => ({ default: m.AdminCoupleDetail }))
 );
+const AdminWeddingChecklist = React.lazy(() =>
+  import("./pages/AdminWeddingChecklist.tsx").then((m) => ({ default: m.AdminWeddingChecklist }))
+);
 
 const ScreenSkeleton: React.FC = () => (
   <div className="min-h-[50vh] flex flex-col items-center justify-center space-y-3 p-8 animate-in fade-in duration-150">
@@ -300,7 +303,7 @@ export default function App() {
 
   const navigateTo = (path: string) => {
     window.history.pushState({}, "", path);
-    setCurrentPath(path);
+    setCurrentPath(window.location.pathname);
     window.scrollTo(0, 0);
   };
 
@@ -529,7 +532,35 @@ export default function App() {
     );
   }
 
-  // 2. Route Check: Admin Dashboard (/admin)
+  // 2. Route Check: Admin Wedding Checklist (/admin/checklist)
+  if (currentPath === "/admin/checklist" || currentPath === "/admin/checklist/") {
+    if (authLoading) {
+      return (
+        <div className="min-h-[100dvh] bg-[#FAF8F5] flex flex-col items-center justify-center space-y-3">
+          <div className="w-8 h-8 border-2 border-[#B08D57] border-t-transparent rounded-full animate-spin" />
+          <p className="text-sm text-[#7A756D]">Verifying team access...</p>
+        </div>
+      );
+    }
+    if (!user || !isAdmin) {
+      return (
+        <React.Suspense fallback={<ScreenSkeleton />}>
+          <AdminLogin onBackToForm={() => navigateTo("/")} />
+        </React.Suspense>
+      );
+    }
+    return (
+      <React.Suspense fallback={<ScreenSkeleton />}>
+        <AdminWeddingChecklist
+          onBack={() => navigateTo("/admin")}
+          onSignOut={signOut}
+          userEmail={user.email || undefined}
+        />
+      </React.Suspense>
+    );
+  }
+
+  // 3. Route Check: Admin Dashboard (/admin)
   if (currentPath === "/admin" || currentPath === "/admin/") {
     if (authLoading) {
       return (
@@ -550,6 +581,7 @@ export default function App() {
       <React.Suspense fallback={<ScreenSkeleton />}>
         <AdminDashboard
           onSelectCouple={(id) => navigateTo(`/admin/couple/${id}`)}
+          onOpenChecklist={() => navigateTo("/admin/checklist")}
           onSignOut={signOut}
         />
       </React.Suspense>

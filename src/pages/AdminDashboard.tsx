@@ -19,6 +19,7 @@ import {
   Trash2,
   AlertTriangle,
   X,
+  ClipboardList,
 } from "lucide-react";
 import { SubmissionRecord, SubmissionStatus } from "../types/questionnaire.ts";
 import {
@@ -31,11 +32,13 @@ import { STUDIO_NAME, STUDIO_LOGO_URL } from "../constants.ts";
 
 interface AdminDashboardProps {
   onSelectCouple: (id: string) => void;
+  onOpenChecklist: () => void;
   onSignOut: () => void;
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onSelectCouple,
+  onOpenChecklist,
   onSignOut,
 }) => {
   const [submissions, setSubmissions] = useState<SubmissionRecord[]>([]);
@@ -208,11 +211,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </h1>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5 sm:gap-3">
+            <button
+              type="button"
+              onClick={onOpenChecklist}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium text-[#1A1A1A] bg-[#FAF7F2] hover:bg-[#F2ECE1] border border-[#E5DDD2] transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            >
+              <ClipboardList className="w-3.5 h-3.5 text-[#8C7043]" />
+              <span>Wedding Checklist</span>
+            </button>
+
             <button
               type="button"
               onClick={onSignOut}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium text-[#5F5F5F] hover:text-[#1A1A1A] hover:bg-[#FAF7F2] border border-[#E5DDD2] transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium text-[#5F5F5F] hover:text-[#1A1A1A] hover:bg-[#FAF7F2] border border-[#E5DDD2] transition-colors cursor-pointer whitespace-nowrap shrink-0"
             >
               <LogOut className="w-3.5 h-3.5 text-[#8C7043]" />
               <span>Sign out</span>

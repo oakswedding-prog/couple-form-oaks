@@ -73,6 +73,37 @@ export interface QuestionnaireAnswers {
 
 export type SubmissionStatus = "new" | "reviewed" | "shared";
 
+export type ChecklistItemStatus = "got_it" | "missed";
+
+export type CrewFileRole =
+  | "Photographer"
+  | "Videographer"
+  | "Drone"
+  | "Editor"
+  | "Custom";
+
+export type FileSizeUnit = "GB" | "TB";
+
+export interface FileDetailEntry {
+  id: string;
+  memberName: string;
+  role: CrewFileRole;
+  customRole?: string;
+  fileSize: number;
+  sizeUnit: FileSizeUnit;
+  fileCount: number;
+  driveName?: string;
+  updatedAt: string;
+}
+
+export interface ProductionChecklistData {
+  items: Record<string, ChecklistItemStatus>;
+  productionManagers?: string[];
+  fileDetails?: FileDetailEntry[];
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
 export interface SubmissionRecord {
   id: string;
   sequenceNumber: number;
@@ -90,6 +121,7 @@ export interface SubmissionRecord {
   interviewQuestions?: string;
   cheatSheet?: string;
   privateNotes?: string;
+  productionChecklist?: ProductionChecklistData;
 }
 
 export interface QuestionMeta {
