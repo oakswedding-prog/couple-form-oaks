@@ -263,29 +263,30 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
     <div className="min-h-[100dvh] bg-[#FAF8F5] text-[#1A1A1A] safe-bottom pb-16">
       {/* Top Bar - Hidden when printing */}
       <header className="bg-white border-b border-[#E5DDD2] sticky top-0 z-30 shadow-2xs print:hidden">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-18 flex items-center justify-between gap-3">
+        {/* Desktop Header */}
+        <div className="hidden sm:flex max-w-6xl mx-auto px-6 h-18 items-center justify-between gap-3">
           {/* Back button & Title */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"
               onClick={onBack}
-              className="p-2 -ml-2 rounded-xl text-[#5F5F5F] hover:text-[#1A1A1A] hover:bg-[#FAF7F2] transition-colors cursor-pointer"
+              className="p-2 -ml-2 rounded-xl text-[#5F5F5F] hover:text-[#1A1A1A] hover:bg-[#FAF7F2] transition-colors cursor-pointer shrink-0"
               title="Back to Couples"
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-xs font-bold text-[#8C7043] bg-[#FAF7F2] px-2 py-1 rounded border border-[#E8DFD3]">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="font-mono text-xs font-bold text-[#8C7043] bg-[#FAF7F2] px-2 py-1 rounded border border-[#E8DFD3] shrink-0">
                 {submission.displayId}
               </span>
-              <h1 className="font-cormorant text-xl sm:text-2xl font-semibold text-[#1A1A1A]">
+              <h1 className="font-cormorant text-2xl font-semibold text-[#1A1A1A] truncate">
                 {p1} &amp; {p2}
               </h1>
             </div>
           </div>
 
-          {/* Actions: Status, Download, Print */}
-          <div className="flex items-center gap-2.5">
+          {/* Desktop Actions */}
+          <div className="flex items-center gap-2.5 shrink-0">
             {/* Status Dropdown */}
             <select
               value={submission.status}
@@ -303,29 +304,19 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
               <option value="shared">Shared with team</option>
             </select>
 
-            {/* Print Cheat Sheet */}
-            <button
-              type="button"
-              onClick={() => window.print()}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium text-[#1A1A1A] bg-[#FAF8F5] hover:bg-[#1A1A1A] hover:text-white border border-[#E5DDD2] transition-colors cursor-pointer"
-            >
-              <Printer className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Print Cheat Sheet</span>
-            </button>
-
             {/* Download Dropdown */}
             <div className="relative">
               <button
                 type="button"
                 onClick={() => setIsDownloadOpen(!isDownloadOpen)}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-medium text-[#8C7043] bg-white hover:bg-[#FAF7F2] border border-[#E8DFD3] transition-colors cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium text-[#8C7043] bg-white hover:bg-[#FAF7F2] border border-[#E8DFD3] transition-colors cursor-pointer"
               >
                 <Download className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Download</span>
+                <span>Download Brief</span>
               </button>
 
               {isDownloadOpen && (
-                <div className="absolute right-0 top-full mt-1.5 w-36 bg-white border border-[#E5DDD2] rounded-xl shadow-lg py-1 z-20 animate-in fade-in zoom-in-95 duration-100">
+                <div className="absolute right-0 top-full mt-1.5 w-44 bg-white border border-[#E5DDD2] rounded-xl shadow-lg py-1 z-30 animate-in fade-in zoom-in-95 duration-100">
                   <button
                     type="button"
                     onClick={() => {
@@ -335,7 +326,7 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
                     className="w-full text-left px-3 py-2 text-xs text-[#1A1A1A] hover:bg-[#FAF7F2] flex items-center gap-2 cursor-pointer"
                   >
                     <FileText className="w-3.5 h-3.5 text-red-600" />
-                    <span>PDF</span>
+                    <span>PDF (Full Brief)</span>
                   </button>
                   <button
                     type="button"
@@ -363,8 +354,110 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
               title="Delete this submission"
             >
               <Trash2 className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Delete</span>
+              <span>Delete</span>
             </button>
+          </div>
+        </div>
+
+        {/* Mobile Header (Zero text clipping, perfect 2-row layout) */}
+        <div className="sm:hidden px-4 py-3 space-y-2">
+          {/* Mobile Row 1: Back + ID + Status + Download + Delete */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onBack}
+                className="p-1.5 -ml-1 rounded-xl text-[#5F5F5F] hover:text-[#1A1A1A] hover:bg-[#FAF7F2] transition-colors cursor-pointer"
+                title="Back to Couples"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+              <span className="font-mono text-xs font-bold text-[#8C7043] bg-[#FAF7F2] px-2 py-0.5 rounded border border-[#E8DFD3]">
+                {submission.displayId}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              {/* Status Dropdown */}
+              <select
+                value={submission.status}
+                onChange={(e) => handleStatusChange(e.target.value as SubmissionStatus)}
+                className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border cursor-pointer focus:outline-hidden ${
+                  submission.status === "new"
+                    ? "bg-[#FFF9EE] text-[#B08D57] border-[#E5C388]"
+                    : submission.status === "reviewed"
+                    ? "bg-[#EFF6FF] text-[#2563EB] border-[#BFDBFE]"
+                    : "bg-[#ECFDF5] text-[#059669] border-[#A7F3D0]"
+                }`}
+              >
+                <option value="new">New</option>
+                <option value="reviewed">Reviewed</option>
+                <option value="shared">Shared</option>
+              </select>
+
+              {/* Download Dropdown */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setIsDownloadOpen(!isDownloadOpen)}
+                  className="p-1.5 rounded-lg text-[#8C7043] bg-white border border-[#E8DFD3] hover:bg-[#FAF7F2] transition-colors cursor-pointer"
+                  title="Download Brief"
+                >
+                  <Download className="w-4 h-4" />
+                </button>
+
+                {isDownloadOpen && (
+                  <div className="absolute right-0 top-full mt-1.5 w-40 bg-white border border-[#E5DDD2] rounded-xl shadow-lg py-1 z-30 animate-in fade-in zoom-in-95 duration-100">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsDownloadOpen(false);
+                        exportToPdf(submission);
+                      }}
+                      className="w-full text-left px-3 py-2 text-xs text-[#1A1A1A] hover:bg-[#FAF7F2] flex items-center gap-2 cursor-pointer"
+                    >
+                      <FileText className="w-3.5 h-3.5 text-red-600" />
+                      <span>PDF</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsDownloadOpen(false);
+                        exportToDocx(submission);
+                      }}
+                      className="w-full text-left px-3 py-2 text-xs text-[#1A1A1A] hover:bg-[#FAF7F2] flex items-center gap-2 cursor-pointer"
+                    >
+                      <FileCode className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Word (.docx)</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Delete Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteError(null);
+                  setShowDeleteModal(true);
+                }}
+                className="p-1.5 rounded-lg text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 transition-colors cursor-pointer"
+                title="Delete this submission"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Mobile Row 2: Full-width Couple Names and Wedding Date */}
+          <div className="pt-0.5">
+            <h1 className="font-cormorant text-2xl font-semibold text-[#1A1A1A] leading-tight truncate">
+              {p1} &amp; {p2}
+            </h1>
+            <p className="text-xs text-[#7A756D] mt-0.5">
+              {submission.weddingDate ? `Wedding: ${submission.weddingDate}` : "Wedding date: TBD"}
+              {submission.phone ? ` · 📞 ${submission.phone}` : ""}
+            </p>
           </div>
         </div>
       </header>
@@ -435,7 +528,7 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
             }`}
           >
             <FileText className="w-4 h-4 text-[#7A756D]" />
-            <span>Full Responses (Q1–23)</span>
+            <span>Full Responses (Q1–28)</span>
           </button>
 
           <button
@@ -504,10 +597,11 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
               </h2>
               <button
                 type="button"
-                onClick={() => window.print()}
-                className="text-xs text-[#8C7043] hover:underline font-medium cursor-pointer"
+                onClick={() => exportToPdf(submission)}
+                className="text-xs text-[#8C7043] hover:underline font-medium cursor-pointer inline-flex items-center gap-1"
               >
-                Print Clean A4 Page →
+                <Download className="w-3.5 h-3.5" />
+                <span>Download PDF →</span>
               </button>
             </div>
 
@@ -883,7 +977,7 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
           <ChapterSection
             chapter="Chapter 3"
             title="The Look and Feel"
-            range="Questions 11–13"
+            range="Questions 11–15"
           >
             {/* Q11 */}
             <AnswerBlock
@@ -946,9 +1040,81 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
               }
             />
 
-            {/* Q13 */}
+            {/* Q13: WEDDING OUTFITS */}
             <AnswerBlock
               num={13}
+              question="Have you finalised your wedding outfits? We'd love to know about your wardrobe plans."
+              content={
+                <div className="space-y-4">
+                  {ans.weddingOutfits?.notes ? (
+                    <TextAnswer text={ans.weddingOutfits.notes} />
+                  ) : (!ans.weddingOutfits?.links?.length && !ans.weddingOutfits?.images?.length) ? (
+                    <NotAnswered />
+                  ) : null}
+
+                  {ans.weddingOutfits?.links && ans.weddingOutfits.links.length > 0 && (
+                    <ReferenceLinksList links={ans.weddingOutfits.links} />
+                  )}
+
+                  <ThumbnailGallery
+                    images={ans.weddingOutfits?.images || []}
+                    titlePrefix="Wedding Outfit Reference"
+                    categoryLabel="Outfit Photos &amp; Styling References"
+                    emptyLabel="No outfit photos or references uploaded."
+                    onOpenImage={(idx) => {
+                      const list: LightboxImage[] = (ans.weddingOutfits?.images || []).map(
+                        (img, i) => ({
+                          url: img,
+                          title: `Outfit Reference ${i + 1}`,
+                          subtitle: `Wardrobe plans for ${p1} & ${p2}`,
+                        })
+                      );
+                      openLightbox(list, idx);
+                    }}
+                  />
+                </div>
+              }
+            />
+
+            {/* Q14: DECOR MOOD BOARD */}
+            <AnswerBlock
+              num={14}
+              question="Do you have a wedding decor mood board or any visual references for your celebration?"
+              content={
+                <div className="space-y-4">
+                  {ans.decorMoodBoard?.notes ? (
+                    <TextAnswer text={ans.decorMoodBoard.notes} />
+                  ) : (!ans.decorMoodBoard?.links?.length && !ans.decorMoodBoard?.images?.length) ? (
+                    <NotAnswered />
+                  ) : null}
+
+                  {ans.decorMoodBoard?.links && ans.decorMoodBoard.links.length > 0 && (
+                    <ReferenceLinksList links={ans.decorMoodBoard.links} />
+                  )}
+
+                  <ThumbnailGallery
+                    images={ans.decorMoodBoard?.images || []}
+                    titlePrefix="Decor Mood Board"
+                    categoryLabel="Decor Mood Board &amp; Colour References"
+                    emptyLabel="No decor mood board images uploaded."
+                    onOpenImage={(idx) => {
+                      const list: LightboxImage[] = (ans.decorMoodBoard?.images || []).map(
+                        (img, i) => ({
+                          url: img,
+                          title: `Decor Mood Image ${i + 1}`,
+                          subtitle: `Decor atmosphere reference for ${p1} & ${p2}`,
+                        })
+                      );
+                      openLightbox(list, idx);
+                    }}
+                  />
+                </div>
+              }
+            />
+
+            {/* Q15 (previously Q13) */}
+            <AnswerBlock
+              num={15}
               question="What tone are you expecting to set for your wedding day"
               content={
                 Array.isArray((ans.q13_tone as any)?.selected) &&
@@ -975,11 +1141,11 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
           <ChapterSection
             chapter="Chapter 4"
             title="Your Day"
-            range="Questions 14–17"
+            range="Questions 16–19"
           >
-            {/* Q14 */}
+            {/* Q16 (previously Q14) */}
             <AnswerBlock
-              num={14}
+              num={16}
               question="What are the moments you are most looking forward to during your wedding?"
               content={
                 <div className="space-y-2">
@@ -994,9 +1160,9 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
               }
             />
 
-            {/* Q15 */}
+            {/* Q17 (previously Q15) */}
             <AnswerBlock
-              num={15}
+              num={17}
               question="Is there anything you definitely want us to capture or avoid?"
               content={
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
@@ -1020,16 +1186,16 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
               }
             />
 
-            {/* Q16 */}
+            {/* Q18 (previously Q16) */}
             <AnswerBlock
-              num={16}
+              num={18}
               question="Please mention your non negotiables in your films and photographs?"
               content={<TextAnswer text={ans.q16_nonNegotiables} />}
             />
 
-            {/* Q17 */}
+            {/* Q19 (previously Q17) */}
             <AnswerBlock
-              num={17}
+              num={19}
               question="Who do you think is going to be more emotional during wedding?"
               content={<TextAnswer text={ans.q17_emotional} />}
             />
@@ -1039,18 +1205,25 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
           <ChapterSection
             chapter="Chapter 5"
             title="Working Together"
-            range="Questions 18–22"
+            range="Questions 20–26"
           >
-            {/* Q18 */}
+            {/* Q20 (previously Q18) */}
             <AnswerBlock
-              num={18}
+              num={20}
               question="How versatile are you with the camera?"
               content={<TextAnswer text={ans.q18_cameraVersatility} />}
             />
 
-            {/* Q19 */}
+            {/* Q21 (previously Q19) */}
             <AnswerBlock
-              num={19}
+              num={21}
+              question="What mattered most to you when choosing OAKS Wedding to capture your wedding?"
+              content={<TextAnswer text={ans.choosingOaks} />}
+            />
+
+            {/* Q22 (previously Q20) */}
+            <AnswerBlock
+              num={22}
               question="What matters most to you when choosing a wedding photography and filmmaking team?"
               content={
                 <div className="space-y-2">
@@ -1065,16 +1238,16 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
               }
             />
 
-            {/* Q20 */}
+            {/* Q23 (previously Q21) */}
             <AnswerBlock
-              num={20}
+              num={23}
               question="How comfortable are you with being guided or directed during portraits and filming?"
               content={<TextAnswer text={ans.q20_guidanceComfort} />}
             />
 
-            {/* Q21 */}
+            {/* Q24 (previously Q22) */}
             <AnswerBlock
-              num={21}
+              num={24}
               question="Is there anything that would help you feel more comfortable in front of the camera?"
               content={
                 <div className="space-y-2">
@@ -1089,11 +1262,52 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
               }
             />
 
-            {/* Q22 */}
+            {/* Q25 (previously Q23) */}
             <AnswerBlock
-              num={22}
+              num={25}
               question="What do you hope to feel when you watch your wedding film years from now?"
               content={<TextAnswer text={ans.q22_futureFeeling} />}
+            />
+
+            {/* Q26: YOUR PRIMARY POINT OF CONTACT */}
+            <AnswerBlock
+              num={26}
+              question="Who should be our primary point of contact for wedding-related communication and coordination?"
+              content={
+                ans.primaryContact?.role ? (
+                  <div className="space-y-2 text-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="inline-flex items-center px-3 py-1 rounded-full bg-[#FAF7F2] border border-[#E8DFD3] text-[#1A1A1A] font-medium">
+                        {ans.primaryContact.role}
+                      </span>
+                      {ans.primaryContact.role === "Someone else" &&
+                        ans.primaryContact.side && (
+                          <span className="inline-flex items-center px-3 py-1 rounded-full bg-white border border-[#E8DFD3] text-[#5F5F5F]">
+                            {ans.primaryContact.side}
+                          </span>
+                        )}
+                      {ans.primaryContact.role === "Someone else" &&
+                        ans.primaryContact.gender && (
+                          <span className="inline-flex items-center px-3 py-1 rounded-full bg-white border border-[#E8DFD3] text-[#5F5F5F]">
+                            {ans.primaryContact.gender}
+                          </span>
+                        )}
+                    </div>
+                    <div className="bg-[#FAF8F5] p-3 rounded-xl border border-[#E8DFD3] space-y-1">
+                      <p className="text-[#1A1A1A]">
+                        <span className="text-xs text-[#7A756D] font-medium">Name: </span>
+                        {ans.primaryContact.name || "—"}
+                      </p>
+                      <p className="text-[#1A1A1A]">
+                        <span className="text-xs text-[#7A756D] font-medium">Phone / WhatsApp: </span>
+                        {ans.primaryContact.phone || "—"}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <NotAnswered />
+                )
+              }
             />
           </ChapterSection>
 
@@ -1101,11 +1315,17 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
           <ChapterSection
             chapter="Chapter 6"
             title="One Last Thing"
-            range="Question 23"
+            range="Questions 27–28"
           >
             <AnswerBlock
-              num={23}
-              question="Is there anything else you would love us to know about you, your story, or your wedding?"
+              num={27}
+              question="Last but not least, we'd love to hear your story. How did your journey begin, and what would you love us to know about the two of you?"
+              content={<TextAnswer text={ans.loveStoryNarrative} />}
+            />
+
+            <AnswerBlock
+              num={28}
+              question="Is there anything else you'd like to let us know?"
               content={
                 <div className="space-y-4">
                   {ans.q23_oneLastThing?.notes && (

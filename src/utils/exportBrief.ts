@@ -14,7 +14,7 @@ import {
   synthesizeCheatSheet,
   parseCheatSheetDocument,
 } from "./cheatSheetGenerator.ts";
-import { synthesizeCoupleLetter } from "./coupleLetterGenerator.ts";
+import { upgradeCoupleLetterIfNeeded } from "./coupleLetterGenerator.ts";
 import {
   loadImageAsDataUrl,
   loadImageAsUint8Array,
@@ -281,8 +281,10 @@ export async function exportToPdf(submission: SubmissionRecord) {
   }
 
   // PAGE 2: THE COUPLE LETTER — OUR UNDERSTANDING OF YOUR WEDDING
-  const coupleLetterText =
-    submission.coupleLetter || synthesizeCoupleLetter(submission.answers);
+  const { letter: coupleLetterText } = upgradeCoupleLetterIfNeeded(
+    submission.coupleLetter,
+    submission.answers
+  );
   doc.addPage();
   y = 20;
 
@@ -540,17 +542,35 @@ export async function exportToPdf(submission: SubmissionRecord) {
     { q: "Q10. Family members & tree", a: `${allFamily || "None"} ${ans.q10_people?.treeNotes ? `\nNotes: ${ans.q10_people.treeNotes}` : ""}` },
     { q: "Q11. Film & photo feel?", a: filmFeelStr || "Not answered" },
     { q: "Q12. References & Links", a: `Links: ${(ans.q12_references?.links || []).join(", ") || "None"}\nNotes: ${ans.q12_references?.notes || "None"}` },
-    { q: "Q13. Wedding day tone?", a: toneStr || "Not answered" },
-    { q: "Q14. Moments looking forward to?", a: `${(ans.q14_moments?.selected || []).join(", ")} ${ans.q14_moments?.other || ""}` },
-    { q: "Q15. Definitely capture / avoid?", a: `Capture: ${ans.q15_captureAvoid?.definitelyCapture || "N/A"}\nAvoid: ${ans.q15_captureAvoid?.pleaseAvoid || "N/A"}` },
-    { q: "Q16. Non-negotiables?", a: ans.q16_nonNegotiables || "Not answered" },
-    { q: "Q17. Who will be more emotional?", a: ans.q17_emotional || "Not answered" },
-    { q: "Q18. Camera versatility?", a: ans.q18_cameraVersatility || "Not answered" },
-    { q: "Q19. What matters most?", a: `${(ans.q19_whatMattersMost?.selected || []).join(", ")} ${ans.q19_whatMattersMost?.other || ""}` },
-    { q: "Q20. Guidance comfort?", a: ans.q20_guidanceComfort || "Not answered" },
-    { q: "Q21. Comfort tips?", a: `${(ans.q21_comfortTips?.selected || []).join(", ")} ${ans.q21_comfortTips?.notes || ""}` },
-    { q: "Q22. Future film feeling?", a: ans.q22_futureFeeling || "Not answered" },
-    { q: "Q23. One last thing?", a: `${ans.q23_oneLastThing?.notes || "Not answered"}` },
+    { q: "Q13. Wedding Outfits & Wardrobe Plans", a: `Notes: ${ans.weddingOutfits?.notes || "None"}\nLinks: ${(ans.weddingOutfits?.links || []).join(", ") || "None"}` },
+    { q: "Q14. Wedding Decor Mood Board & References", a: `Links: ${(ans.decorMoodBoard?.links || []).join(", ") || "None"}\nNotes: ${ans.decorMoodBoard?.notes || "None"}` },
+    { q: "Q15. Wedding day tone?", a: toneStr || "Not answered" },
+    { q: "Q16. Moments looking forward to?", a: `${(ans.q14_moments?.selected || []).join(", ")} ${ans.q14_moments?.other || ""}` },
+    { q: "Q17. Definitely capture / avoid?", a: `Capture: ${ans.q15_captureAvoid?.definitelyCapture || "N/A"}\nAvoid: ${ans.q15_captureAvoid?.pleaseAvoid || "N/A"}` },
+    { q: "Q18. Non-negotiables?", a: ans.q16_nonNegotiables || "Not answered" },
+    { q: "Q19. Who will be more emotional?", a: ans.q17_emotional || "Not answered" },
+    { q: "Q20. Camera versatility?", a: ans.q18_cameraVersatility || "Not answered" },
+    { q: "Q21. What mattered most when choosing OAKS Wedding?", a: ans.choosingOaks || "Not answered" },
+    { q: "Q22. What matters most?", a: `${(ans.q19_whatMattersMost?.selected || []).join(", ")} ${ans.q19_whatMattersMost?.other || ""}` },
+    { q: "Q23. Guidance comfort?", a: ans.q20_guidanceComfort || "Not answered" },
+    { q: "Q24. Comfort tips?", a: `${(ans.q21_comfortTips?.selected || []).join(", ")} ${ans.q21_comfortTips?.notes || ""}` },
+    { q: "Q25. Future film feeling?", a: ans.q22_futureFeeling || "Not answered" },
+    {
+      q: "Q26. Primary point of contact?",
+      a: ans.primaryContact?.role
+        ? [
+            `Role: ${ans.primaryContact.role}`,
+            ans.primaryContact.role === "Someone else" && ans.primaryContact.side ? `Side: ${ans.primaryContact.side}` : null,
+            ans.primaryContact.role === "Someone else" && ans.primaryContact.gender ? `Gender: ${ans.primaryContact.gender}` : null,
+            `Name: ${ans.primaryContact.name || "N/A"}`,
+            `Phone / WhatsApp: ${ans.primaryContact.phone || "N/A"}`,
+          ]
+            .filter(Boolean)
+            .join("\n")
+        : "Not answered",
+    },
+    { q: "Q27. Your story & journey?", a: ans.loveStoryNarrative || "Not answered" },
+    { q: "Q28. Is there anything else you'd like to let us know?", a: `${ans.q23_oneLastThing?.notes || "Not answered"}` },
   ];
 
   for (const item of fullQuestions) {
@@ -675,8 +695,84 @@ export async function exportToPdf(submission: SubmissionRecord) {
       }
     }
 
-    // Embed Q23 Images (Attached Photos)
-    if (item.q.startsWith("Q23.")) {
+    // Embed Q13 Images (Wedding Outfit References)
+    if (item.q.startsWith("Q13.")) {
+      const outfitImages = ans.weddingOutfits?.images || [];
+      if (outfitImages.length > 0) {
+        if (y > 225) {
+          doc.addPage();
+          y = 20;
+        }
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.setTextColor(176, 141, 87);
+        doc.text(`Wedding Outfit Photos (${outfitImages.length}):`, left, y);
+        y += 4;
+
+        let ox = left;
+        for (const img of outfitImages.slice(0, 6)) {
+          const oData = await loadImageAsDataUrl(img);
+          if (oData) {
+            if (ox + 42 > left + contentWidth) {
+              ox = left;
+              y += 32;
+              if (y > 255) {
+                doc.addPage();
+                y = 20;
+              }
+            }
+            try {
+              doc.addImage(oData, "JPEG", ox, y, 38, 27);
+              ox += 42;
+            } catch {
+              // ignore
+            }
+          }
+        }
+        y += 32;
+      }
+    }
+
+    // Embed Q14 Images (Decor Mood Board Photos)
+    if (item.q.startsWith("Q14.")) {
+      const decorImages = ans.decorMoodBoard?.images || [];
+      if (decorImages.length > 0) {
+        if (y > 225) {
+          doc.addPage();
+          y = 20;
+        }
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.setTextColor(176, 141, 87);
+        doc.text(`Decor Mood Board Photos (${decorImages.length}):`, left, y);
+        y += 4;
+
+        let dx = left;
+        for (const img of decorImages.slice(0, 6)) {
+          const dData = await loadImageAsDataUrl(img);
+          if (dData) {
+            if (dx + 42 > left + contentWidth) {
+              dx = left;
+              y += 32;
+              if (y > 255) {
+                doc.addPage();
+                y = 20;
+              }
+            }
+            try {
+              doc.addImage(dData, "JPEG", dx, y, 38, 27);
+              dx += 42;
+            } catch {
+              // ignore
+            }
+          }
+        }
+        y += 32;
+      }
+    }
+
+    // Embed Q28 Images (Attached Photos)
+    if (item.q.startsWith("Q28.")) {
       const lastImages = ans.q23_oneLastThing?.images || [];
       if (lastImages.length > 0) {
         if (y > 225) {
@@ -787,6 +883,16 @@ export async function exportToDocx(submission: SubmissionRecord) {
       .slice(0, 6)
       .map(async (img) => await loadImageAsUint8Array(img))
   );
+  const outfitPhotoBytes = await Promise.all(
+    (ans.weddingOutfits?.images || [])
+      .slice(0, 6)
+      .map(async (img) => await loadImageAsUint8Array(img))
+  );
+  const decorPhotoBytes = await Promise.all(
+    (ans.decorMoodBoard?.images || [])
+      .slice(0, 6)
+      .map(async (img) => await loadImageAsUint8Array(img))
+  );
   const lastPhotoBytes = await Promise.all(
     (ans.q23_oneLastThing?.images || [])
       .slice(0, 6)
@@ -885,7 +991,10 @@ export async function exportToDocx(submission: SubmissionRecord) {
             ],
           }),
           new Paragraph({ text: "" }),
-          ...(submission.coupleLetter || synthesizeCoupleLetter(submission.answers))
+          ...upgradeCoupleLetterIfNeeded(
+            submission.coupleLetter,
+            submission.answers
+          ).letter
             .split("\n")
             .filter((l) => {
               const t = l.trim();
@@ -1125,57 +1234,123 @@ export async function exportToDocx(submission: SubmissionRecord) {
           new Paragraph({ text: "" }),
 
           // Q13
-          new Paragraph({ children: [new TextRun({ text: "13. Day Tone", bold: true })] }),
-          new Paragraph({ text: toneDocxStr }),
+          new Paragraph({ children: [new TextRun({ text: "13. Wedding Outfits & Wardrobe Plans", bold: true })] }),
+          new Paragraph({ text: `Notes: ${ans.weddingOutfits?.notes || "None"} | Links: ${(ans.weddingOutfits?.links || []).join(", ") || "None"}` }),
+          ...outfitPhotoBytes
+            .filter((b): b is Uint8Array => b !== null)
+            .map(
+              (b) =>
+                new Paragraph({
+                  children: [
+                    new ImageRun({
+                      data: b,
+                      transformation: { width: 180, height: 130 },
+                      type: "jpg",
+                    }),
+                  ],
+                })
+            ),
           new Paragraph({ text: "" }),
 
           // Q14
-          new Paragraph({ children: [new TextRun({ text: "14. Key Moments", bold: true })] }),
+          new Paragraph({ children: [new TextRun({ text: "14. Wedding Decor Mood Board & References", bold: true })] }),
+          new Paragraph({ text: `Links: ${(ans.decorMoodBoard?.links || []).join(", ") || "None"} | Notes: ${ans.decorMoodBoard?.notes || "None"}` }),
+          ...decorPhotoBytes
+            .filter((b): b is Uint8Array => b !== null)
+            .map(
+              (b) =>
+                new Paragraph({
+                  children: [
+                    new ImageRun({
+                      data: b,
+                      transformation: { width: 180, height: 130 },
+                      type: "jpg",
+                    }),
+                  ],
+                })
+            ),
+          new Paragraph({ text: "" }),
+
+          // Q15 (previously Q13)
+          new Paragraph({ children: [new TextRun({ text: "15. Day Tone", bold: true })] }),
+          new Paragraph({ text: toneDocxStr }),
+          new Paragraph({ text: "" }),
+
+          // Q16 (previously Q14)
+          new Paragraph({ children: [new TextRun({ text: "16. Key Moments", bold: true })] }),
           new Paragraph({ text: `${(ans.q14_moments?.selected || []).join(", ")} ${ans.q14_moments?.other || ""}` }),
           new Paragraph({ text: "" }),
 
-          // Q15
-          new Paragraph({ children: [new TextRun({ text: "15. Capture vs Avoid", bold: true })] }),
+          // Q17 (previously Q15)
+          new Paragraph({ children: [new TextRun({ text: "17. Capture vs Avoid", bold: true })] }),
           new Paragraph({ text: `Capture: ${ans.q15_captureAvoid?.definitelyCapture || "N/A"} | Avoid: ${ans.q15_captureAvoid?.pleaseAvoid || "N/A"}` }),
           new Paragraph({ text: "" }),
 
-          // Q16
-          new Paragraph({ children: [new TextRun({ text: "16. Non-negotiables", bold: true })] }),
+          // Q18 (previously Q16)
+          new Paragraph({ children: [new TextRun({ text: "18. Non-negotiables", bold: true })] }),
           new Paragraph({ text: ans.q16_nonNegotiables || "Not answered" }),
           new Paragraph({ text: "" }),
 
-          // Q17
-          new Paragraph({ children: [new TextRun({ text: "17. Emotional", bold: true })] }),
+          // Q19 (previously Q17)
+          new Paragraph({ children: [new TextRun({ text: "19. Emotional", bold: true })] }),
           new Paragraph({ text: ans.q17_emotional || "Not answered" }),
           new Paragraph({ text: "" }),
 
-          // Q18
-          new Paragraph({ children: [new TextRun({ text: "18. Camera Versatility", bold: true })] }),
+          // Q20 (previously Q18)
+          new Paragraph({ children: [new TextRun({ text: "20. Camera Versatility", bold: true })] }),
           new Paragraph({ text: ans.q18_cameraVersatility || "Not answered" }),
           new Paragraph({ text: "" }),
 
-          // Q19
-          new Paragraph({ children: [new TextRun({ text: "19. What matters most", bold: true })] }),
+          // Q21 (previously Q19)
+          new Paragraph({ children: [new TextRun({ text: "21. What mattered most when choosing OAKS Wedding", bold: true })] }),
+          new Paragraph({ text: ans.choosingOaks || "Not answered" }),
+          new Paragraph({ text: "" }),
+
+          // Q22 (previously Q20)
+          new Paragraph({ children: [new TextRun({ text: "22. What matters most", bold: true })] }),
           new Paragraph({ text: `${(ans.q19_whatMattersMost?.selected || []).join(", ")} ${ans.q19_whatMattersMost?.other || ""}` }),
           new Paragraph({ text: "" }),
 
-          // Q20
-          new Paragraph({ children: [new TextRun({ text: "20. Guidance comfort", bold: true })] }),
+          // Q23 (previously Q21)
+          new Paragraph({ children: [new TextRun({ text: "23. Guidance comfort", bold: true })] }),
           new Paragraph({ text: ans.q20_guidanceComfort || "Not answered" }),
           new Paragraph({ text: "" }),
 
-          // Q21
-          new Paragraph({ children: [new TextRun({ text: "21. Comfort tips", bold: true })] }),
+          // Q24 (previously Q22)
+          new Paragraph({ children: [new TextRun({ text: "24. Comfort tips", bold: true })] }),
           new Paragraph({ text: `${(ans.q21_comfortTips?.selected || []).join(", ")} ${ans.q21_comfortTips?.notes || ""}` }),
           new Paragraph({ text: "" }),
 
-          // Q22
-          new Paragraph({ children: [new TextRun({ text: "22. Future film feeling", bold: true })] }),
+          // Q25 (previously Q23)
+          new Paragraph({ children: [new TextRun({ text: "25. Future film feeling", bold: true })] }),
           new Paragraph({ text: ans.q22_futureFeeling || "Not answered" }),
           new Paragraph({ text: "" }),
 
-          // Q23
-          new Paragraph({ children: [new TextRun({ text: "23. One last thing", bold: true })] }),
+          // Q26: Primary Point of Contact
+          new Paragraph({ children: [new TextRun({ text: "26. Primary point of contact", bold: true })] }),
+          new Paragraph({
+            text: ans.primaryContact?.role
+              ? [
+                  `${ans.primaryContact.role}${
+                    ans.primaryContact.role === "Someone else" &&
+                    (ans.primaryContact.side || ans.primaryContact.gender)
+                      ? ` (${[ans.primaryContact.side, ans.primaryContact.gender].filter(Boolean).join(", ")})`
+                      : ""
+                  }`,
+                  `Name: ${ans.primaryContact.name || "N/A"}`,
+                  `Phone / WhatsApp: ${ans.primaryContact.phone || "N/A"}`,
+                ].join(" | ")
+              : "Not answered",
+          }),
+          new Paragraph({ text: "" }),
+
+          // Q27
+          new Paragraph({ children: [new TextRun({ text: "27. Your story & journey", bold: true })] }),
+          new Paragraph({ text: ans.loveStoryNarrative || "Not answered" }),
+          new Paragraph({ text: "" }),
+
+          // Q28
+          new Paragraph({ children: [new TextRun({ text: "28. Is there anything else you'd like to let us know?", bold: true })] }),
           new Paragraph({ text: ans.q23_oneLastThing?.notes || "Not answered" }),
           ...lastPhotoBytes
             .filter((b): b is Uint8Array => b !== null)
@@ -1222,10 +1397,10 @@ export async function exportCoupleLetterPdf(
     "_"
   );
 
-  const coupleLetterText =
-    letterTextProp ||
-    submission.coupleLetter ||
-    synthesizeCoupleLetter(submission.answers);
+  const { letter: coupleLetterText } = upgradeCoupleLetterIfNeeded(
+    letterTextProp || submission.coupleLetter,
+    submission.answers
+  );
 
   let y = 22;
   const left = 20;
@@ -1465,14 +1640,15 @@ export async function exportCheatSheetPdf(submission: SubmissionRecord) {
   doc.setFont("helvetica", "bold");
   doc.setFontSize(8.5);
   doc.setTextColor(176, 141, 87);
-  doc.text("03 — PEOPLE TO WATCH", col2X + 3.5, rightY + 4.5);
+  doc.text("04 — IMPORTANT PEOPLE", col2X + 3.5, rightY + 4.5);
 
   let pwy = rightY + 9;
   doc.setFont("helvetica", "normal");
   doc.setFontSize(7.5);
   doc.setTextColor(40, 40, 40);
-  cheatSheetDoc.peopleToWatch.slice(0, 4).forEach((pw) => {
-    const pwWrapped = doc.splitTextToSize(`• ${pw}`, colW - 7);
+  cheatSheetDoc.importantPeople.slice(0, 4).forEach((person) => {
+    const pLine = person.relationship ? `${person.name} — ${person.relationship}` : person.name;
+    const pwWrapped = doc.splitTextToSize(`• ${pLine}`, colW - 7);
     doc.text(pwWrapped, col2X + 3.5, pwy);
     pwy += pwWrapped.length * 3.8 + 1;
   });

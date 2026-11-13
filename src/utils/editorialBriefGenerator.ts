@@ -146,6 +146,7 @@ export function synthesizeEditorialBrief(answers: QuestionnaireAnswers): string 
 
   // 1. Their Story
   const meet = answers.q3_firstMeet?.trim();
+  const loveStory = answers.loveStoryNarrative?.trim();
   const proposal = answers.q9_proposal?.choice === "story" ? answers.q9_proposal.story?.trim() : "";
   const threeWords = (answers.q5_threeWords || []).filter(Boolean);
   const p1Impression = answers.q4_firstImpression?.partnerA?.trim();
@@ -167,11 +168,13 @@ export function synthesizeEditorialBrief(answers: QuestionnaireAnswers): string 
   const otherMembers = familyMembers.filter((m) => !m.mustCapture);
   const emotionalPerson = answers.q17_emotional?.trim();
 
-  // 4. Visual Language & Tone
+  // 4. Visual Language, Outfits, Decor & Tone
   const filmFeel = [
     ...(answers.q11_filmFeel?.selected || []),
     answers.q11_filmFeel?.other ? answers.q11_filmFeel.other.trim() : "",
   ].filter(Boolean);
+  const outfitNotes = answers.weddingOutfits?.notes?.trim();
+  const decorNotes = answers.decorMoodBoard?.notes?.trim();
   const tones = [
     ...(answers.q13_tone?.selected || []),
     answers.q13_tone?.other ? answers.q13_tone.other.trim() : "",
@@ -194,7 +197,8 @@ export function synthesizeEditorialBrief(answers: QuestionnaireAnswers): string 
     answers.q21_comfortTips?.notes ? answers.q21_comfortTips.notes.trim() : "",
   ].filter(Boolean);
 
-  // 7. Team Priorities
+  // 7. Team Priorities & Why OAKS Wedding
+  const choosingOaks = answers.choosingOaks?.trim();
   const priorities = [
     ...(answers.q19_whatMattersMost?.selected || []),
     answers.q19_whatMattersMost?.other ? answers.q19_whatMattersMost.other.trim() : "",
@@ -221,6 +225,13 @@ export function synthesizeEditorialBrief(answers: QuestionnaireAnswers): string 
   if (meet) {
     const cleanMeet = simplifyText(meet, 30);
     storyP1 = `${p1} and ${p2}'s story began when they met (${cleanMeet}). What started as a simple connection soon blossomed into a deep, loving relationship.`;
+    if (loveStory) {
+      const cleanLoveStory = simplifyText(loveStory, 25);
+      storyP1 += ` Looking back on their journey (${cleanLoveStory}), their bond stands out for its quiet warmth and shared history.`;
+    }
+  } else if (loveStory) {
+    const cleanLoveStory = simplifyText(loveStory, 35);
+    storyP1 = `${p1} and ${p2}'s journey together reflects real warmth and dedication (${cleanLoveStory}). Over time, their connection grew into a deep, loving partnership.`;
   } else if (p1Impression || p2Impression) {
     storyP1 = `${p1} and ${p2} quickly realized they had found someone special. From their first conversations, their warmth and mutual respect made everything feel natural and easy.`;
   } else {
@@ -304,6 +315,13 @@ export function synthesizeEditorialBrief(answers: QuestionnaireAnswers): string 
   }
 
   lines.push(`The goal is to balance sophisticated portraits and beautiful compositions with the energy, traditions and emotions of a grand wedding celebration.`);
+  if (outfitNotes || decorNotes) {
+    const visualDetails: string[] = [];
+    if (outfitNotes) visualDetails.push(`Wardrobe plans: ${simplifyText(outfitNotes, 22)}`);
+    if (decorNotes) visualDetails.push(`Decor & palette: ${simplifyText(decorNotes, 22)}`);
+    lines.push("");
+    lines.push(`${visualDetails.join(". ")}.`);
+  }
   lines.push("");
 
   // SECTION 05 — MOMENTS THEY ARE LOOKING FORWARD TO
@@ -386,6 +404,11 @@ export function synthesizeEditorialBrief(answers: QuestionnaireAnswers): string 
   });
   lines.push("");
 
+  if (choosingOaks) {
+    lines.push(`Why they chose OAKS Wedding: ${simplifyText(choosingOaks, 25)}.`);
+    lines.push("");
+  }
+
   lines.push(`They value a team that understands their personalities, communicates well and can translate their story into something meaningful.`);
   lines.push("");
 
@@ -433,7 +456,7 @@ export async function generateEditorialBrief(
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000);
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
 
     const res = await fetch("/api/generate-brief", {
       method: "POST",

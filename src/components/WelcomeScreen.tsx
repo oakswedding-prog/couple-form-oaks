@@ -325,9 +325,9 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                 onClick={onResume}
                 className="w-full min-h-[48px] py-2.5 px-4 rounded-full font-cormorant text-[17px] text-[#1A1A1A] hover:bg-[#FAF7F2] border border-[#E5DDD2] transition-colors"
               >
-                {savedStep === 24
+                {savedStep === 29
                   ? "Resume where you left off (Review Answers)"
-                  : `Resume where you left off (Question ${savedStep} of 23)`}
+                  : `Resume where you left off (Question ${savedStep} of 28)`}
               </button>
             )}
           </div>

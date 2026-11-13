@@ -118,11 +118,12 @@ export const ThankYouScreen: React.FC<ThankYouScreenProps> = ({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => window.print()}
+              onClick={() => exportToPdf(submissionRecord)}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium text-[#1A1A1A] bg-[#FAF8F5] hover:bg-[#1A1A1A] hover:text-white border border-[#E5DDD2] transition-colors cursor-pointer"
+              title="Download submission as PDF"
             >
-              <Printer className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Print</span>
+              <FileText className="w-3.5 h-3.5 text-red-600" />
+              <span className="hidden sm:inline">Download PDF</span>
             </button>
 
             {/* Download Dropdown */}
@@ -269,7 +270,7 @@ export const ThankYouScreen: React.FC<ThankYouScreenProps> = ({
               }`}
             >
               <FileText className="w-4 h-4 text-[#7A756D]" />
-              <span>Full Responses (Q1–23)</span>
+              <span>Full Responses (Q1–28)</span>
             </button>
           </div>
 
@@ -307,10 +308,11 @@ export const ThankYouScreen: React.FC<ThankYouScreenProps> = ({
                 </h3>
                 <button
                   type="button"
-                  onClick={() => window.print()}
-                  className="text-xs text-[#8C7043] hover:underline font-medium cursor-pointer"
+                  onClick={() => exportToPdf(submissionRecord)}
+                  className="text-xs text-[#8C7043] hover:underline font-medium cursor-pointer inline-flex items-center gap-1"
                 >
-                  Print Clean A4 Page →
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download PDF →</span>
                 </button>
               </div>
               <ShootDayCheatSheet submission={submissionRecord} />
@@ -325,7 +327,7 @@ export const ThankYouScreen: React.FC<ThankYouScreenProps> = ({
                   Complete Submitted Responses
                 </h3>
                 <p className="text-xs text-[#7A756D] mt-0.5">
-                  All 23 questionnaire answers recorded for {coupleTitle}
+                  All 28 questionnaire answers recorded for {coupleTitle}
                 </p>
               </div>
 
@@ -376,6 +378,16 @@ export const ThankYouScreen: React.FC<ThankYouScreenProps> = ({
                     <strong>Photo &amp; Film Feel:</strong>{" "}
                     {(answers.q11_filmFeel?.selected || []).join(", ") || "—"}
                   </p>
+                  {answers.weddingOutfits?.notes && (
+                    <p className="text-sm">
+                      <strong>Wedding Outfits:</strong> {answers.weddingOutfits.notes}
+                    </p>
+                  )}
+                  {answers.decorMoodBoard?.notes && (
+                    <p className="text-sm">
+                      <strong>Decor Mood Board:</strong> {answers.decorMoodBoard.notes}
+                    </p>
+                  )}
                   <p className="text-sm">
                     <strong>Wedding Tone:</strong>{" "}
                     {(answers.q13_tone?.selected || []).join(", ") || "—"}
@@ -400,8 +412,32 @@ export const ThankYouScreen: React.FC<ThankYouScreenProps> = ({
                     <strong>Camera Comfort:</strong> {answers.q18_cameraVersatility || "—"}
                   </p>
                   <p className="text-sm">
+                    <strong>Why OAKS Wedding:</strong> {answers.choosingOaks || "—"}
+                  </p>
+                  <p className="text-sm">
                     <strong>Future feeling:</strong> {answers.q22_futureFeeling || "—"}
                   </p>
+                  <p className="text-sm">
+                    <strong>Primary Point of Contact:</strong>{" "}
+                    {answers.primaryContact?.role
+                      ? `${answers.primaryContact.role}${
+                          answers.primaryContact.role === "Someone else" &&
+                          (answers.primaryContact.side || answers.primaryContact.gender)
+                            ? ` (${[answers.primaryContact.side, answers.primaryContact.gender].filter(Boolean).join(", ")})`
+                            : ""
+                        } — ${answers.primaryContact.name || "—"} (${answers.primaryContact.phone || "—"})`
+                      : "—"}
+                  </p>
+                  {answers.loveStoryNarrative && (
+                    <p className="text-sm">
+                      <strong>Your Story &amp; Journey:</strong> {answers.loveStoryNarrative}
+                    </p>
+                  )}
+                  {answers.q23_oneLastThing?.notes && (
+                    <p className="text-sm">
+                      <strong>One Last Thing:</strong> {answers.q23_oneLastThing.notes}
+                    </p>
+                  )}
                 </div>
               </div>
             </div>

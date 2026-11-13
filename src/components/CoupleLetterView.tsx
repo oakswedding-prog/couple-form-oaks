@@ -24,6 +24,7 @@ import {
   generateCoupleLetter,
   synthesizeCoupleLetter,
   parseCoupleLetterDocument,
+  upgradeCoupleLetterIfNeeded,
 } from "../utils/coupleLetterGenerator.ts";
 import { exportCoupleLetterPdf } from "../utils/exportBrief.ts";
 
@@ -53,12 +54,13 @@ export const CoupleLetterView: React.FC<CoupleLetterViewProps> = ({
   const p1 = (answers.partner1 || "Partner 1").trim();
   const p2 = (answers.partner2 || "Partner 2").trim();
 
-  // If initialLetter is missing, synthesize on the fly
-  const [letterText, setLetterText] = useState<string>(
-    initialLetterProp && initialLetterProp.trim().length > 50
-      ? initialLetterProp
-      : synthesizeCoupleLetter(answers, STUDIO_NAME)
+  const initialResult = upgradeCoupleLetterIfNeeded(
+    initialLetterProp,
+    answers,
+    STUDIO_NAME
   );
+
+  const [letterText, setLetterText] = useState<string>(initialResult.letter);
 
   const [copied, setCopied] = useState<boolean>(false);
   const [isRegenerating, setIsRegenerating] = useState<boolean>(false);
@@ -68,18 +70,28 @@ export const CoupleLetterView: React.FC<CoupleLetterViewProps> = ({
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"styled" | "plain">("styled");
 
-  // Auto-persist synthesized letter on mount if not already stored
+  // Auto-persist synthesized or upgraded letter on mount if needed
   useEffect(() => {
-    if (!initialLetterProp && onSaveLetter) {
-      onSaveLetter(letterText).catch(() => {});
+    if (initialResult.wasUpgraded && !readOnly && onSaveLetter) {
+      onSaveLetter(initialResult.letter).catch(() => {});
     }
   }, [initialLetterProp]);
 
-  // Sync if prop updates from outside
+  // Sync and auto-upgrade if prop updates from outside
   useEffect(() => {
-    if (initialLetterProp && initialLetterProp !== letterText && !isEditing) {
-      setLetterText(initialLetterProp);
-      setEditedText(initialLetterProp);
+    if (initialLetterProp && !isEditing) {
+      const { letter: checkedLetter, wasUpgraded } = upgradeCoupleLetterIfNeeded(
+        initialLetterProp,
+        answers,
+        STUDIO_NAME
+      );
+      if (checkedLetter !== letterText) {
+        setLetterText(checkedLetter);
+        setEditedText(checkedLetter);
+      }
+      if (wasUpgraded && !readOnly && onSaveLetter) {
+        onSaveLetter(checkedLetter).catch(() => {});
+      }
     }
   }, [initialLetterProp]);
 

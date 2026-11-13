@@ -270,6 +270,60 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
         />
         <ReviewItem
           num={13}
+          question="Have you finalised your wedding outfits? We'd love to know about your wardrobe plans."
+          answer={
+            <div>
+              {answers.weddingOutfits?.links && answers.weddingOutfits.links.length > 0 && (
+                <div className="text-sm text-[#1A1A1A] mb-1">
+                  Links: {answers.weddingOutfits.links.join(", ")}
+                </div>
+              )}
+              {answers.weddingOutfits?.images && answers.weddingOutfits.images.length > 0 && (
+                <div className="text-sm text-[#B08D57] font-medium mb-1">
+                  ✓ {answers.weddingOutfits.images.length} outfit reference photos attached
+                </div>
+              )}
+              {answers.weddingOutfits?.notes && (
+                <div className="text-sm text-[#5F5F5F]">
+                  {answers.weddingOutfits.notes}
+                </div>
+              )}
+              {!answers.weddingOutfits?.links?.length &&
+                !answers.weddingOutfits?.images?.length &&
+                !answers.weddingOutfits?.notes && <span>Skipped</span>}
+            </div>
+          }
+          onEdit={() => onEditQuestion(13)}
+        />
+        <ReviewItem
+          num={14}
+          question="Do you have a wedding decor mood board or any visual references for your celebration?"
+          answer={
+            <div>
+              {answers.decorMoodBoard?.links && answers.decorMoodBoard.links.length > 0 && (
+                <div className="text-sm text-[#1A1A1A] mb-1">
+                  Links: {answers.decorMoodBoard.links.join(", ")}
+                </div>
+              )}
+              {answers.decorMoodBoard?.images && answers.decorMoodBoard.images.length > 0 && (
+                <div className="text-sm text-[#B08D57] font-medium mb-1">
+                  ✓ {answers.decorMoodBoard.images.length} decor mood board images attached
+                </div>
+              )}
+              {answers.decorMoodBoard?.notes && (
+                <div className="text-sm text-[#5F5F5F]">
+                  {answers.decorMoodBoard.notes}
+                </div>
+              )}
+              {!answers.decorMoodBoard?.links?.length &&
+                !answers.decorMoodBoard?.images?.length &&
+                !answers.decorMoodBoard?.notes && <span>Skipped</span>}
+            </div>
+          }
+          onEdit={() => onEditQuestion(14)}
+        />
+        <ReviewItem
+          num={15}
           question="What tone are you expecting to set for your wedding day"
           answer={
             Array.isArray(answers.q13_tone?.selected) &&
@@ -290,7 +344,7 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
               "Skipped"
             )
           }
-          onEdit={() => onEditQuestion(13)}
+          onEdit={() => onEditQuestion(15)}
         />
       </section>
 
@@ -298,7 +352,7 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
       <section className="mt-10 space-y-4">
         <ChapterHeader title="Chapter 4: Your Day" />
         <ReviewItem
-          num={14}
+          num={16}
           question="What are the moments you are most looking forward to during your wedding?"
           answer={
             [
@@ -310,25 +364,25 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
               .filter(Boolean)
               .join(", ") || "Skipped"
           }
-          onEdit={() => onEditQuestion(14)}
-        />
-        <ReviewItem
-          num={15}
-          question="Is there anything you definitely want us to capture or avoid?"
-          answer={`Definitely capture: ${answers.q15_captureAvoid.definitelyCapture || "—"}\nPlease avoid: ${answers.q15_captureAvoid.pleaseAvoid || "—"}`}
-          onEdit={() => onEditQuestion(15)}
-        />
-        <ReviewItem
-          num={16}
-          question="Please mention your non negotiables in your films and photographs?"
-          answer={answers.q16_nonNegotiables || "Skipped"}
           onEdit={() => onEditQuestion(16)}
         />
         <ReviewItem
           num={17}
+          question="Is there anything you definitely want us to capture or avoid?"
+          answer={`Definitely capture: ${answers.q15_captureAvoid.definitelyCapture || "—"}\nPlease avoid: ${answers.q15_captureAvoid.pleaseAvoid || "—"}`}
+          onEdit={() => onEditQuestion(17)}
+        />
+        <ReviewItem
+          num={18}
+          question="Please mention your non negotiables in your films and photographs?"
+          answer={answers.q16_nonNegotiables || "Skipped"}
+          onEdit={() => onEditQuestion(18)}
+        />
+        <ReviewItem
+          num={19}
           question="Who do you think is going to be more emotional during wedding?"
           answer={answers.q17_emotional || "Skipped"}
-          onEdit={() => onEditQuestion(17)}
+          onEdit={() => onEditQuestion(19)}
         />
       </section>
 
@@ -336,13 +390,19 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
       <section className="mt-10 space-y-4">
         <ChapterHeader title="Chapter 5: Working Together" />
         <ReviewItem
-          num={18}
+          num={20}
           question="How versatile are you with the camera?"
           answer={answers.q18_cameraVersatility || "Skipped"}
-          onEdit={() => onEditQuestion(18)}
+          onEdit={() => onEditQuestion(20)}
         />
         <ReviewItem
-          num={19}
+          num={21}
+          question="What mattered most to you when choosing OAKS Wedding to capture your wedding?"
+          answer={answers.choosingOaks || "Skipped"}
+          onEdit={() => onEditQuestion(21)}
+        />
+        <ReviewItem
+          num={22}
           question="What matters most to you when choosing a wedding photography and filmmaking team?"
           answer={
             [
@@ -354,16 +414,16 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
               .filter(Boolean)
               .join(", ") || "Skipped"
           }
-          onEdit={() => onEditQuestion(19)}
+          onEdit={() => onEditQuestion(22)}
         />
         <ReviewItem
-          num={20}
+          num={23}
           question="How comfortable are you with being guided or directed during portraits and filming?"
           answer={answers.q20_guidanceComfort || "Skipped"}
-          onEdit={() => onEditQuestion(20)}
+          onEdit={() => onEditQuestion(23)}
         />
         <ReviewItem
-          num={21}
+          num={24}
           question="Is there anything that would help you feel more comfortable in front of the camera?"
           answer={
             [
@@ -375,13 +435,39 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
               .filter(Boolean)
               .join(", ") || "Skipped"
           }
-          onEdit={() => onEditQuestion(21)}
+          onEdit={() => onEditQuestion(24)}
         />
         <ReviewItem
-          num={22}
+          num={25}
           question="What do you hope to feel when you watch your wedding film years from now?"
           answer={answers.q22_futureFeeling || "Skipped"}
-          onEdit={() => onEditQuestion(22)}
+          onEdit={() => onEditQuestion(25)}
+        />
+        <ReviewItem
+          num={26}
+          question="Who should be our primary point of contact for wedding-related communication and coordination?"
+          answer={
+            answers.primaryContact?.role ? (
+              <div className="space-y-1 text-sm">
+                <div className="font-medium text-[#1A1A1A]">
+                  {answers.primaryContact.role}
+                  {answers.primaryContact.role === "Someone else" &&
+                  (answers.primaryContact.side || answers.primaryContact.gender)
+                    ? ` (${[answers.primaryContact.side, answers.primaryContact.gender].filter(Boolean).join(" · ")})`
+                    : ""}
+                </div>
+                {(answers.primaryContact.name || answers.primaryContact.phone) && (
+                  <div className="text-[#5F5F5F]">
+                    {answers.primaryContact.name || "—"}
+                    {answers.primaryContact.phone ? ` · ${answers.primaryContact.phone}` : ""}
+                  </div>
+                )}
+              </div>
+            ) : (
+              "Not provided"
+            )
+          }
+          onEdit={() => onEditQuestion(26)}
         />
       </section>
 
@@ -389,8 +475,14 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
       <section className="mt-10 space-y-4">
         <ChapterHeader title="One Last Thing" />
         <ReviewItem
-          num={23}
-          question="Is there anything else you would love us to know about you, your story, or your wedding?"
+          num={27}
+          question="Last but not least, we'd love to hear your story. How did your journey begin, and what would you love us to know about the two of you?"
+          answer={answers.loveStoryNarrative || "Skipped"}
+          onEdit={() => onEditQuestion(27)}
+        />
+        <ReviewItem
+          num={28}
+          question="Is there anything else you'd like to let us know?"
           answer={
             <div>
               <p>{answers.q23_oneLastThing.notes || "Skipped"}</p>
@@ -401,7 +493,7 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
               )}
             </div>
           }
-          onEdit={() => onEditQuestion(23)}
+          onEdit={() => onEditQuestion(28)}
         />
       </section>
 

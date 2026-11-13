@@ -73,16 +73,27 @@ const INITIAL_ANSWERS: QuestionnaireAnswers = {
   },
   q11_filmFeel: { selected: [], other: "" },
   q12_references: { links: [], images: [], notes: "" },
+  weddingOutfits: { links: [], images: [], notes: "" },
+  decorMoodBoard: { links: [], images: [], notes: "" },
   q13_tone: { selected: [], other: "" },
   q14_moments: { selected: [], other: "" },
   q15_captureAvoid: { definitelyCapture: "", pleaseAvoid: "" },
   q16_nonNegotiables: "",
   q17_emotional: "",
   q18_cameraVersatility: "",
+  choosingOaks: "",
   q19_whatMattersMost: { selected: [], other: "" },
   q20_guidanceComfort: "",
   q21_comfortTips: { selected: [], notes: "" },
   q22_futureFeeling: "",
+  primaryContact: {
+    role: "",
+    side: "",
+    gender: "",
+    name: "",
+    phone: "",
+  },
+  loveStoryNarrative: "",
   q23_oneLastThing: { notes: "", images: [] },
 };
 
@@ -144,6 +155,16 @@ function sanitizeAnswers(raw: any): QuestionnaireAnswers {
       images: Array.isArray(raw.q12_references?.images) ? raw.q12_references.images : [],
       notes: typeof raw.q12_references?.notes === "string" ? raw.q12_references.notes : "",
     },
+    weddingOutfits: {
+      links: Array.isArray(raw.weddingOutfits?.links) ? raw.weddingOutfits.links : [],
+      images: Array.isArray(raw.weddingOutfits?.images) ? raw.weddingOutfits.images : [],
+      notes: typeof raw.weddingOutfits?.notes === "string" ? raw.weddingOutfits.notes : "",
+    },
+    decorMoodBoard: {
+      links: Array.isArray(raw.decorMoodBoard?.links) ? raw.decorMoodBoard.links : [],
+      images: Array.isArray(raw.decorMoodBoard?.images) ? raw.decorMoodBoard.images : [],
+      notes: typeof raw.decorMoodBoard?.notes === "string" ? raw.decorMoodBoard.notes : "",
+    },
     q13_tone: {
       selected: Array.isArray(raw.q13_tone?.selected)
         ? raw.q13_tone.selected
@@ -165,6 +186,7 @@ function sanitizeAnswers(raw: any): QuestionnaireAnswers {
     q16_nonNegotiables: typeof raw.q16_nonNegotiables === "string" ? raw.q16_nonNegotiables : "",
     q17_emotional: typeof raw.q17_emotional === "string" ? raw.q17_emotional : "",
     q18_cameraVersatility: typeof raw.q18_cameraVersatility === "string" ? raw.q18_cameraVersatility : "",
+    choosingOaks: typeof raw.choosingOaks === "string" ? raw.choosingOaks : "",
     q19_whatMattersMost: {
       selected: Array.isArray(raw.q19_whatMattersMost?.selected) ? raw.q19_whatMattersMost.selected : [],
       other: typeof raw.q19_whatMattersMost?.other === "string" ? raw.q19_whatMattersMost.other : "",
@@ -175,6 +197,27 @@ function sanitizeAnswers(raw: any): QuestionnaireAnswers {
       notes: typeof raw.q21_comfortTips?.notes === "string" ? raw.q21_comfortTips.notes : "",
     },
     q22_futureFeeling: typeof raw.q22_futureFeeling === "string" ? raw.q22_futureFeeling : "",
+    primaryContact: {
+      role:
+        raw.primaryContact?.role === "Bride" ||
+        raw.primaryContact?.role === "Groom" ||
+        raw.primaryContact?.role === "Someone else"
+          ? raw.primaryContact.role
+          : "",
+      side:
+        raw.primaryContact?.side === "Bride's side" ||
+        raw.primaryContact?.side === "Groom's side"
+          ? raw.primaryContact.side
+          : "",
+      gender:
+        raw.primaryContact?.gender === "Man" ||
+        raw.primaryContact?.gender === "Woman"
+          ? raw.primaryContact.gender
+          : "",
+      name: typeof raw.primaryContact?.name === "string" ? raw.primaryContact.name : "",
+      phone: typeof raw.primaryContact?.phone === "string" ? raw.primaryContact.phone : "",
+    },
+    loveStoryNarrative: typeof raw.loveStoryNarrative === "string" ? raw.loveStoryNarrative : "",
     q23_oneLastThing: {
       notes: typeof raw.q23_oneLastThing?.notes === "string" ? raw.q23_oneLastThing.notes : "",
       images: Array.isArray(raw.q23_oneLastThing?.images) ? raw.q23_oneLastThing.images : [],
@@ -205,38 +248,38 @@ const CHAPTERS = [
     title: "The Look and Feel",
     subtitle: "Visual atmosphere, aesthetic tone, and creative inspiration.",
     startQ: 11,
-    endQ: 13,
-    range: "Questions 11–13",
+    endQ: 15,
+    range: "Questions 11–15",
   },
   {
     chapter: 4,
     title: "Your Day",
     subtitle: "The unmissable moments, traditions, and emotions.",
-    startQ: 14,
-    endQ: 17,
-    range: "Questions 14–17",
+    startQ: 16,
+    endQ: 19,
+    range: "Questions 16–19",
   },
   {
     chapter: 5,
     title: "Working Together",
     subtitle: "Making you feel relaxed, confident, and completely yourself.",
-    startQ: 18,
-    endQ: 22,
-    range: "Questions 18–22",
+    startQ: 20,
+    endQ: 26,
+    range: "Questions 20–26",
   },
   {
     chapter: 6,
     title: "One Last Thing",
     subtitle: "Any quiet details, surprises, or notes we should keep close.",
-    startQ: 23,
-    endQ: 23,
-    range: "Question 23",
+    startQ: 27,
+    endQ: 28,
+    range: "Questions 27–28",
   },
 ];
 
 export default function App() {
   const [answers, setAnswers] = useState<QuestionnaireAnswers>(INITIAL_ANSWERS);
-  const [currentStep, setCurrentStep] = useState<number>(0); // 0 = welcome, 1-23 = questions, 24 = review, 25 = thank you
+  const [currentStep, setCurrentStep] = useState<number>(0); // 0 = welcome, 1-28 = questions, 29 = review, 30 = thank you
   const [activeChapterCard, setActiveChapterCard] = useState<number | null>(null);
   const [editingFromReview, setEditingFromReview] = useState<boolean>(false);
   const [hasLoadedStorage, setHasLoadedStorage] = useState<boolean>(false);
@@ -264,8 +307,10 @@ export default function App() {
   // Admin Auth state
   const { user, isAdmin, isLoading: authLoading, signOut } = useAdminAuth();
 
-  // Link input state for Q12
+  // Link input state for Q12, Q13, and Q14
   const [newLinkInput, setNewLinkInput] = useState<string>("");
+  const [newOutfitLinkInput, setNewOutfitLinkInput] = useState<string>("");
+  const [newDecorLinkInput, setNewDecorLinkInput] = useState<string>("");
 
   // Auto-advance debounce ref
   const autoAdvanceTimerRef = useRef<any>(null);
@@ -330,8 +375,8 @@ export default function App() {
   const navigateToStep = (targetStep: number, isForward = true) => {
     if (editingFromReview) {
       // If editing from review, stay on targetStep or return to review
-      if (targetStep > 23 || targetStep === 24) {
-        setCurrentStep(24);
+      if (targetStep > 28 || targetStep === 29) {
+        setCurrentStep(29);
         setEditingFromReview(false);
         return;
       }
@@ -348,12 +393,13 @@ export default function App() {
     setCurrentStep(targetStep);
   };
 
+  const isPrimaryContactComplete = (pc = answers.primaryContact) => {
+    if (!pc || !pc.role) return false;
+    if (pc.role === "Someone else" && (!pc.side || !pc.gender)) return false;
+    return pc.name.trim().length > 0 && pc.phone.trim().length > 0;
+  };
+
   const handleNext = () => {
-    if (editingFromReview) {
-      setCurrentStep(24);
-      setEditingFromReview(false);
-      return;
-    }
     // Question 11 requires selecting at least 3 styles before continuing
     if (currentStep === 11) {
       const count = answers.q11_filmFeel?.selected?.length || 0;
@@ -361,20 +407,32 @@ export default function App() {
         return;
       }
     }
-    // Question 13 requires at least 1 tone selected before continuing (they can pick up to 3+ if they want)
-    if (currentStep === 13) {
+    // Question 15 requires at least 1 tone selected before continuing
+    if (currentStep === 15) {
       const count = answers.q13_tone?.selected?.length || 0;
       if (count < 1) {
         return;
       }
+    }
+    // Question 26 requires primary contact role, conditional options, mandatory name and phone
+    if (currentStep === 26 && !isPrimaryContactComplete()) {
+      return;
+    }
+    if (editingFromReview) {
+      setCurrentStep(29);
+      setEditingFromReview(false);
+      return;
     }
     navigateToStep(currentStep + 1, true);
   };
 
 
   const handleSkip = () => {
+    if (currentStep === 26) {
+      return;
+    }
     if (editingFromReview) {
-      setCurrentStep(24);
+      setCurrentStep(29);
       setEditingFromReview(false);
       return;
     }
@@ -383,7 +441,7 @@ export default function App() {
 
   const handleBack = () => {
     if (editingFromReview) {
-      setCurrentStep(24);
+      setCurrentStep(29);
       setEditingFromReview(false);
       return;
     }
@@ -424,7 +482,7 @@ export default function App() {
   };
 
   const handleResume = () => {
-    if (savedStepNotice >= 1 && savedStepNotice <= 24) {
+    if (savedStepNotice >= 1 && savedStepNotice <= 29) {
       setCurrentStep(savedStepNotice);
     } else {
       setCurrentStep(1);
@@ -555,8 +613,8 @@ export default function App() {
   }
 
 
-  // Review Screen (Step 24)
-  if (currentStep === 24) {
+  // Review Screen (Step 29)
+  if (currentStep === 29) {
     return (
       <React.Suspense fallback={<ScreenSkeleton />}>
         <ReviewScreen
@@ -565,15 +623,15 @@ export default function App() {
             setEditingFromReview(true);
             setCurrentStep(stepNum);
           }}
-          onBack={() => setCurrentStep(23)}
-          onSubmitted={() => setCurrentStep(25)}
+          onBack={() => setCurrentStep(28)}
+          onSubmitted={() => setCurrentStep(30)}
         />
       </React.Suspense>
     );
   }
 
-  // Thank You Screen (Step 25)
-  if (currentStep === 25) {
+  // Thank You Screen (Step 30)
+  if (currentStep === 30) {
     return (
       <React.Suspense fallback={<ScreenSkeleton />}>
         <ThankYouScreen answers={answers} onReset={handleReset} />
@@ -581,19 +639,22 @@ export default function App() {
     );
   }
 
-  // Question Screens (1-23)
+  // Question Screens (1-28)
   return (
     <div className="min-h-[100dvh] flex flex-col justify-between bg-white safe-bottom">
       {/* Sticky Header with Progress Bar */}
       <Header
         currentStep={currentStep}
-        totalSteps={23}
+        totalSteps={28}
         chapterTitle={currentChapter ? currentChapter.title : undefined}
         onBack={handleBack}
         canGoBack={true}
         editingFromReview={editingFromReview}
         onReturnToReview={() => {
-          setCurrentStep(24);
+          if (currentStep === 26 && !isPrimaryContactComplete()) {
+            return;
+          }
+          setCurrentStep(29);
           setEditingFromReview(false);
         }}
       />
@@ -1188,6 +1249,19 @@ export default function App() {
                   </button>
                 </div>
 
+                <p
+                  className={`text-xs sm:text-[13px] leading-relaxed pt-0.5 transition-colors ${
+                    newLinkInput.trim()
+                      ? "text-[#8C7043] font-medium"
+                      : "text-[#6B655D]"
+                  }`}
+                >
+                  After pasting a link above, please click{" "}
+                  <span className="font-semibold text-[#1A1A1A]">+ Add link</span>{" "}
+                  to save it — simply entering it in the box will not add it to
+                  your response.
+                </p>
+
                 {answers.q12_references.links.length > 0 && (
                   <div className="flex flex-wrap gap-2 pt-2">
                     {answers.q12_references.links.map((link, idx) => (
@@ -1264,8 +1338,318 @@ export default function App() {
             </div>
           )}
 
-          {/* QUESTION 13 */}
+          {/* QUESTION 13: WEDDING OUTFITS */}
           {currentStep === 13 && (
+            <div className="space-y-6">
+              <QuestionHeader
+                title="Have you finalised your wedding outfits? We'd love to know about your wardrobe plans."
+                helper="You can share outfit details, colours, designers, styling ideas or any references that might help us understand your wedding look."
+              />
+
+              {/* Wardrobe Notes */}
+              <div className="p-4 sm:p-5 bg-[#FAFAFA] border border-[#E8E8E8] rounded-2xl space-y-2">
+                <label className="block text-sm font-semibold text-[#1A1A1A]">
+                  Outfit details, colours, designers, or styling notes
+                </label>
+                <VoiceTextarea
+                  id="q13-wedding-outfits-notes"
+                  value={answers.weddingOutfits?.notes ?? ""}
+                  onChange={(val) =>
+                    setAnswers((prev) => ({
+                      ...prev,
+                      weddingOutfits: {
+                        links: prev.weddingOutfits?.links ?? [],
+                        images: prev.weddingOutfits?.images ?? [],
+                        notes: val,
+                      },
+                    }))
+                  }
+                  placeholder="e.g. Ivory silk saree for the ceremony, custom embroidered lehenga for sangeet, classic black tuxedo..."
+                  rows={4}
+                />
+              </div>
+
+              {/* Reference Links */}
+              <div className="space-y-2 p-4 sm:p-5 bg-[#FAFAFA] border border-[#E8E8E8] rounded-2xl">
+                <label className="block text-sm font-semibold text-[#1A1A1A]">
+                  Designer, Pinterest, or wardrobe inspiration links (optional)
+                </label>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="url"
+                    value={newOutfitLinkInput}
+                    onChange={(e) => setNewOutfitLinkInput(e.target.value)}
+                    placeholder="https://pinterest.com/..."
+                    className="w-full sm:flex-1 min-w-0 px-4 py-3 text-[18px] bg-white border border-[#E8E8E8] rounded-xl focus:outline-hidden focus:border-[#1A1A1A]"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && newOutfitLinkInput.trim()) {
+                        e.preventDefault();
+                        setAnswers((prev) => ({
+                          ...prev,
+                          weddingOutfits: {
+                            links: [
+                              ...(prev.weddingOutfits?.links ?? []),
+                              newOutfitLinkInput.trim(),
+                            ],
+                            images: prev.weddingOutfits?.images ?? [],
+                            notes: prev.weddingOutfits?.notes ?? "",
+                          },
+                        }));
+                        setNewOutfitLinkInput("");
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (newOutfitLinkInput.trim()) {
+                        setAnswers((prev) => ({
+                          ...prev,
+                          weddingOutfits: {
+                            links: [
+                              ...(prev.weddingOutfits?.links ?? []),
+                              newOutfitLinkInput.trim(),
+                            ],
+                            images: prev.weddingOutfits?.images ?? [],
+                            notes: prev.weddingOutfits?.notes ?? "",
+                          },
+                        }));
+                        setNewOutfitLinkInput("");
+                      }
+                    }}
+                    className="w-full sm:w-auto px-5 py-3.5 sm:py-3 bg-[#1A1A1A] text-white rounded-xl text-base sm:text-sm font-medium hover:bg-[#333333] shrink-0 flex items-center justify-center min-h-[48px] sm:min-h-0 transition-colors"
+                  >
+                    + Add link
+                  </button>
+                </div>
+
+                <p
+                  className={`text-xs sm:text-[13px] leading-relaxed pt-0.5 transition-colors ${
+                    newOutfitLinkInput.trim()
+                      ? "text-[#8C7043] font-medium"
+                      : "text-[#6B655D]"
+                  }`}
+                >
+                  After pasting a link above, please click{" "}
+                  <span className="font-semibold text-[#1A1A1A]">+ Add link</span>{" "}
+                  to save it — simply entering it in the box will not add it to
+                  your response.
+                </p>
+
+                {(answers.weddingOutfits?.links?.length ?? 0) > 0 && (
+                  <div className="flex flex-wrap gap-2 pt-2">
+                    {answers.weddingOutfits!.links.map((link, idx) => (
+                      <span
+                        key={idx}
+                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-[#E8E8E8] text-xs text-[#1A1A1A] max-w-full truncate"
+                      >
+                        <LinkIcon className="w-3.5 h-3.5 text-[#B08D57] shrink-0" />
+                        <span className="truncate">{link}</span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setAnswers((prev) => ({
+                              ...prev,
+                              weddingOutfits: {
+                                links: (prev.weddingOutfits?.links ?? []).filter(
+                                  (_, i) => i !== idx
+                                ),
+                                images: prev.weddingOutfits?.images ?? [],
+                                notes: prev.weddingOutfits?.notes ?? "",
+                              },
+                            }))
+                          }
+                          className="hover:text-red-500"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Outfit Photos */}
+              <div className="p-4 sm:p-5 bg-[#FAFAFA] border border-[#E8E8E8] rounded-2xl space-y-2">
+                <label className="block text-sm font-semibold text-[#1A1A1A]">
+                  Upload outfit photos, sketches, or styling references (optional)
+                </label>
+                <ImageUploader
+                  images={answers.weddingOutfits?.images ?? []}
+                  onChange={(imgs) =>
+                    setAnswers((prev) => ({
+                      ...prev,
+                      weddingOutfits: {
+                        links: prev.weddingOutfits?.links ?? [],
+                        images: imgs,
+                        notes: prev.weddingOutfits?.notes ?? "",
+                      },
+                    }))
+                  }
+                  maxImages={6}
+                  buttonLabel="Add outfit photos or references"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* QUESTION 14: WEDDING DECOR MOOD BOARD */}
+          {currentStep === 14 && (
+            <div className="space-y-6">
+              <QuestionHeader
+                title="Do you have a wedding decor mood board or any visual references for your celebration?"
+                helper="Feel free to share Pinterest boards, reference images, colour palettes or decor ideas that reflect the atmosphere you have in mind."
+              />
+
+              {/* Decor Links */}
+              <div className="space-y-2 p-4 sm:p-5 bg-[#FAFAFA] border border-[#E8E8E8] rounded-2xl">
+                <label className="block text-sm font-semibold text-[#1A1A1A]">
+                  Pinterest boards or decor reference links (optional)
+                </label>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="url"
+                    value={newDecorLinkInput}
+                    onChange={(e) => setNewDecorLinkInput(e.target.value)}
+                    placeholder="https://pinterest.com/..."
+                    className="w-full sm:flex-1 min-w-0 px-4 py-3 text-[18px] bg-white border border-[#E8E8E8] rounded-xl focus:outline-hidden focus:border-[#1A1A1A]"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && newDecorLinkInput.trim()) {
+                        e.preventDefault();
+                        setAnswers((prev) => ({
+                          ...prev,
+                          decorMoodBoard: {
+                            links: [
+                              ...(prev.decorMoodBoard?.links ?? []),
+                              newDecorLinkInput.trim(),
+                            ],
+                            images: prev.decorMoodBoard?.images ?? [],
+                            notes: prev.decorMoodBoard?.notes ?? "",
+                          },
+                        }));
+                        setNewDecorLinkInput("");
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (newDecorLinkInput.trim()) {
+                        setAnswers((prev) => ({
+                          ...prev,
+                          decorMoodBoard: {
+                            links: [
+                              ...(prev.decorMoodBoard?.links ?? []),
+                              newDecorLinkInput.trim(),
+                            ],
+                            images: prev.decorMoodBoard?.images ?? [],
+                            notes: prev.decorMoodBoard?.notes ?? "",
+                          },
+                        }));
+                        setNewDecorLinkInput("");
+                      }
+                    }}
+                    className="w-full sm:w-auto px-5 py-3.5 sm:py-3 bg-[#1A1A1A] text-white rounded-xl text-base sm:text-sm font-medium hover:bg-[#333333] shrink-0 flex items-center justify-center min-h-[48px] sm:min-h-0 transition-colors"
+                  >
+                    + Add link
+                  </button>
+                </div>
+
+                <p
+                  className={`text-xs sm:text-[13px] leading-relaxed pt-0.5 transition-colors ${
+                    newDecorLinkInput.trim()
+                      ? "text-[#8C7043] font-medium"
+                      : "text-[#6B655D]"
+                  }`}
+                >
+                  After pasting a link above, please click{" "}
+                  <span className="font-semibold text-[#1A1A1A]">+ Add link</span>{" "}
+                  to save it — simply entering it in the box will not add it to
+                  your response.
+                </p>
+
+                {(answers.decorMoodBoard?.links?.length ?? 0) > 0 && (
+                  <div className="flex flex-wrap gap-2 pt-2">
+                    {answers.decorMoodBoard!.links.map((link, idx) => (
+                      <span
+                        key={idx}
+                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-[#E8E8E8] text-xs text-[#1A1A1A] max-w-full truncate"
+                      >
+                        <LinkIcon className="w-3.5 h-3.5 text-[#B08D57] shrink-0" />
+                        <span className="truncate">{link}</span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setAnswers((prev) => ({
+                              ...prev,
+                              decorMoodBoard: {
+                                links: (prev.decorMoodBoard?.links ?? []).filter(
+                                  (_, i) => i !== idx
+                                ),
+                                images: prev.decorMoodBoard?.images ?? [],
+                                notes: prev.decorMoodBoard?.notes ?? "",
+                              },
+                            }))
+                          }
+                          className="hover:text-red-500"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Decor Images */}
+              <div className="p-4 sm:p-5 bg-[#FAFAFA] border border-[#E8E8E8] rounded-2xl space-y-2">
+                <label className="block text-sm font-semibold text-[#1A1A1A]">
+                  Upload decor mood board images or colour palettes (optional)
+                </label>
+                <ImageUploader
+                  images={answers.decorMoodBoard?.images ?? []}
+                  onChange={(imgs) =>
+                    setAnswers((prev) => ({
+                      ...prev,
+                      decorMoodBoard: {
+                        links: prev.decorMoodBoard?.links ?? [],
+                        images: imgs,
+                        notes: prev.decorMoodBoard?.notes ?? "",
+                      },
+                    }))
+                  }
+                  maxImages={6}
+                  buttonLabel="Add decor mood photos"
+                />
+              </div>
+
+              {/* Decor Notes */}
+              <div className="p-4 sm:p-5 bg-[#FAFAFA] border border-[#E8E8E8] rounded-2xl space-y-2">
+                <label className="block text-sm font-semibold text-[#1A1A1A]">
+                  Colour palettes, florals, lighting, or decor notes (optional)
+                </label>
+                <VoiceTextarea
+                  id="q14-decor-mood-board-notes"
+                  value={answers.decorMoodBoard?.notes ?? ""}
+                  onChange={(val) =>
+                    setAnswers((prev) => ({
+                      ...prev,
+                      decorMoodBoard: {
+                        links: prev.decorMoodBoard?.links ?? [],
+                        images: prev.decorMoodBoard?.images ?? [],
+                        notes: val,
+                      },
+                    }))
+                  }
+                  placeholder="e.g. Warm candlelit reception, muted terracotta and sage florals, open garden mandap..."
+                  rows={3}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* QUESTION 15 (previously Q13) */}
+          {currentStep === 15 && (
             <div className="space-y-6">
               <div className="space-y-3">
                 <QuestionHeader
@@ -1348,7 +1732,7 @@ export default function App() {
 
               <div className="pt-2">
                 <VoiceTextarea
-                  id="q13-other"
+                  id="q15-tone-other"
                   label="Anything specific about the tone or vibe in your own words? (Optional)"
                   value={answers.q13_tone?.other ?? ""}
                   onChange={(val) =>
@@ -1367,8 +1751,8 @@ export default function App() {
             </div>
           )}
 
-          {/* QUESTION 14 */}
-          {currentStep === 14 && (
+          {/* QUESTION 16 (previously Q14) */}
+          {currentStep === 16 && (
             <div className="space-y-6">
               <QuestionHeader
                 title="What are the moments you are most looking forward to during your wedding?"
@@ -1414,7 +1798,7 @@ export default function App() {
               </div>
               <div className="pt-2">
                 <VoiceTextarea
-                  id="q14-moments-other"
+                  id="q16-moments-other"
                   label="Anything else?"
                   value={answers.q14_moments?.other ?? ""}
                   onChange={(val) =>
@@ -1433,8 +1817,8 @@ export default function App() {
             </div>
           )}
 
-          {/* QUESTION 15 */}
-          {currentStep === 15 && (
+          {/* QUESTION 17 (previously Q15) */}
+          {currentStep === 17 && (
             <div className="space-y-6">
               <QuestionHeader
                 title="Is there anything you definitely want us to capture or avoid?"
@@ -1442,7 +1826,7 @@ export default function App() {
               />
               <div className="space-y-6">
                 <VoiceTextarea
-                  id="q15-capture"
+                  id="q17-capture"
                   label="Definitely capture"
                   value={answers.q15_captureAvoid?.definitelyCapture ?? ""}
                   onChange={(val) =>
@@ -1458,7 +1842,7 @@ export default function App() {
                   rows={3}
                 />
                 <VoiceTextarea
-                  id="q15-avoid"
+                  id="q17-avoid"
                   label="Please avoid"
                   value={answers.q15_captureAvoid?.pleaseAvoid ?? ""}
                   onChange={(val) =>
@@ -1477,15 +1861,15 @@ export default function App() {
             </div>
           )}
 
-          {/* QUESTION 16 */}
-          {currentStep === 16 && (
+          {/* QUESTION 18 (previously Q16) */}
+          {currentStep === 18 && (
             <div className="space-y-6">
               <QuestionHeader
                 title="Please mention your non negotiables in your films and photographs?"
                 helper="Things that are absolutely sacred to you on this day."
               />
               <VoiceTextarea
-                id="q16-non-negotiables"
+                id="q18-non-negotiables"
                 value={answers.q16_nonNegotiables ?? ""}
                 onChange={(val) =>
                   setAnswers((prev) => ({ ...prev, q16_nonNegotiables: val }))
@@ -1496,8 +1880,8 @@ export default function App() {
             </div>
           )}
 
-          {/* QUESTION 17 */}
-          {currentStep === 17 && (
+          {/* QUESTION 19 (previously Q17) */}
+          {currentStep === 19 && (
             <div className="space-y-6">
               <QuestionHeader
                 title="Who do you think is going to be more emotional during wedding?"
@@ -1526,8 +1910,8 @@ export default function App() {
             </div>
           )}
 
-          {/* QUESTION 18 */}
-          {currentStep === 18 && (
+          {/* QUESTION 20 (previously Q18) */}
+          {currentStep === 20 && (
             <div className="space-y-6">
               <QuestionHeader
                 title="How versatile are you with the camera?"
@@ -1558,8 +1942,27 @@ export default function App() {
             </div>
           )}
 
-          {/* QUESTION 19 */}
-          {currentStep === 19 && (
+          {/* QUESTION 21: WHAT MATTERED MOST WHEN CHOOSING OAKS WEDDING (previously Q19) */}
+          {currentStep === 21 && (
+            <div className="space-y-6">
+              <QuestionHeader
+                title="What mattered most to you when choosing OAKS Wedding to capture your wedding?"
+                helper="Was it our photography style, storytelling, films, recommendations, or something else that made you choose us?"
+              />
+              <VoiceTextarea
+                id="q21-choosing-oaks"
+                value={answers.choosingOaks ?? ""}
+                onChange={(val) =>
+                  setAnswers((prev) => ({ ...prev, choosingOaks: val }))
+                }
+                placeholder="e.g. We were drawn to your candid storytelling, the emotion in your films, and how natural every couple looked..."
+                rows={5}
+              />
+            </div>
+          )}
+
+          {/* QUESTION 22 (previously Q20) */}
+          {currentStep === 22 && (
             <div className="space-y-6">
               <QuestionHeader
                 title="What matters most to you when choosing a wedding photography and filmmaking team?"
@@ -1622,7 +2025,7 @@ export default function App() {
 
               <div className="pt-2">
                 <VoiceTextarea
-                  id="q19-matters-most-other"
+                  id="q22-matters-most-other"
                   label="Other"
                   value={answers.q19_whatMattersMost?.other ?? ""}
                   onChange={(val) =>
@@ -1641,8 +2044,8 @@ export default function App() {
             </div>
           )}
 
-          {/* QUESTION 20 */}
-          {currentStep === 20 && (
+          {/* QUESTION 23 (previously Q21) */}
+          {currentStep === 23 && (
             <div className="space-y-6">
               <QuestionHeader
                 title="How comfortable are you with being guided or directed during portraits and filming?"
@@ -1673,8 +2076,8 @@ export default function App() {
             </div>
           )}
 
-          {/* QUESTION 21 */}
-          {currentStep === 21 && (
+          {/* QUESTION 24 (previously Q22) */}
+          {currentStep === 24 && (
             <div className="space-y-6">
               <QuestionHeader
                 title="Is there anything that would help you feel more comfortable in front of the camera?"
@@ -1716,7 +2119,7 @@ export default function App() {
 
               <div className="pt-2">
                 <VoiceTextarea
-                  id="q21-comfort-notes"
+                  id="q24-comfort-notes"
                   label="In your own words"
                   value={answers.q21_comfortTips?.notes ?? ""}
                   onChange={(val) =>
@@ -1735,15 +2138,15 @@ export default function App() {
             </div>
           )}
 
-          {/* QUESTION 22 */}
-          {currentStep === 22 && (
+          {/* QUESTION 25 (previously Q23) */}
+          {currentStep === 25 && (
             <div className="space-y-6">
               <QuestionHeader
                 title="What do you hope to feel when you watch your wedding film years from now?"
                 helper="Close your eyes and imagine watching it on your tenth anniversary."
               />
               <VoiceTextarea
-                id="q22-future-feeling"
+                id="q25-future-feeling"
                 value={answers.q22_futureFeeling ?? ""}
                 onChange={(val) =>
                   setAnswers((prev) => ({ ...prev, q22_futureFeeling: val }))
@@ -1754,21 +2157,220 @@ export default function App() {
             </div>
           )}
 
-          {/* QUESTION 23: ONE LAST THING */}
-          {currentStep === 23 && (
+          {/* QUESTION 26: YOUR PRIMARY POINT OF CONTACT */}
+          {currentStep === 26 && (
+            <div className="space-y-6">
+              <div>
+                <span className="text-xs uppercase tracking-widest font-semibold text-[#B08D57] block mb-1">
+                  Your Primary Point of Contact
+                </span>
+                <QuestionHeader
+                  title="Who should be our primary point of contact for wedding-related communication and coordination?"
+                  helper="Select one option below. Name and phone / WhatsApp are required."
+                />
+              </div>
+
+              {/* Initial Options: Bride / Groom / Someone else */}
+              <div className="space-y-3">
+                {(["Bride", "Groom", "Someone else"] as const).map((roleOption) => {
+                  const isSelected = answers.primaryContact?.role === roleOption;
+                  return (
+                    <OptionCard
+                      key={roleOption}
+                      label={roleOption}
+                      isSelected={isSelected}
+                      onSelect={() => {
+                        setAnswers((prev) => ({
+                          ...prev,
+                          primaryContact: {
+                            role: roleOption,
+                            side: roleOption === "Someone else" ? (prev.primaryContact?.side ?? "") : "",
+                            gender: roleOption === "Someone else" ? (prev.primaryContact?.gender ?? "") : "",
+                            name: prev.primaryContact?.name ?? "",
+                            phone: prev.primaryContact?.phone ?? "",
+                          },
+                        }));
+                      }}
+                    />
+                  );
+                })}
+              </div>
+
+              {/* Conditional options for "Someone else" */}
+              {answers.primaryContact?.role === "Someone else" && (
+                <div className="space-y-6 pt-2 animate-in fade-in duration-150">
+                  <div className="space-y-3">
+                    <label className="block text-sm font-semibold text-[#1A1A1A]">
+                      Whose side? <span className="text-[#B08D57]">*</span>
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {(["Bride's side", "Groom's side"] as const).map((sideOption) => (
+                        <OptionCard
+                          key={sideOption}
+                          label={sideOption}
+                          isSelected={answers.primaryContact?.side === sideOption}
+                          onSelect={() =>
+                            setAnswers((prev) => ({
+                              ...prev,
+                              primaryContact: {
+                                role: "Someone else",
+                                side: sideOption,
+                                gender: prev.primaryContact?.gender ?? "",
+                                name: prev.primaryContact?.name ?? "",
+                                phone: prev.primaryContact?.phone ?? "",
+                              },
+                            }))
+                          }
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <label className="block text-sm font-semibold text-[#1A1A1A]">
+                      Contact person&apos;s gender? <span className="text-[#B08D57]">*</span>
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {(["Man", "Woman"] as const).map((genderOption) => (
+                        <OptionCard
+                          key={genderOption}
+                          label={genderOption}
+                          isSelected={answers.primaryContact?.gender === genderOption}
+                          onSelect={() =>
+                            setAnswers((prev) => ({
+                              ...prev,
+                              primaryContact: {
+                                role: "Someone else",
+                                side: prev.primaryContact?.side ?? "",
+                                gender: genderOption,
+                                name: prev.primaryContact?.name ?? "",
+                                phone: prev.primaryContact?.phone ?? "",
+                              },
+                            }))
+                          }
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Conditional mandatory contact fields (shown only after an initial option is selected) */}
+              {Boolean(answers.primaryContact?.role) && (
+                <div className="p-4 sm:p-5 bg-[#FAFAFA] border border-[#E8E8E8] rounded-2xl space-y-4 animate-in fade-in duration-150">
+                  <div className="space-y-1.5">
+                    <label
+                      htmlFor="q26-contact-name"
+                      className="block text-sm font-semibold text-[#1A1A1A]"
+                    >
+                      {answers.primaryContact?.role === "Bride"
+                        ? "Bride's name"
+                        : answers.primaryContact?.role === "Groom"
+                        ? "Groom's name"
+                        : "Contact person's name"}{" "}
+                      <span className="text-[#B08D57]">*</span>
+                    </label>
+                    <input
+                      id="q26-contact-name"
+                      type="text"
+                      required
+                      value={answers.primaryContact?.name ?? ""}
+                      onChange={(e) =>
+                        setAnswers((prev) => ({
+                          ...prev,
+                          primaryContact: {
+                            role: prev.primaryContact?.role ?? "",
+                            side: prev.primaryContact?.side ?? "",
+                            gender: prev.primaryContact?.gender ?? "",
+                            name: e.target.value,
+                            phone: prev.primaryContact?.phone ?? "",
+                          },
+                        }))
+                      }
+                      placeholder={
+                        answers.primaryContact?.role === "Bride"
+                          ? "Enter her full name"
+                          : answers.primaryContact?.role === "Groom"
+                          ? "Enter his full name"
+                          : "Enter contact person's full name"
+                      }
+                      className="w-full px-4 py-3 text-[18px] bg-white border border-[#E8E8E8] rounded-xl focus:outline-hidden focus:border-[#1A1A1A]"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label
+                      htmlFor="q26-contact-phone"
+                      className="block text-sm font-semibold text-[#1A1A1A]"
+                    >
+                      Phone number / WhatsApp <span className="text-[#B08D57]">*</span>
+                    </label>
+                    <input
+                      id="q26-contact-phone"
+                      type="tel"
+                      required
+                      value={answers.primaryContact?.phone ?? ""}
+                      onChange={(e) =>
+                        setAnswers((prev) => ({
+                          ...prev,
+                          primaryContact: {
+                            role: prev.primaryContact?.role ?? "",
+                            side: prev.primaryContact?.side ?? "",
+                            gender: prev.primaryContact?.gender ?? "",
+                            name: prev.primaryContact?.name ?? "",
+                            phone: e.target.value,
+                          },
+                        }))
+                      }
+                      placeholder="e.g. +91 98765 43210"
+                      className="w-full px-4 py-3 text-[18px] bg-white border border-[#E8E8E8] rounded-xl focus:outline-hidden focus:border-[#1A1A1A]"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* QUESTION 27: YOUR STORY & JOURNEY */}
+          {currentStep === 27 && (
+            <div className="space-y-6">
+              <div>
+                <span className="text-xs uppercase tracking-widest font-semibold text-[#B08D57] block mb-1">
+                  Your Story
+                </span>
+                <QuestionHeader
+                  title="Last but not least, we'd love to hear your story. How did your journey begin, and what would you love us to know about the two of you?"
+                  helper="Feel free to share anything that makes your relationship special."
+                />
+              </div>
+
+              <VoiceTextarea
+                id="q27-love-story-narrative"
+                value={answers.loveStoryNarrative ?? ""}
+                onChange={(val) =>
+                  setAnswers((prev) => ({ ...prev, loveStoryNarrative: val }))
+                }
+                placeholder="Share how your journey began, milestones along the way, or what makes your bond yours..."
+                rows={6}
+              />
+            </div>
+          )}
+
+          {/* QUESTION 28: IS THERE ANYTHING ELSE YOU'D LIKE TO LET US KNOW? */}
+          {currentStep === 28 && (
             <div className="space-y-6">
               <div>
                 <span className="text-xs uppercase tracking-widest font-semibold text-[#B08D57] block mb-1">
                   One Last Thing
                 </span>
                 <QuestionHeader
-                  title="Is there anything else you would love us to know about you, your story, or your wedding?"
+                  title="Is there anything else you'd like to let us know?"
                   helper="Surprises, family dynamics, specific song requests, or any parting thoughts."
                 />
               </div>
 
               <VoiceTextarea
-                id="q23-one-last-thing-notes"
+                id="q28-one-last-thing-notes"
                 value={answers.q23_oneLastThing?.notes ?? ""}
                 onChange={(val) =>
                   setAnswers((prev) => ({
@@ -1811,11 +2413,21 @@ export default function App() {
             const step11Count = answers.q11_filmFeel.selected?.length || 0;
             const isStep11Incomplete = isStep11 && step11Count < 3;
 
-            const isStep13 = currentStep === 13;
-            const step13Count = answers.q13_tone.selected?.length || 0;
-            const isStep13Incomplete = isStep13 && step13Count < 1;
+            const isStep15 = currentStep === 15;
+            const step15Count = answers.q13_tone.selected?.length || 0;
+            const isStep15Incomplete = isStep15 && step15Count < 1;
 
-            const isIncomplete = isStep11Incomplete || isStep13Incomplete;
+            const isStep26 = currentStep === 26;
+            const isStep26Incomplete = isStep26 && !isPrimaryContactComplete();
+
+            const isIncomplete = isStep11Incomplete || isStep15Incomplete || isStep26Incomplete;
+
+            const step26IncompleteText = !answers.primaryContact?.role
+              ? "Select a primary contact to continue"
+              : answers.primaryContact?.role === "Someone else" &&
+                (!answers.primaryContact?.side || !answers.primaryContact?.gender)
+              ? "Select side, gender & fill contact details"
+              : "Enter contact name & phone number to continue";
 
             return (
               <button
@@ -1829,17 +2441,19 @@ export default function App() {
                 }`}
               >
                 <span>
-                  {editingFromReview
+                  {isStep26Incomplete
+                    ? step26IncompleteText
+                    : editingFromReview
                     ? "Save & Return to Review"
                     : isStep11Incomplete
                     ? `Select at least 3 styles to continue (${step11Count}/3)`
                     : currentStep === 11
                     ? `Continue (${step11Count} selected)`
-                    : isStep13Incomplete
+                    : isStep15Incomplete
                     ? "Select at least 1 tone to continue"
-                    : currentStep === 13
-                    ? `Continue (${step13Count} selected)`
-                    : currentStep === 23
+                    : currentStep === 15
+                    ? `Continue (${step15Count} selected)`
+                    : currentStep === 28
                     ? "Review your answers"
                     : "Continue"}
                 </span>
@@ -1853,15 +2467,17 @@ export default function App() {
           })()}
 
 
-          <div className="flex justify-center">
-            <button
-              type="button"
-              onClick={handleSkip}
-              className="py-2 px-4 text-sm font-medium text-[#5F5F5F] hover:text-[#1A1A1A] transition-colors"
-            >
-              Skip for now
-            </button>
-          </div>
+          {currentStep !== 26 && (
+            <div className="flex justify-center">
+              <button
+                type="button"
+                onClick={handleSkip}
+                className="py-2 px-4 text-sm font-medium text-[#5F5F5F] hover:text-[#1A1A1A] transition-colors"
+              >
+                Skip for now
+              </button>
+            </div>
+          )}
         </div>
       </main>
       <Analytics />

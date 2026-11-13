@@ -1,6 +1,0 @@
-{
-  "summary":  "Implementation plan to add Email & Password login alongside Google Sign-In on the Admin page, fix the Firebase unauthorized-domain error, and update Firestore security rules to allow Firebase Console email accounts.",
-  "updatedAt":  "2026-10-30T04:51:34.505253093Z",
-  "requestFeedback":  true,
-  "userFacing":  true
-}

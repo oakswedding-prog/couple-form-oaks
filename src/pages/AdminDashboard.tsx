@@ -362,28 +362,51 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               return (
                 <div
                   key={couple.id}
-                  className="bg-white border border-[#E5DDD2] hover:border-[#C4A474] rounded-2xl p-4 sm:p-5 shadow-2xs transition-all flex flex-col md:flex-row md:items-center justify-between gap-4"
+                  className="bg-white border border-[#E5DDD2] hover:border-[#C4A474] rounded-2xl p-4 sm:p-5 shadow-2xs transition-all space-y-3.5 md:space-y-0 md:flex md:items-center md:justify-between md:gap-4"
                 >
-                  {/* Left: ID & Names */}
-                  <div className="flex items-start sm:items-center gap-3.5">
-                    <span className="font-mono text-xs font-bold text-[#8C7043] bg-[#FAF7F2] px-2.5 py-1.5 rounded-lg border border-[#E8DFD3] shrink-0">
-                      {couple.displayId}
-                    </span>
-                    <div>
-                      <h2 className="font-cormorant text-xl sm:text-2xl font-semibold text-[#1A1A1A] leading-tight">
-                        {couple.partner1} &amp; {couple.partner2}
-                      </h2>
-                      <div className="text-xs text-[#7A756D] flex flex-wrap items-center gap-2 mt-0.5">
-                        <span className="inline-flex items-center gap-1">
-                          <Clock className="w-3 h-3" />
-                          Submitted{" "}
-                          {new Date(couple.submittedAt).toLocaleDateString("en-US", {
-                            month: "short",
-                            day: "numeric",
-                          })}
-                        </span>
-                        {couple.phone && <span>· 📞 {couple.phone}</span>}
+                  {/* Card Top / Left: ID, Names, and Status Dropdown on mobile */}
+                  <div className="flex items-start justify-between gap-3 md:items-center">
+                    <div className="flex items-start sm:items-center gap-3">
+                      <span className="font-mono text-xs font-bold text-[#8C7043] bg-[#FAF7F2] px-2.5 py-1.5 rounded-lg border border-[#E8DFD3] shrink-0">
+                        {couple.displayId}
+                      </span>
+                      <div>
+                        <h2 className="font-cormorant text-xl sm:text-2xl font-semibold text-[#1A1A1A] leading-tight">
+                          {couple.partner1} &amp; {couple.partner2}
+                        </h2>
+                        <div className="text-xs text-[#7A756D] flex flex-wrap items-center gap-2 mt-0.5">
+                          <span className="inline-flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            Submitted{" "}
+                            {new Date(couple.submittedAt).toLocaleDateString("en-US", {
+                              month: "short",
+                              day: "numeric",
+                            })}
+                          </span>
+                          {couple.phone && <span>· 📞 {couple.phone}</span>}
+                        </div>
                       </div>
+                    </div>
+
+                    {/* Status Dropdown (Top right on mobile) */}
+                    <div className="shrink-0 md:hidden">
+                      <select
+                        value={couple.status}
+                        onChange={(e) =>
+                          handleStatusChange(couple.id, e.target.value as SubmissionStatus)
+                        }
+                        className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border cursor-pointer focus:outline-hidden ${
+                          couple.status === "new"
+                            ? "bg-[#FFF9EE] text-[#B08D57] border-[#E5C388]"
+                            : couple.status === "reviewed"
+                            ? "bg-[#EFF6FF] text-[#2563EB] border-[#BFDBFE]"
+                            : "bg-[#ECFDF5] text-[#059669] border-[#A7F3D0]"
+                        }`}
+                      >
+                        <option value="new">New</option>
+                        <option value="reviewed">Reviewed</option>
+                        <option value="shared">Shared</option>
+                      </select>
                     </div>
                   </div>
 
@@ -409,10 +432,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     )}
                   </div>
 
-                  {/* Right: Status Dropdown & Action Buttons */}
-                  <div className="flex items-center justify-between sm:justify-end gap-3 pt-2 md:pt-0 border-t md:border-t-0 border-[#F0EBE1]">
-                    {/* Status Dropdown */}
-                    <div className="relative">
+                  {/* Actions: Balanced full-width on mobile, flex on desktop */}
+                  <div className="flex items-center gap-2 pt-2 md:pt-0 border-t md:border-t-0 border-[#F0EBE1]">
+                    {/* Status Dropdown (Desktop only) */}
+                    <div className="hidden md:block relative shrink-0">
                       <select
                         value={couple.status}
                         onChange={(e) =>
@@ -436,14 +459,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     <button
                       type="button"
                       onClick={() => onSelectCouple(couple.id)}
-                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-medium text-[#1A1A1A] bg-[#FAF8F5] hover:bg-[#1A1A1A] hover:text-white border border-[#E5DDD2] transition-colors cursor-pointer"
+                      className="flex-1 md:flex-initial inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold text-[#1A1A1A] bg-[#FAF8F5] hover:bg-[#1A1A1A] hover:text-white border border-[#E5DDD2] transition-colors cursor-pointer"
                     >
                       <Eye className="w-3.5 h-3.5" />
                       <span>View</span>
                     </button>
 
                     {/* Download Dropdown Menu */}
-                    <div className="relative">
+                    <div className="relative flex-1 md:flex-initial">
                       <button
                         type="button"
                         onClick={() =>
@@ -451,14 +474,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             activeDownloadMenuId === couple.id ? null : couple.id
                           )
                         }
-                        className="inline-flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-medium text-[#8C7043] bg-white hover:bg-[#FAF7F2] border border-[#E8DFD3] transition-colors cursor-pointer"
+                        className="w-full md:w-auto inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-[#8C7043] bg-white hover:bg-[#FAF7F2] border border-[#E8DFD3] transition-colors cursor-pointer"
                       >
                         <Download className="w-3.5 h-3.5" />
                         <span>Download</span>
                       </button>
 
                       {activeDownloadMenuId === couple.id && (
-                        <div className="absolute right-0 top-full mt-1.5 w-36 bg-white border border-[#E5DDD2] rounded-xl shadow-lg py-1 z-20 animate-in fade-in zoom-in-95 duration-100">
+                        <div className="absolute right-0 top-full mt-1.5 w-40 bg-white border border-[#E5DDD2] rounded-xl shadow-lg py-1 z-30 animate-in fade-in zoom-in-95 duration-100">
                           <button
                             type="button"
                             onClick={() => {
@@ -468,7 +491,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             className="w-full text-left px-3 py-2 text-xs text-[#1A1A1A] hover:bg-[#FAF7F2] flex items-center gap-2 cursor-pointer"
                           >
                             <FileText className="w-3.5 h-3.5 text-red-600" />
-                            <span>PDF</span>
+                            <span>PDF (All Briefs)</span>
                           </button>
                           <button
                             type="button"
@@ -484,6 +507,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         </div>
                       )}
                     </div>
+
                     {/* Delete Button */}
                     <button
                       type="button"
@@ -491,11 +515,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         setDeleteError(null);
                         setSubmissionToDelete(couple);
                       }}
-                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium text-red-600 bg-red-50/70 hover:bg-red-100 hover:text-red-700 border border-red-200/70 transition-colors cursor-pointer"
+                      className="p-2 md:px-3 md:py-2 rounded-xl text-xs font-medium text-red-600 bg-red-50/70 hover:bg-red-100 hover:text-red-700 border border-red-200/70 transition-colors cursor-pointer shrink-0"
                       title={`Delete ${couple.partner1} & ${couple.partner2}'s submission`}
                     >
                       <Trash2 className="w-3.5 h-3.5" />
-                      <span className="hidden sm:inline">Delete</span>
+                      <span className="hidden sm:inline ml-1">Delete</span>
                     </button>
                   </div>
                 </div>

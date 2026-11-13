@@ -8,7 +8,8 @@ import {
   Mic,
   Copy,
   Check,
-  Printer,
+  Download,
+  Loader2,
   RefreshCw,
   Edit2,
   CheckCircle2,
@@ -27,6 +28,7 @@ import {
   generateInterviewQuestions,
   synthesizeInterviewQuestions,
 } from "../utils/interviewQuestionsGenerator.ts";
+import { exportToPdf } from "../utils/exportBrief.ts";
 
 interface CoupleInterviewViewProps {
   questionsText?: string;
@@ -66,8 +68,31 @@ export const CoupleInterviewView: React.FC<CoupleInterviewViewProps> = ({
   const [isRegenerating, setIsRegenerating] = useState<boolean>(false);
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [editedText, setEditedText] = useState<string>(currentText);
-  const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [completedQuestions, setCompletedQuestions] = useState<Record<number, boolean>>({});
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState<boolean>(false);
+
+  const handleDownloadPdf = async () => {
+    if (isDownloadingPdf) return;
+    setIsDownloadingPdf(true);
+    try {
+      const dummyRecord = {
+        id: displayId || "interview",
+        displayId: displayId || "#000",
+        partner1: (answers.partner1 || "Partner 1").trim(),
+        partner2: (answers.partner2 || "Partner 2").trim(),
+        weddingDate: answers.weddingDate || "",
+        answers,
+        interviewQuestions: currentText,
+      } as any;
+      await exportToPdf(dummyRecord);
+    } catch (err) {
+      console.error("Failed to export PDF:", err);
+      window.print();
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
 
   // Auto-save fresh v2 questions to database if v1 was detected on mount
   React.useEffect(() => {
@@ -258,12 +283,17 @@ export const CoupleInterviewView: React.FC<CoupleInterviewViewProps> = ({
 
           <button
             type="button"
-            onClick={() => window.print()}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-medium text-[#7A756D] hover:text-[#1A1A1A] bg-[#FAF8F5] hover:bg-[#F2ECE4] border border-[#E8DFD3] transition-colors cursor-pointer"
-            title="Print Interview Cue Sheet"
+            onClick={handleDownloadPdf}
+            disabled={isDownloadingPdf}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold text-white bg-[#1A1A1A] hover:bg-black transition-colors cursor-pointer shadow-2xs disabled:opacity-60"
+            title="Download Interview Cue Sheet as PDF"
           >
-            <Printer className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Print Cue Sheet</span>
+            {isDownloadingPdf ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Download className="w-3.5 h-3.5" />
+            )}
+            <span>Download PDF</span>
           </button>
         </div>
       </div>

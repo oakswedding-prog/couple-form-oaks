@@ -26,7 +26,10 @@ import {
 import { synthesizeEditorialBrief } from "../utils/editorialBriefGenerator.ts";
 import { synthesizeInterviewQuestions } from "../utils/interviewQuestionsGenerator.ts";
 import { synthesizeCheatSheet } from "../utils/cheatSheetGenerator.ts";
-import { synthesizeCoupleLetter } from "../utils/coupleLetterGenerator.ts";
+import {
+  synthesizeCoupleLetter,
+  upgradeCoupleLetterIfNeeded,
+} from "../utils/coupleLetterGenerator.ts";
 
 /**
  * In-memory cache for resolved Firebase Storage URLs
@@ -108,6 +111,26 @@ export async function resolveSubmissionMedia(record: SubmissionRecord): Promise<
     ans.q12_references.images = resolved;
   }
 
+  // Resolve Q13 wedding outfit images
+  if (Array.isArray(ans.weddingOutfits?.images)) {
+    const resolved: string[] = [];
+    for (const img of ans.weddingOutfits.images) {
+      const url = await resolveMediaUrl(img);
+      if (url) resolved.push(url);
+    }
+    ans.weddingOutfits.images = resolved;
+  }
+
+  // Resolve Q14 decor mood board images
+  if (Array.isArray(ans.decorMoodBoard?.images)) {
+    const resolved: string[] = [];
+    for (const img of ans.decorMoodBoard.images) {
+      const url = await resolveMediaUrl(img);
+      if (url) resolved.push(url);
+    }
+    ans.decorMoodBoard.images = resolved;
+  }
+
   // Resolve Q23 one last thing images
   if (Array.isArray(ans.q23_oneLastThing?.images)) {
     const resolved: string[] = [];
@@ -118,10 +141,21 @@ export async function resolveSubmissionMedia(record: SubmissionRecord): Promise<
     ans.q23_oneLastThing.images = resolved;
   }
 
-  // Auto-synthesize couple letter if not yet generated on earlier submissions
-  if (!cloned.coupleLetter && cloned.answers) {
+  // Auto-synthesize or upgrade legacy couple letter on open
+  if (cloned.answers) {
     try {
-      cloned.coupleLetter = synthesizeCoupleLetter(cloned.answers);
+      const { letter, wasUpgraded } = upgradeCoupleLetterIfNeeded(
+        cloned.coupleLetter,
+        cloned.answers
+      );
+      if (wasUpgraded) {
+        cloned.coupleLetter = letter;
+        if (cloned.id) {
+          updateLocalCacheRecord(cloned.id, (rec) => ({ ...rec, coupleLetter: letter }));
+          const submissionRef = doc(db, "submissions", cloned.id);
+          updateDoc(submissionRef, { coupleLetter: letter }).catch(() => {});
+        }
+      }
     } catch {
       // ignore
     }
@@ -220,6 +254,34 @@ async function processAllImages(
         updatedAnswers.q12_references.images[i] = await uploadMediaFile(
           submissionFolder,
           `reference_${i + 1}`,
+          img
+        );
+      }
+    }
+  }
+
+  // Process Q13 wedding outfit images
+  if (Array.isArray(updatedAnswers.weddingOutfits?.images)) {
+    for (let i = 0; i < updatedAnswers.weddingOutfits.images.length; i++) {
+      const img = updatedAnswers.weddingOutfits.images[i];
+      if (img?.startsWith("data:image/")) {
+        updatedAnswers.weddingOutfits.images[i] = await uploadMediaFile(
+          submissionFolder,
+          `outfit_${i + 1}`,
+          img
+        );
+      }
+    }
+  }
+
+  // Process Q14 decor mood board images
+  if (Array.isArray(updatedAnswers.decorMoodBoard?.images)) {
+    for (let i = 0; i < updatedAnswers.decorMoodBoard.images.length; i++) {
+      const img = updatedAnswers.decorMoodBoard.images[i];
+      if (img?.startsWith("data:image/")) {
+        updatedAnswers.decorMoodBoard.images[i] = await uploadMediaFile(
+          submissionFolder,
+          `decor_${i + 1}`,
           img
         );
       }

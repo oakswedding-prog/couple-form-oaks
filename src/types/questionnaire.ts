@@ -39,16 +39,35 @@ export interface QuestionnaireAnswers {
     images: string[];
     notes: string;
   };
+  weddingOutfits?: {
+    links: string[];
+    images: string[];
+    notes: string;
+  };
+  decorMoodBoard?: {
+    links: string[];
+    images: string[];
+    notes: string;
+  };
   q13_tone: { selected: string[]; other: string };
   q14_moments: { selected: string[]; other: string };
   q15_captureAvoid: { definitelyCapture: string; pleaseAvoid: string };
   q16_nonNegotiables: string;
   q17_emotional: string;
   q18_cameraVersatility: string;
+  choosingOaks?: string;
   q19_whatMattersMost: { selected: string[]; other: string };
   q20_guidanceComfort: string;
   q21_comfortTips: { selected: string[]; notes: string };
   q22_futureFeeling: string;
+  primaryContact?: {
+    role: "Bride" | "Groom" | "Someone else" | "";
+    side?: "Bride's side" | "Groom's side" | "";
+    gender?: "Man" | "Woman" | "";
+    name: string;
+    phone: string;
+  };
+  loveStoryNarrative?: string;
   q23_oneLastThing: { notes: string; images: string[] };
 }
 

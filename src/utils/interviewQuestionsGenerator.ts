@@ -23,7 +23,7 @@ You are creating a natural conversation that helps couples remember, laugh, shar
 The questions should sound like something a thoughtful, curious human would actually ask.
 
 ### 2. THE BIGGEST RULE: NEVER COPY THEIR ANSWERS INTO QUESTIONS
-- Read all 23 questionnaire answers and understand them.
+- Read all 28 questionnaire answers and understand them.
 - Use the information to discover interesting topics, memories and personal details.
 - NEVER paste the couple's original answers into the questions.
 - NEVER place long questionnaire responses inside brackets.
@@ -438,7 +438,7 @@ export async function generateInterviewQuestions(
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 14000);
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
 
     const res = await fetch("/api/generate-interview", {
       method: "POST",

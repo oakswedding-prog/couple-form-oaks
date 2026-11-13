@@ -154,7 +154,37 @@ export function generateBriefSummary(
   }
   lines.push("");
 
-  lines.push(`13. What tone are you expecting to set for your wedding day`);
+  lines.push(`13. Have you finalised your wedding outfits? We'd love to know about your wardrobe plans.`);
+  if (answers.weddingOutfits?.notes) {
+    lines.push(`   • Wardrobe details: ${answers.weddingOutfits.notes}`);
+  }
+  if (answers.weddingOutfits?.links?.length) {
+    lines.push(`   • Links: ${answers.weddingOutfits.links.join(", ")}`);
+  }
+  if (answers.weddingOutfits?.images?.length) {
+    lines.push(`   • Outfit photos/references attached: ${answers.weddingOutfits.images.length} images`);
+  }
+  if (!answers.weddingOutfits?.notes && !answers.weddingOutfits?.links?.length && !answers.weddingOutfits?.images?.length) {
+    lines.push(`   —`);
+  }
+  lines.push("");
+
+  lines.push(`14. Do you have a wedding decor mood board or any visual references for your celebration?`);
+  if (answers.decorMoodBoard?.links?.length) {
+    lines.push(`   • Links: ${answers.decorMoodBoard.links.join(", ")}`);
+  }
+  if (answers.decorMoodBoard?.images?.length) {
+    lines.push(`   • Decor mood images attached: ${answers.decorMoodBoard.images.length} images`);
+  }
+  if (answers.decorMoodBoard?.notes) {
+    lines.push(`   • Decor & colour notes: ${answers.decorMoodBoard.notes}`);
+  }
+  if (!answers.decorMoodBoard?.links?.length && !answers.decorMoodBoard?.images?.length && !answers.decorMoodBoard?.notes) {
+    lines.push(`   —`);
+  }
+  lines.push("");
+
+  lines.push(`15. What tone are you expecting to set for your wedding day`);
   const q13Text = Array.isArray((answers.q13_tone as any)?.selected)
     ? [
         ...((answers.q13_tone as any).selected || []),
@@ -175,39 +205,43 @@ export function generateBriefSummary(
     ...(answers.q14_moments.selected || []),
     answers.q14_moments.other ? `Other: ${answers.q14_moments.other}` : null,
   ].filter(Boolean).join("; ");
-  lines.push(`14. What are the moments you are most looking forward to during your wedding?`);
+  lines.push(`16. What are the moments you are most looking forward to during your wedding?`);
   lines.push(`   ${moments ? moments : '—'}`);
   lines.push("");
 
-  lines.push(`15. Is there anything you definitely want us to capture or avoid?`);
+  lines.push(`17. Is there anything you definitely want us to capture or avoid?`);
   lines.push(`   • Definitely capture: ${answers.q15_captureAvoid.definitelyCapture || '—'}`);
   lines.push(`   • Please avoid: ${answers.q15_captureAvoid.pleaseAvoid || '—'}`);
   lines.push("");
 
-  lines.push(`16. Please mention your non negotiables in your films and photographs?`);
+  lines.push(`18. Please mention your non negotiables in your films and photographs?`);
   lines.push(`   ${answers.q16_nonNegotiables ? answers.q16_nonNegotiables : '—'}`);
   lines.push("");
 
-  lines.push(`17. Who do you think is going to be more emotional during wedding?`);
+  lines.push(`19. Who do you think is going to be more emotional during wedding?`);
   lines.push(`   ${answers.q17_emotional ? answers.q17_emotional : '—'}`);
   lines.push("");
 
   // CHAPTER 5
   lines.push(`CHAPTER 5: WORKING TOGETHER`);
   lines.push(subDivider);
-  lines.push(`18. How versatile are you with the camera?`);
+  lines.push(`20. How versatile are you with the camera?`);
   lines.push(`   ${answers.q18_cameraVersatility ? answers.q18_cameraVersatility : '—'}`);
+  lines.push("");
+
+  lines.push(`21. What mattered most to you when choosing OAKS Wedding to capture your wedding?`);
+  lines.push(`   ${answers.choosingOaks ? answers.choosingOaks : '—'}`);
   lines.push("");
 
   const priorities = [
     ...(answers.q19_whatMattersMost.selected || []),
     answers.q19_whatMattersMost.other ? `Other: ${answers.q19_whatMattersMost.other}` : null,
   ].filter(Boolean).join("; ");
-  lines.push(`19. What matters most to you when choosing a wedding photography and filmmaking team?`);
+  lines.push(`22. What matters most to you when choosing a wedding photography and filmmaking team?`);
   lines.push(`   ${priorities ? priorities : '—'}`);
   lines.push("");
 
-  lines.push(`20. How comfortable are you with being guided or directed during portraits and filming?`);
+  lines.push(`23. How comfortable are you with being guided or directed during portraits and filming?`);
   lines.push(`   ${answers.q20_guidanceComfort ? answers.q20_guidanceComfort : '—'}`);
   lines.push("");
 
@@ -215,18 +249,36 @@ export function generateBriefSummary(
     ...(answers.q21_comfortTips.selected || []),
     answers.q21_comfortTips.notes ? `Note: ${answers.q21_comfortTips.notes}` : null,
   ].filter(Boolean).join("; ");
-  lines.push(`21. Is there anything that would help you feel more comfortable in front of the camera?`);
+  lines.push(`24. Is there anything that would help you feel more comfortable in front of the camera?`);
   lines.push(`   ${comfortTips ? comfortTips : '—'}`);
   lines.push("");
 
-  lines.push(`22. What do you hope to feel when you watch your wedding film years from now?`);
+  lines.push(`25. What do you hope to feel when you watch your wedding film years from now?`);
   lines.push(`   ${answers.q22_futureFeeling ? answers.q22_futureFeeling : '—'}`);
+  lines.push("");
+
+  lines.push(`26. Who should be our primary point of contact for wedding-related communication and coordination?`);
+  if (answers.primaryContact?.role) {
+    lines.push(`   • Role: ${answers.primaryContact.role}`);
+    if (answers.primaryContact.role === "Someone else") {
+      if (answers.primaryContact.side) lines.push(`   • Side: ${answers.primaryContact.side}`);
+      if (answers.primaryContact.gender) lines.push(`   • Gender: ${answers.primaryContact.gender}`);
+    }
+    lines.push(`   • Name: ${answers.primaryContact.name || '—'}`);
+    lines.push(`   • Phone / WhatsApp: ${answers.primaryContact.phone || '—'}`);
+  } else {
+    lines.push(`   —`);
+  }
   lines.push("");
 
   // ONE LAST THING
   lines.push(`ONE LAST THING`);
   lines.push(subDivider);
-  lines.push(`23. Is there anything else you would love us to know about you, your story, or your wedding?`);
+  lines.push(`27. Last but not least, we'd love to hear your story. How did your journey begin, and what would you love us to know about the two of you?`);
+  lines.push(`   ${answers.loveStoryNarrative ? answers.loveStoryNarrative : '—'}`);
+  lines.push("");
+
+  lines.push(`28. Is there anything else you'd like to let us know?`);
   lines.push(`   ${answers.q23_oneLastThing.notes ? answers.q23_oneLastThing.notes : '—'}`);
   if (answers.q23_oneLastThing.images?.length) {
     lines.push(`   • Attached photos: ${answers.q23_oneLastThing.images.length} photos`);

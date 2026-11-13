@@ -53,6 +53,29 @@ export const EditorialBriefView: React.FC<EditorialBriefViewProps> = ({
   const [isRegenerating, setIsRegenerating] = useState<boolean>(false);
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [editedText, setEditedText] = useState<string>(briefText);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState<boolean>(false);
+
+  const handleDownloadPdf = async () => {
+    if (isDownloadingPdf) return;
+    setIsDownloadingPdf(true);
+    try {
+      const dummyRecord = {
+        id: displayId || "brief",
+        displayId: displayId || "#000",
+        partner1: (answers.partner1 || "Partner 1").trim(),
+        partner2: (answers.partner2 || "Partner 2").trim(),
+        weddingDate: weddingDate || "",
+        answers,
+        editorialBrief: briefText,
+      } as any;
+      await exportToPdf(dummyRecord);
+    } catch (err) {
+      console.error("Failed to export PDF:", err);
+      window.print();
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
 
   // If outdated brief was upgraded on mount, persist it to storage
   React.useEffect(() => {
@@ -256,12 +279,17 @@ export const EditorialBriefView: React.FC<EditorialBriefViewProps> = ({
 
           <button
             type="button"
-            onClick={() => window.print()}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-medium text-[#7A756D] hover:text-[#1A1A1A] bg-[#FAF8F5] hover:bg-[#F2ECE4] border border-[#E8DFD3] transition-colors cursor-pointer"
-            title="Print Brief"
+            onClick={handleDownloadPdf}
+            disabled={isDownloadingPdf}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold text-white bg-[#1A1A1A] hover:bg-black transition-colors cursor-pointer shadow-2xs disabled:opacity-60"
+            title="Download Editorial Brief as PDF"
           >
-            <Printer className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Print</span>
+            {isDownloadingPdf ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Download className="w-3.5 h-3.5" />
+            )}
+            <span>Download PDF</span>
           </button>
         </div>
       </div>
