@@ -213,7 +213,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onBackToForm }) => {
                 <span>{isLoading && !isSubmittingEmail ? "Signing in..." : "Sign in with Google"}</span>
               </button>
               <p className="text-[11px] text-[#7A756D] leading-normal">
-                Gmail team members can click above to log in instantly without typing a password.
+                Authorized studio team accounts can click above to log in directly with Google without typing a password.
               </p>
             </div>
 
@@ -247,7 +247,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onBackToForm }) => {
                     setResetSuccessMessage(null);
                     setResetErrorMessage(null);
                   }}
-                  placeholder="e.g. rahul.ratna88@gmail.com"
+                  placeholder="e.g. mywedding@oakswedding.com"
                   required
                   autoComplete="email"
                   className="w-full px-4 py-3 font-cormorant text-[17px] text-[#1A1A1A] placeholder:text-[#5F5F5F]/40 bg-[#FAF8F5] border border-[#E5DDD2] rounded-xl focus:outline-hidden focus:border-[#1A1A1A] focus:ring-1 focus:ring-[#B08D57] shadow-2xs"

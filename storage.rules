@@ -2,11 +2,21 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
 
-    // Helper: Checks if the user is authenticated and in the Firestore 'admins' collection
+    // Helper: Checks if the user is authenticated and authorized via verified studio email or 'admins' collection
     function isAdmin() {
       return request.auth != null
         && request.auth.token.email != null
-        && firestore.exists(/databases/(default)/documents/admins/$(request.auth.token.email.lower()));
+        && (
+          (
+            request.auth.token.email_verified == true
+            && request.auth.token.email.lower() in [
+              'rahulratna88@gmail.com',
+              'mywedding@oakswedding.com',
+              'oaksoperations@gmail.com'
+            ]
+          )
+          || firestore.exists(/databases/(default)/documents/admins/$(request.auth.token.email.lower()))
+        );
     }
 
     // Media for questionnaire submissions (family photos, tree photo, mood references):

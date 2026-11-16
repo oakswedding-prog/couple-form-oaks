@@ -37,8 +37,8 @@ import {
 } from "../types/questionnaire.ts";
 import {
   CHECKLIST_EVENTS,
-  WEDDING_PRODUCTION_CHECKLIST,
-  TOTAL_CHECKLIST_ITEMS,
+  getChecklistSectionsForEvent,
+  getTotalChecklistItemsForEvent,
   buildSubmittedCustomEventData,
   buildSubmittedStandardEventData,
   buildUpdatedChecklistData,
@@ -339,17 +339,31 @@ export const AdminWeddingChecklist: React.FC<AdminWeddingChecklistProps> = ({
   const activeSubmission = activeEventObj.submission;
 
   const eventProgressById = useMemo(() => {
-    const map: Record<string, { gotIt: number; missed: number; remaining: number }> = {};
+    const map: Record<
+      string,
+      { gotIt: number; missed: number; remaining: number; total: number }
+    > = {};
     for (const ev of allEvents) {
-      map[ev.id] = countChecklistProgress(ev.items);
+      map[ev.id] = countChecklistProgress(ev.items, ev.id);
     }
     return map;
   }, [allEvents]);
 
+  const activeChecklistSections = useMemo(
+    () => getChecklistSectionsForEvent(activeEventObj.id),
+    [activeEventObj.id]
+  );
+
+  const activeTotalItems = useMemo(
+    () => getTotalChecklistItemsForEvent(activeEventObj.id),
+    [activeEventObj.id]
+  );
+
   const counts = eventProgressById[activeEventObj.id] ?? {
     gotIt: 0,
     missed: 0,
-    remaining: TOTAL_CHECKLIST_ITEMS,
+    remaining: activeTotalItems,
+    total: activeTotalItems,
   };
 
   const fileTotals = useMemo(() => summarizeFileDetails(fileDetails), [fileDetails]);
@@ -909,14 +923,16 @@ export const AdminWeddingChecklist: React.FC<AdminWeddingChecklistProps> = ({
       >
         {allEvents.map((ev) => {
           const isActive = activeEventObj.id === ev.id;
+          const evTotal = getTotalChecklistItemsForEvent(ev.id);
           const evProgress = eventProgressById[ev.id] ?? {
             gotIt: 0,
             missed: 0,
-            remaining: TOTAL_CHECKLIST_ITEMS,
+            remaining: evTotal,
+            total: evTotal,
           };
           const evCountLabel =
             mode === "checklist"
-              ? `${evProgress.gotIt + evProgress.missed}/${TOTAL_CHECKLIST_ITEMS}`
+              ? `${evProgress.gotIt + evProgress.missed}/${evProgress.total}`
               : `${ev.fileDetails.length}`;
 
           return (
@@ -1192,7 +1208,7 @@ export const AdminWeddingChecklist: React.FC<AdminWeddingChecklistProps> = ({
                     ❌ Missed: {counts.missed}
                   </span>
                   <span className="text-[#7A756D]">
-                    Remaining: {counts.remaining} / {TOTAL_CHECKLIST_ITEMS}
+                    Remaining: {counts.remaining} / {activeTotalItems}
                   </span>
                 </div>
 
@@ -1355,7 +1371,7 @@ export const AdminWeddingChecklist: React.FC<AdminWeddingChecklistProps> = ({
                 />
                 <span>Production Checklist</span>
                 <span className="tabular-nums opacity-80">
-                  ({counts.gotIt + counts.missed}/{TOTAL_CHECKLIST_ITEMS})
+                  ({counts.gotIt + counts.missed}/{activeTotalItems})
                 </span>
               </button>
 
@@ -1475,7 +1491,7 @@ export const AdminWeddingChecklist: React.FC<AdminWeddingChecklistProps> = ({
 
                 {/* Checklist Sections */}
                 <div className="space-y-6">
-                  {WEDDING_PRODUCTION_CHECKLIST.map((section) => {
+                  {activeChecklistSections.map((section) => {
                     const sectionGotIt = section.items.filter(
                       (it) => checklistItems[it.id] === "got_it"
                     ).length;
@@ -2104,7 +2120,7 @@ export const AdminWeddingChecklist: React.FC<AdminWeddingChecklistProps> = ({
                 <span className="font-medium text-[#1A1A1A]">
                   {counts.gotIt} got it · {counts.missed} missed
                   {counts.remaining > 0 ? ` · ${counts.remaining} unmarked` : ""} (
-                  {counts.gotIt + counts.missed}/{TOTAL_CHECKLIST_ITEMS})
+                  {counts.gotIt + counts.missed}/{activeTotalItems})
                 </span>
               </div>
               <div className="flex items-center justify-between gap-2">

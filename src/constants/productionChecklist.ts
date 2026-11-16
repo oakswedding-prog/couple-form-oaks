@@ -73,6 +73,85 @@ export const WEDDING_PRODUCTION_CHECKLIST: ChecklistSectionDef[] = [
   },
 ];
 
+const TECH_RIDERS_ITEMS: ChecklistItemDef[] = [
+  { id: "tech_camera_time_reset", label: "Camera time reset" },
+  { id: "tech_confirm_shooting_profile", label: "Confirm shooting profile" },
+  { id: "tech_audio_on_track", label: "Audio recording devices on track" },
+];
+
+const CELEBRATION_VENUE_DETAILS_ITEMS: ChecklistItemDef[] = [
+  { id: "venue_establishing_shots", label: "Complete venue establishing shots." },
+  { id: "venue_stage_and_backdrop", label: "Stage and backdrop." },
+  { id: "venue_floral_and_lighting", label: "Floral and lighting details." },
+  { id: "venue_guest_seating_arrangements", label: "Guest seating arrangements." },
+  { id: "venue_table_settings_food", label: "Table settings and food arrangements." },
+  { id: "venue_reception_ambience_before_guests", label: "Reception ambience before guests arrive." },
+];
+
+const MANDATORY_FAMILY_PORTRAITS_ITEMS: ChecklistItemDef[] = [
+  { id: "portrait_bride_parents", label: "Bride with parents." },
+  { id: "portrait_groom_parents", label: "Groom with parents." },
+  { id: "portrait_couple_both_parents", label: "Bride and groom with both sets of parents." },
+  { id: "portrait_bride_siblings", label: "Bride with siblings." },
+  { id: "portrait_groom_siblings", label: "Groom with siblings." },
+  { id: "portrait_couple_grandparents", label: "Couple with grandparents." },
+  { id: "portrait_couple_immediate_family", label: "Couple with immediate family." },
+  { id: "portrait_couple_extended_family", label: "Couple with extended family." },
+  { id: "portrait_couple_friends", label: "Couple with friends." },
+  { id: "portrait_complete_family_both_sides", label: "Complete family photograph from both sides." },
+];
+
+export const RECEPTION_PRODUCTION_CHECKLIST: ChecklistSectionDef[] = [
+  {
+    id: "tech_riders",
+    title: "Tech riders",
+    items: TECH_RIDERS_ITEMS,
+  },
+  {
+    id: "venue_details",
+    title: "Venue & Details",
+    items: CELEBRATION_VENUE_DETAILS_ITEMS,
+  },
+  {
+    id: "mandatory_family_portraits",
+    title: "Mandatory Family Portraits",
+    items: MANDATORY_FAMILY_PORTRAITS_ITEMS,
+  },
+];
+
+export const SANGEET_PRODUCTION_CHECKLIST: ChecklistSectionDef[] = [
+  {
+    id: "tech_riders",
+    title: "Tech riders",
+    items: TECH_RIDERS_ITEMS,
+  },
+  {
+    id: "venue_details",
+    title: "Venue & Details",
+    items: CELEBRATION_VENUE_DETAILS_ITEMS,
+  },
+  {
+    id: "mandatory_family_portraits",
+    title: "Mandatory Family Portraits",
+    items: MANDATORY_FAMILY_PORTRAITS_ITEMS,
+  },
+];
+
+export function getChecklistSectionsForEvent(
+  eventId: string
+): ChecklistSectionDef[] {
+  if (eventId === "reception") return RECEPTION_PRODUCTION_CHECKLIST;
+  if (eventId === "sangeet") return SANGEET_PRODUCTION_CHECKLIST;
+  return WEDDING_PRODUCTION_CHECKLIST;
+}
+
+export function getTotalChecklistItemsForEvent(eventId: string): number {
+  return getChecklistSectionsForEvent(eventId).reduce(
+    (sum, section) => sum + section.items.length,
+    0
+  );
+}
+
 export const TOTAL_CHECKLIST_ITEMS = WEDDING_PRODUCTION_CHECKLIST.reduce(
   (sum, section) => sum + section.items.length,
   0
@@ -199,12 +278,16 @@ export function getEventUpdatedAt(
 }
 
 export function countChecklistProgress(
-  items: Record<string, ChecklistItemStatus>
-): { gotIt: number; missed: number; remaining: number } {
+  items: Record<string, ChecklistItemStatus>,
+  eventId: string = "wedding"
+): { gotIt: number; missed: number; remaining: number; total: number } {
+  const sections = getChecklistSectionsForEvent(eventId);
+  let total = 0;
   let gotIt = 0;
   let missed = 0;
-  for (const section of WEDDING_PRODUCTION_CHECKLIST) {
+  for (const section of sections) {
     for (const item of section.items) {
+      total += 1;
       const status = items[item.id];
       if (status === "got_it") gotIt += 1;
       else if (status === "missed") missed += 1;
@@ -213,7 +296,8 @@ export function countChecklistProgress(
   return {
     gotIt,
     missed,
-    remaining: Math.max(0, TOTAL_CHECKLIST_ITEMS - gotIt - missed),
+    remaining: Math.max(0, total - gotIt - missed),
+    total,
   };
 }
 
@@ -223,21 +307,24 @@ export function countChecklistProgress(
  * only unmarked items prevent event submission.
  */
 export function isChecklistCompleteForSubmission(
-  items: Record<string, ChecklistItemStatus>
+  items: Record<string, ChecklistItemStatus>,
+  eventId: string = "wedding"
 ): {
   isComplete: boolean;
   gotIt: number;
   missed: number;
   completed: number;
   remaining: number;
+  total: number;
 } {
-  const { gotIt, missed, remaining } = countChecklistProgress(items);
+  const { gotIt, missed, remaining, total } = countChecklistProgress(items, eventId);
   return {
     isComplete: remaining === 0,
     gotIt,
     missed,
     completed: gotIt + missed,
     remaining,
+    total,
   };
 }
 

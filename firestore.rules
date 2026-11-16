@@ -2,11 +2,25 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper: Checks if the user is authenticated and their email exists in the 'admins' collection
+    // Helper: Checks if the user is authenticated and authorized either via
+    // verified studio team email or an active document in the 'admins' collection.
     function isAdmin() {
       return request.auth != null
         && request.auth.token.email != null
-        && exists(/databases/$(database)/documents/admins/$(request.auth.token.email.lower()));
+        && (
+          (
+            request.auth.token.email_verified == true
+            && request.auth.token.email.lower() in [
+              'rahulratna88@gmail.com',
+              'mywedding@oakswedding.com',
+              'oaksoperations@gmail.com'
+            ]
+          )
+          || (
+            exists(/databases/$(database)/documents/admins/$(request.auth.token.email.lower()))
+            && get(/databases/$(database)/documents/admins/$(request.auth.token.email.lower())).data.get('active', true) != false
+          )
+        );
     }
 
     // Helper: Checks whether an immutable event submission receipt exists for this eventId

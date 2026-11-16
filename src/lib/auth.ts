@@ -12,8 +12,19 @@ import {
   signOut as fbSignOut,
   onAuthStateChanged,
 } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 import { auth, googleProvider, db } from "./firebase.ts";
+import {
+  AUTHORIZED_ADMIN_EMAILS,
+  normalizeAdminEmail,
+  isAllowlistedAdminEmail,
+} from "./adminAllowlist.ts";
+
+export {
+  AUTHORIZED_ADMIN_EMAILS,
+  normalizeAdminEmail,
+  isAllowlistedAdminEmail,
+};
 
 export interface AdminAuthState {
   user: User | null;
@@ -27,20 +38,53 @@ export interface AdminAuthState {
   signOut: () => Promise<void>;
 }
 
+/**
+ * Ensures all built-in studio admin accounts exist in Firestore's `admins` collection
+ * whenever an admin with Firestore write access is signed in.
+ */
+async function syncBuiltInAdmins(actingAdminEmail: string): Promise<void> {
+  const cleanActing = normalizeAdminEmail(actingAdminEmail);
+  if (!cleanActing) return;
+
+  await Promise.all(
+    AUTHORIZED_ADMIN_EMAILS.map(async (targetEmail) => {
+      try {
+        const targetRef = doc(db, "admins", targetEmail);
+        const snap = await getDoc(targetRef);
+        if (!snap.exists()) {
+          await setDoc(targetRef, {
+            email: targetEmail,
+            active: true,
+            role: "admin",
+            addedBy: cleanActing,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      } catch {
+        // Ignore if current session lacks write access or offline
+      }
+    })
+  );
+}
+
 export async function checkIsAdmin(email: string | null | undefined): Promise<boolean> {
-  if (!email) return false;
+  const cleanEmail = normalizeAdminEmail(email);
+  if (!cleanEmail) return false;
   try {
-    const adminRef = doc(db, "admins", email.toLowerCase().trim());
+    const adminRef = doc(db, "admins", cleanEmail);
     const snapshot = await getDoc(adminRef);
     if (snapshot.exists()) {
       const data = snapshot.data();
-      // If doc exists and active is not explicitly false, allow access
-      return data?.active !== false;
+      // Allow explicit deactivation unless it's a built-in team account
+      if (data?.active === false && !isAllowlistedAdminEmail(cleanEmail)) {
+        return false;
+      }
+      return data?.active !== false || isAllowlistedAdminEmail(cleanEmail);
     }
-    return false;
+    return isAllowlistedAdminEmail(cleanEmail);
   } catch (err) {
     console.error("Error verifying admin status:", err);
-    return false;
+    return isAllowlistedAdminEmail(cleanEmail);
   }
 }
 
@@ -62,6 +106,7 @@ export function useAdminAuth(): AdminAuthState {
             setError(`Account ${currentUser.email} does not have admin permissions.`);
           } else {
             setError(null);
+            syncBuiltInAdmins(currentUser.email).catch(() => {});
           }
         } catch (err: any) {
           setError(err?.message || "Failed to verify administrator privileges.");
@@ -89,6 +134,8 @@ export function useAdminAuth(): AdminAuthState {
         setIsAdmin(verified);
         if (!verified) {
           setError(`Account ${result.user.email} does not have admin permissions.`);
+        } else {
+          syncBuiltInAdmins(result.user.email).catch(() => {});
         }
       }
     } catch (err: any) {
@@ -96,6 +143,14 @@ export function useAdminAuth(): AdminAuthState {
         const currentHost = typeof window !== "undefined" ? window.location.hostname : "this domain";
         setError(
           `Domain not authorized in Firebase (${currentHost}). In Firebase Console, go to Authentication > Settings > Authorized domains and add "${currentHost}" (or use Email & Password below).`
+        );
+      } else if (err?.code === "auth/account-exists-with-different-credential") {
+        setError(
+          "An account with this email already exists with a different sign-in method. Please sign in with Email & Password below or reset your password."
+        );
+      } else if (err?.code === "auth/popup-blocked") {
+        setError(
+          "Sign-in popup was blocked by your browser. Please allow popups for this site and click Sign in with Google again."
         );
       } else if (err?.code !== "auth/popup-closed-by-user") {
         setError(err?.message || "Google Sign In was not completed.");
@@ -110,7 +165,7 @@ export function useAdminAuth(): AdminAuthState {
     setError(null);
     try {
       // Clean email: trim, lowercase, remove invisible unicode whitespace
-      const cleanEmail = email.trim().toLowerCase().replace(/[\u200B-\u200D\uFEFF]/g, "");
+      const cleanEmail = normalizeAdminEmail(email);
       // Clean password: remove trailing newlines, carriage returns, zero-width or non-breaking spaces
       const trimmedPassword = password.replace(/[\r\n\u200B-\u200D\uFEFF]/g, "").trim();
 
@@ -141,6 +196,8 @@ export function useAdminAuth(): AdminAuthState {
         setIsAdmin(verified);
         if (!verified) {
           setError(`Account ${result.user.email} does not have admin permissions in the database.`);
+        } else {
+          syncBuiltInAdmins(result.user.email).catch(() => {});
         }
       }
     } catch (err: any) {

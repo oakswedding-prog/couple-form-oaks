@@ -76,9 +76,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         }
       } catch (err: any) {
         if (isMounted) {
+          const isPermissionDenied =
+            err?.code === "permission-denied" ||
+            String(err?.message || "").toLowerCase().includes("insufficient permissions");
           setError(
-            err?.message ||
-              "Could not load submissions. Please check your Firestore security rules and network connection."
+            isPermissionDenied
+              ? "Firestore denied read access for this account. Make sure the updated firestore.rules are published in Firebase Console (or sign in once as rahulratna88@gmail.com to sync team admin permissions automatically)."
+              : err?.message ||
+                  "Could not load submissions. Please check your Firestore security rules and network connection."
           );
         }
       } finally {

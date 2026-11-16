@@ -23,7 +23,11 @@ import {
 import {
   CHECKLIST_EVENTS,
   WEDDING_PRODUCTION_CHECKLIST,
+  RECEPTION_PRODUCTION_CHECKLIST,
+  SANGEET_PRODUCTION_CHECKLIST,
   TOTAL_CHECKLIST_ITEMS,
+  getChecklistSectionsForEvent,
+  getTotalChecklistItemsForEvent,
   getEventChecklistItems,
   getEventFileDetails,
   buildUpdatedChecklistData,
@@ -48,6 +52,11 @@ import {
   validateQuestionStep,
   getMissingMandatoryQuestions,
 } from "./questionnaireValidation.ts";
+import {
+  AUTHORIZED_ADMIN_EMAILS,
+  normalizeAdminEmail,
+  isAllowlistedAdminEmail,
+} from "../lib/adminAllowlist.ts";
 import type {
   ChecklistItemStatus,
   CustomProductionEvent,
@@ -1197,6 +1206,113 @@ test("Q11 and Q15 enforce max 3 selection cap where users must uncheck one optio
     ["A", "B", "C"]
   );
 });
+
+test("Reception and Sangeet checklists define dedicated Tech riders, Venue & Details (6 items), and Mandatory Family Portraits (10 items) and isolate progress", () => {
+  const receptionSections = getChecklistSectionsForEvent("reception");
+  const sangeetSections = getChecklistSectionsForEvent("sangeet");
+  const weddingSections = getChecklistSectionsForEvent("wedding");
+
+  assert.equal(receptionSections, RECEPTION_PRODUCTION_CHECKLIST);
+  assert.equal(sangeetSections, SANGEET_PRODUCTION_CHECKLIST);
+  assert.equal(weddingSections, WEDDING_PRODUCTION_CHECKLIST);
+
+  assert.equal(getTotalChecklistItemsForEvent("reception"), 19);
+  assert.equal(getTotalChecklistItemsForEvent("sangeet"), 19);
+  assert.equal(getTotalChecklistItemsForEvent("wedding"), 17);
+
+  for (const sections of [receptionSections, sangeetSections]) {
+    assert.deepEqual(
+      sections.map((s) => s.title),
+      ["Tech riders", "Venue & Details", "Mandatory Family Portraits"]
+    );
+    assert.deepEqual(
+      sections[0].items.map((it) => it.label),
+      [
+        "Camera time reset",
+        "Confirm shooting profile",
+        "Audio recording devices on track",
+      ]
+    );
+    assert.deepEqual(
+      sections[1].items.map((it) => it.label),
+      [
+        "Complete venue establishing shots.",
+        "Stage and backdrop.",
+        "Floral and lighting details.",
+        "Guest seating arrangements.",
+        "Table settings and food arrangements.",
+        "Reception ambience before guests arrive.",
+      ]
+    );
+    assert.equal(sections[2].items.length, 10);
+  }
+
+  // Marking Reception's 6 Venue & Details items does not affect Sangeet or Wedding Day
+  const receptionOnly = buildUpdatedChecklistData(
+    undefined,
+    "reception",
+    {
+      venue_stage_and_backdrop: "got_it",
+      venue_reception_ambience_before_guests: "missed",
+    },
+    [],
+    [],
+    "admin@oakswedding.com"
+  );
+
+  const recProgress = countChecklistProgress(
+    getEventChecklistItems(receptionOnly, "reception"),
+    "reception"
+  );
+  assert.equal(recProgress.total, 19);
+  assert.equal(recProgress.gotIt, 1);
+  assert.equal(recProgress.missed, 1);
+  assert.equal(recProgress.remaining, 17);
+
+  const sangeetProgress = countChecklistProgress(
+    getEventChecklistItems(receptionOnly, "sangeet"),
+    "sangeet"
+  );
+  assert.equal(sangeetProgress.total, 19);
+  assert.equal(sangeetProgress.gotIt, 0);
+  assert.equal(sangeetProgress.missed, 0);
+  assert.equal(sangeetProgress.remaining, 19);
+
+  // Full Reception completion checks all 19 Reception items
+  const allReceptionItems: Record<string, ChecklistItemStatus> = {};
+  for (const section of RECEPTION_PRODUCTION_CHECKLIST) {
+    for (const item of section.items) {
+      allReceptionItems[item.id] = "got_it";
+    }
+  }
+  const completeReception = isChecklistCompleteForSubmission(
+    allReceptionItems,
+    "reception"
+  );
+  assert.equal(completeReception.isComplete, true);
+  assert.equal(completeReception.total, 19);
+  assert.equal(completeReception.remaining, 0);
+});
+
+test("admin allowlist authorizes rahulratna88@gmail.com, mywedding@oakswedding.com, and Oaksoperations@gmail.com case-insensitively", () => {
+  assert.deepEqual([...AUTHORIZED_ADMIN_EMAILS], [
+    "rahulratna88@gmail.com",
+    "mywedding@oakswedding.com",
+    "oaksoperations@gmail.com",
+  ]);
+
+  assert.equal(isAllowlistedAdminEmail("rahulratna88@gmail.com"), true);
+  assert.equal(isAllowlistedAdminEmail("mywedding@oakswedding.com"), true);
+  assert.equal(isAllowlistedAdminEmail("Oaksoperations@gmail.com"), true);
+  assert.equal(isAllowlistedAdminEmail("  MYWEDDING@OAKSWEDDING.COM\u200B "), true);
+  assert.equal(normalizeAdminEmail(" Oaksoperations@gmail.com "), "oaksoperations@gmail.com");
+
+  assert.equal(isAllowlistedAdminEmail("unknown@gmail.com"), false);
+  assert.equal(isAllowlistedAdminEmail(""), false);
+  assert.equal(isAllowlistedAdminEmail(null), false);
+});
+
+
 
 
 
