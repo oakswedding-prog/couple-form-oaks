@@ -87,7 +87,7 @@ export async function saveOnlineDraft(input: SaveOnlineDraftInput): Promise<void
   });
 
   const draftRef = doc(db, "drafts", input.resumeToken);
-  await setDoc(draftRef, payload, { merge: true });
+  await setDoc(draftRef, payload);
 }
 
 /**
@@ -175,10 +175,10 @@ export async function markDraftSubmitted(
 }
 
 /**
- * Admin: Lists all drafts from Firestore (sorted by most recently updated first),
- * returning unfinished drafts so the studio can follow up with couples.
+ * Admin: Lists ALL drafts from Firestore (both unfinished and submitted) so the admin
+ * dashboard can look up resume links for existing submissions as well as unfinished drafts.
  */
-export async function getAdminDrafts(): Promise<DraftRecord[]> {
+export async function getAllAdminDrafts(): Promise<DraftRecord[]> {
   const snap = await getDocs(collection(db, "drafts"));
   const drafts: DraftRecord[] = [];
   snap.forEach((docSnap) => {
@@ -189,9 +189,16 @@ export async function getAdminDrafts(): Promise<DraftRecord[]> {
     });
   });
 
-  return drafts
-    .filter((d) => d.status !== "submitted")
-    .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+  return drafts.sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+}
+
+/**
+ * Admin: Lists unfinished drafts from Firestore (sorted by most recently updated first),
+ * so the studio can follow up with couples who have not tapped Send yet.
+ */
+export async function getAdminDrafts(): Promise<DraftRecord[]> {
+  const all = await getAllAdminDrafts();
+  return all.filter((d) => d.status !== "submitted");
 }
 
 /**

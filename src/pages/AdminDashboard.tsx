@@ -25,6 +25,9 @@ import {
   Image as ImageIcon,
   FileWarning,
   FileClock,
+  Link2,
+  Check,
+  Info,
 } from "lucide-react";
 import {
   DraftRecord,
@@ -41,12 +44,14 @@ import {
   updateSubmissionStatus,
   deleteSubmission,
   getSubmissionDeliveryState,
+  getSubmissionAttentionReasons,
+  ensureResumeLinkForSubmission,
   sortSubmissionsNewestFirst,
   listOrphanedStorageFolders,
   recoverOrphanedStorageFolder,
   recoverDraftAsSubmission,
 } from "../lib/submissions.ts";
-import { getAdminDrafts, deleteAdminDraft } from "../lib/drafts.ts";
+import { getAllAdminDrafts, deleteAdminDraft } from "../lib/drafts.ts";
 import { getSubmissionErrors } from "../lib/errorLogger.ts";
 import { exportToPdf, exportToDocx } from "../utils/exportBrief.ts";
 import { STUDIO_NAME, STUDIO_LOGO_URL } from "../constants.ts";
@@ -113,12 +118,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Active dashboard view tab
   const [activeView, setActiveView] = useState<DashboardView>("submissions");
 
-  // Online drafts ("Missing or unfinished")
+  // Online drafts ("Missing or unfinished") + all drafts for admin resume-link lookup
   const [drafts, setDrafts] = useState<DraftRecord[]>([]);
+  const [allDrafts, setAllDrafts] = useState<DraftRecord[]>([]);
   const [draftsLoading, setDraftsLoading] = useState<boolean>(false);
   const [draftsError, setDraftsError] = useState<string | null>(null);
   const [recoveringDraftId, setRecoveringDraftId] = useState<string | null>(null);
   const [deletingDraftId, setDeletingDraftId] = useState<string | null>(null);
+
+  // "Needs attention" click/hover reasons popover & admin Copy Resume Link feedback
+  const [openReasonsId, setOpenReasonsId] = useState<string | null>(null);
+  const [copyingResumeId, setCopyingResumeId] = useState<string | null>(null);
+  const [copiedResumeId, setCopiedResumeId] = useState<string | null>(null);
 
   // Error log ("Errors")
   const [errorLogs, setErrorLogs] = useState<SubmissionErrorRecord[]>([]);
@@ -216,8 +227,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setDraftsLoading(true);
     setDraftsError(null);
     try {
-      const list = await getAdminDrafts();
-      setDrafts(list);
+      const all = await getAllAdminDrafts();
+      setAllDrafts(all);
+      setDrafts(all.filter((d) => d.status !== "submitted"));
     } catch (err: any) {
       setDraftsError(
         err?.code === "permission-denied"
@@ -251,9 +263,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     let active = true;
     const timer = window.setTimeout(() => {
       if (!active) return;
-      getAdminDrafts()
-        .then((list) => {
-          if (active) setDrafts(list);
+      getAllAdminDrafts()
+        .then((all) => {
+          if (active) {
+            setAllDrafts(all);
+            setDrafts(all.filter((d) => d.status !== "submitted"));
+          }
         })
         .catch(() => {});
       getSubmissionErrors(100)
@@ -261,7 +276,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           if (active) setErrorLogs(list);
         })
         .catch(() => {});
-    }, 600);
+    }, 450);
     return () => {
       active = false;
       window.clearTimeout(timer);
@@ -286,6 +301,42 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       await updateSubmissionStatus(id, newStatus);
     } catch (err) {
       console.error("Failed to update status on server:", err);
+    }
+  };
+
+  // Admin-only: copy a working resume link for a couple so they can re-add missing photos
+  const handleCopyCoupleResumeLink = async (couple: SubmissionRecord) => {
+    setCopyingResumeId(couple.id);
+    try {
+      const { token, url } = await ensureResumeLinkForSubmission(couple, allDrafts);
+      setSubmissions((prev) =>
+        prev.map((item) =>
+          item.id === couple.id ? { ...item, resumeToken: token } : item
+        )
+      );
+      try {
+        await navigator.clipboard.writeText(url);
+      } catch {
+        const ta = document.createElement("textarea");
+        ta.value = url;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      setCopiedResumeId(couple.id);
+      setRecoveryNotice(
+        `Copied resume link for ${couple.partner1} & ${couple.partner2}. You can paste and send it to them so they can add any missing photos.`
+      );
+      window.setTimeout(() => {
+        setCopiedResumeId((cur) => (cur === couple.id ? null : cur));
+      }, 2800);
+    } catch (err: any) {
+      setError(err?.message || "Could not prepare resume link for this couple.");
+    } finally {
+      setCopyingResumeId(null);
     }
   };
 
@@ -458,7 +509,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       else if (effectiveStatus === "reviewed") nextReviewed++;
       else if (effectiveStatus === "shared") nextShared++;
 
-      const deliveryState = getSubmissionDeliveryState(s);
+      const deliveryState = getSubmissionDeliveryState(s, errorLogs);
       if (deliveryState === "photos_pending") nextPendingPhotos++;
       if (deliveryState === "needs_attention") nextNeedsAttention++;
     }
@@ -470,7 +521,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       photosPendingCount: nextPendingPhotos,
       needsAttentionCount: nextNeedsAttention,
     };
-  }, [submissions]);
+  }, [submissions, errorLogs]);
 
   const completedDraftsCount = useMemo(
     () => drafts.filter((d) => d.mandatoryRemaining === 0).length,
@@ -481,7 +532,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const filteredSubmissions = useMemo(() => {
     const filtered = submissions.filter((sub) => {
       const effectiveStatus = sub.status || "new";
-      const deliveryState = getSubmissionDeliveryState(sub);
+      const deliveryState = getSubmissionDeliveryState(sub, errorLogs);
 
       if (statusFilter === "needs_attention") {
         if (deliveryState !== "needs_attention") return false;
@@ -515,7 +566,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       });
     }
     return sortSubmissionsNewestFirst(filtered);
-  }, [submissions, searchQuery, statusFilter, sortBy]);
+  }, [submissions, errorLogs, searchQuery, statusFilter, sortBy]);
 
   return (
     <div className="min-h-[100dvh] bg-[#FAF8F5] text-[#1A1A1A] safe-bottom pb-12">
@@ -829,8 +880,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 {filteredSubmissions.slice(0, visibleCount).map((couple) => {
                   const countdown = getWeddingCountdown(couple.weddingDate);
                   const effectiveStatus: SubmissionStatus = couple.status || "new";
-                  const deliveryState = getSubmissionDeliveryState(couple);
+                  const deliveryState = getSubmissionDeliveryState(couple, errorLogs);
+                  const attentionReasons = getSubmissionAttentionReasons(couple, errorLogs);
                   const deliveryBadge = DELIVERY_BADGE_MAP[deliveryState];
+                  const isReasonsOpen = openReasonsId === couple.id;
 
                   return (
                     <div
@@ -849,11 +902,47 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                 {couple.partner1 || "Partner 1"} &amp;{" "}
                                 {couple.partner2 || "Partner 2"}
                               </h2>
-                              <span
-                                className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${deliveryBadge.className}`}
-                              >
-                                {deliveryBadge.label}
-                              </span>
+                              {deliveryState === "needs_attention" && attentionReasons.length > 0 ? (
+                                <div className="relative group inline-flex items-center gap-1.5 flex-wrap">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setOpenReasonsId(isReasonsOpen ? null : couple.id)
+                                    }
+                                    title={attentionReasons.join(" · ")}
+                                    className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border cursor-pointer ${deliveryBadge.className}`}
+                                  >
+                                    <span>{deliveryBadge.label}</span>
+                                    <Info className="w-3 h-3" />
+                                  </button>
+                                  <span className="text-[11px] font-medium text-red-700">
+                                    {attentionReasons.join(" · ")}
+                                  </span>
+
+                                  <div
+                                    className={`absolute left-0 top-full mt-1.5 z-30 w-64 bg-white border border-red-200 rounded-xl shadow-lg p-3 text-left ${
+                                      isReasonsOpen
+                                        ? "block"
+                                        : "hidden group-hover:block"
+                                    }`}
+                                  >
+                                    <p className="text-[11px] font-semibold text-red-800 mb-1.5">
+                                      Why this needs attention:
+                                    </p>
+                                    <ul className="space-y-1 text-xs text-[#4A453E] list-disc pl-4">
+                                      {attentionReasons.map((reason) => (
+                                        <li key={reason}>{reason}</li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                </div>
+                              ) : (
+                                <span
+                                  className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${deliveryBadge.className}`}
+                                >
+                                  {deliveryBadge.label}
+                                </span>
+                              )}
                             </div>
                             <div className="text-xs text-[#7A756D] flex flex-wrap items-center gap-2 mt-0.5">
                               <span className="inline-flex items-center gap-1">
@@ -1014,6 +1103,27 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             </div>
                           )}
                         </div>
+
+                        {/* Admin-only: Copy resume link */}
+                        <button
+                          type="button"
+                          disabled={copyingResumeId === couple.id}
+                          onClick={() => void handleCopyCoupleResumeLink(couple)}
+                          className="p-2 md:px-3 md:py-2 rounded-xl text-xs font-medium text-[#5C492A] bg-[#FAF7F2] hover:bg-[#F2ECE1] border border-[#E5DDD2] transition-colors cursor-pointer shrink-0 inline-flex items-center justify-center gap-1.5 disabled:opacity-60"
+                          title={`Copy resume link for ${couple.partner1} & ${couple.partner2}`}
+                        >
+                          {copiedResumeId === couple.id ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 text-emerald-600" />
+                              <span className="hidden lg:inline text-emerald-700">Copied</span>
+                            </>
+                          ) : (
+                            <>
+                              <Link2 className="w-3.5 h-3.5 text-[#8C7043]" />
+                              <span className="hidden lg:inline">Copy resume link</span>
+                            </>
+                          )}
+                        </button>
 
                         {/* Delete Button */}
                         <button

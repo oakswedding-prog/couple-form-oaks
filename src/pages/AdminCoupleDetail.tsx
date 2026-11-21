@@ -19,8 +19,18 @@ import {
   Trash2,
   AlertTriangle,
   HeartHandshake,
+  Link2,
+  Check,
+  Clock,
+  Image as ImageIcon,
+  AlertCircle,
 } from "lucide-react";
-import { SubmissionRecord, SubmissionStatus } from "../types/questionnaire.ts";
+import {
+  DraftRecord,
+  SubmissionErrorRecord,
+  SubmissionRecord,
+  SubmissionStatus,
+} from "../types/questionnaire.ts";
 import {
   getCachedSubmissionById,
   getSubmissionRecordFast,
@@ -33,7 +43,13 @@ import {
   updateSubmissionCheatSheet,
   updateSubmissionCoupleLetter,
   deleteSubmission,
+  getSubmissionDeliveryState,
+  getSubmissionAttentionReasons,
+  ensureResumeLinkForSubmission,
 } from "../lib/submissions.ts";
+import { getSubmissionErrors } from "../lib/errorLogger.ts";
+import { getAllAdminDrafts } from "../lib/drafts.ts";
+import { getPhotoCategoryLabel } from "../lib/photoUploadManager.ts";
 import { ShootDayCheatSheet } from "../components/ShootDayCheatSheet.tsx";
 import { EditorialBriefView } from "../components/EditorialBriefView.tsx";
 import { CoupleInterviewView } from "../components/CoupleInterviewView.tsx";
@@ -124,6 +140,13 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  // Delivery health diagnostics, error log & admin resume-link copy state
+  const [errorLogs, setErrorLogs] = useState<SubmissionErrorRecord[]>([]);
+  const [allDrafts, setAllDrafts] = useState<DraftRecord[]>([]);
+  const [copyingResume, setCopyingResume] = useState<boolean>(false);
+  const [copiedResume, setCopiedResume] = useState<boolean>(false);
+  const [showAllPhotoStatuses, setShowAllPhotoStatuses] = useState<boolean>(false);
+
   // Load submission fast without blocking UI on Firebase Storage getDownloadURL calls
   useEffect(() => {
     let isMounted = true;
@@ -172,6 +195,16 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
       }
     }
     loadData();
+    getSubmissionErrors(100)
+      .then((list) => {
+        if (isMounted) setErrorLogs(list);
+      })
+      .catch(() => {});
+    getAllAdminDrafts()
+      .then((list) => {
+        if (isMounted) setAllDrafts(list);
+      })
+      .catch(() => {});
     return () => {
       isMounted = false;
     };
@@ -265,6 +298,34 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
     }
   };
 
+  // Admin-only: copy working resume link for this couple
+  const handleCopyResumeLink = async () => {
+    if (!submission) return;
+    setCopyingResume(true);
+    try {
+      const { token, url } = await ensureResumeLinkForSubmission(submission, allDrafts);
+      setSubmission((prev) => (prev ? { ...prev, resumeToken: token } : prev));
+      try {
+        await navigator.clipboard.writeText(url);
+      } catch {
+        const ta = document.createElement("textarea");
+        ta.value = url;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      setCopiedResume(true);
+      window.setTimeout(() => setCopiedResume(false), 2800);
+    } catch (err) {
+      console.error("Could not copy resume link:", err);
+    } finally {
+      setCopyingResume(false);
+    }
+  };
+
   const groupedQ10 = useMemo(
     () => (submission?.answers ? getGroupedQ10People(submission.answers.q10_people) : null),
     [submission?.answers]
@@ -330,6 +391,14 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
   const ans = submission.answers;
   const p1 = submission.partner1 || "Partner 1";
   const p2 = submission.partner2 || "Partner 2";
+  const deliveryState = getSubmissionDeliveryState(submission, errorLogs);
+  const attentionReasons = getSubmissionAttentionReasons(submission, errorLogs);
+  const photoStatusList = submission.photoStatuses
+    ? Object.values(submission.photoStatuses)
+    : [];
+  const failedPhotoEntries = photoStatusList.filter((p) => p.status === "failed");
+  const pendingPhotoEntries = photoStatusList.filter((p) => p.status === "pending");
+  const uploadedPhotoEntries = photoStatusList.filter((p) => p.status === "uploaded");
 
   return (
     <div className="min-h-[100dvh] bg-[#FAF8F5] text-[#1A1A1A] safe-bottom pb-16">
@@ -354,6 +423,21 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
               <h1 className="font-cormorant text-2xl font-semibold text-[#1A1A1A] truncate">
                 {p1} &amp; {p2}
               </h1>
+              <span
+                className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border shrink-0 ${
+                  deliveryState === "needs_attention"
+                    ? "bg-red-50 text-red-800 border-red-200"
+                    : deliveryState === "photos_pending"
+                    ? "bg-amber-50 text-amber-900 border-amber-200"
+                    : "bg-emerald-50 text-emerald-800 border-emerald-200"
+                }`}
+              >
+                {deliveryState === "needs_attention"
+                  ? "Needs attention"
+                  : deliveryState === "photos_pending"
+                  ? "Photos pending"
+                  : "Submitted"}
+              </span>
             </div>
           </div>
 
@@ -375,6 +459,27 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
               <option value="reviewed">Reviewed</option>
               <option value="shared">Shared with team</option>
             </select>
+
+            {/* Admin-only Copy Resume Link */}
+            <button
+              type="button"
+              disabled={copyingResume}
+              onClick={() => void handleCopyResumeLink()}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium text-[#5C492A] bg-[#FAF7F2] hover:bg-[#F2ECE1] border border-[#E5DDD2] transition-colors cursor-pointer disabled:opacity-60"
+              title="Copy resume link to send to this couple"
+            >
+              {copiedResume ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-600" />
+                  <span className="text-emerald-700">Link copied</span>
+                </>
+              ) : (
+                <>
+                  <Link2 className="w-3.5 h-3.5 text-[#8C7043]" />
+                  <span>Copy resume link</span>
+                </>
+              )}
+            </button>
 
             {/* Download Dropdown */}
             <div className="relative">
@@ -506,6 +611,21 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
                 )}
               </div>
 
+              {/* Admin-only Copy Resume Link (Mobile) */}
+              <button
+                type="button"
+                disabled={copyingResume}
+                onClick={() => void handleCopyResumeLink()}
+                className="p-1.5 rounded-lg text-[#5C492A] bg-[#FAF7F2] border border-[#E5DDD2] hover:bg-[#F2ECE1] transition-colors cursor-pointer disabled:opacity-60"
+                title="Copy resume link for couple"
+              >
+                {copiedResume ? (
+                  <Check className="w-4 h-4 text-emerald-600" />
+                ) : (
+                  <Link2 className="w-4 h-4 text-[#8C7043]" />
+                )}
+              </button>
+
               {/* Delete Button */}
               <button
                 type="button"
@@ -536,6 +656,64 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
 
       {/* Main Container */}
       <main className="max-w-5xl mx-auto px-4 sm:px-6 pt-6 sm:pt-8 space-y-8">
+        {/* Needs Attention / Pending Photos Diagnostic Banner */}
+        {deliveryState === "needs_attention" && attentionReasons.length > 0 && (
+          <div className="bg-red-50/80 border border-red-200 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-start justify-between gap-4 print:hidden">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <h2 className="text-sm font-semibold text-red-900">
+                  Needs attention
+                </h2>
+                <ul className="text-xs text-red-800 space-y-1 list-disc pl-4">
+                  {attentionReasons.map((reason) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={copyingResume}
+              onClick={() => void handleCopyResumeLink()}
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold text-[#1A1A1A] bg-white hover:bg-[#FAF7F2] border border-red-200 transition-colors cursor-pointer shrink-0 disabled:opacity-60"
+            >
+              {copiedResume ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-600" />
+                  <span className="text-emerald-700">Resume link copied</span>
+                </>
+              ) : (
+                <>
+                  <Link2 className="w-3.5 h-3.5 text-[#8C7043]" />
+                  <span>Copy resume link for couple</span>
+                </>
+              )}
+            </button>
+          </div>
+        )}
+
+        {deliveryState === "photos_pending" && (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center justify-between gap-3 text-xs text-amber-900 print:hidden">
+            <div className="flex items-center gap-2.5">
+              <Clock className="w-4 h-4 text-amber-700 shrink-0" />
+              <span>
+                <strong>Photos pending:</strong>{" "}
+                {pendingPhotoEntries.length || submission.pendingPhotoCount || 1} photo(s) are still uploading from the couple's device.
+              </span>
+            </div>
+            <button
+              type="button"
+              disabled={copyingResume}
+              onClick={() => void handleCopyResumeLink()}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-amber-200 text-amber-950 font-semibold hover:bg-amber-100/60 cursor-pointer shrink-0"
+            >
+              <Link2 className="w-3.5 h-3.5" />
+              <span>{copiedResume ? "Copied" : "Copy resume link"}</span>
+            </button>
+          </div>
+        )}
+
         {/* View Mode Switcher Tabs */}
         <div className="flex items-center gap-2 border-b border-[#E5DDD2] pb-3 print:hidden overflow-x-auto scrollbar-none">
           <button
@@ -706,6 +884,78 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
               cheatSheetText={submission.cheatSheet}
               onSaveCheatSheet={handleSaveCheatSheet}
             />
+          </section>
+        )}
+
+        {/* 2A. PHOTO UPLOAD STATUS BREAKDOWN (Shows uploaded / pending / failed + exact errorCode) */}
+        {photoStatusList.length > 0 && (
+          <section className="bg-white border border-[#E5DDD2] rounded-2xl p-5 sm:p-6 shadow-2xs space-y-3 print:hidden">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <ImageIcon className="w-4 h-4 text-[#8C7043]" />
+                <h3 className="font-cormorant text-xl font-semibold text-[#1A1A1A]">
+                  Photo Upload Status
+                </h3>
+                <span className="text-xs text-[#7A756D] tabular-nums">
+                  ({uploadedPhotoEntries.length} uploaded
+                  {pendingPhotoEntries.length > 0 ? ` · ${pendingPhotoEntries.length} pending` : ""}
+                  {failedPhotoEntries.length > 0 ? ` · ${failedPhotoEntries.length} failed` : ""})
+                </span>
+              </div>
+
+              {failedPhotoEntries.length === 0 && pendingPhotoEntries.length === 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllPhotoStatuses((v) => !v)}
+                  className="text-xs font-medium text-[#8C7043] hover:text-[#1A1A1A] cursor-pointer"
+                >
+                  {showAllPhotoStatuses ? "Hide details" : `View all ${photoStatusList.length} photos`}
+                </button>
+              )}
+            </div>
+
+            {(showAllPhotoStatuses ||
+              failedPhotoEntries.length > 0 ||
+              pendingPhotoEntries.length > 0) && (
+              <div className="divide-y divide-[#F0E9DF] border border-[#EFE9E0] rounded-xl overflow-hidden">
+                {photoStatusList.map((entry) => {
+                  const displayLabel =
+                    entry.label || getPhotoCategoryLabel(entry.category);
+                  return (
+                    <div
+                      key={entry.id}
+                      className="px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs bg-[#FAF8F5]/50"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-medium text-[#1A1A1A] truncate">
+                          {displayLabel}
+                        </p>
+                        {entry.status === "failed" && entry.errorCode && (
+                          <p className="text-[11px] font-mono text-red-700 mt-0.5">
+                            Error code: {entry.errorCode}
+                          </p>
+                        )}
+                      </div>
+
+                      <span
+                        className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border shrink-0 ${
+                          entry.status === "uploaded"
+                            ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                            : entry.status === "pending"
+                            ? "bg-amber-50 text-amber-900 border-amber-200"
+                            : "bg-red-50 text-red-800 border-red-200"
+                        }`}
+                      >
+                        {entry.status === "uploaded" && <CheckCircle2 className="w-3 h-3" />}
+                        {entry.status === "pending" && <Clock className="w-3 h-3" />}
+                        {entry.status === "failed" && <AlertCircle className="w-3 h-3" />}
+                        <span className="capitalize">{entry.status}</span>
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </section>
         )}
 

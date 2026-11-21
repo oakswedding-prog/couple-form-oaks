@@ -12,6 +12,12 @@ import {
   getOrCreateCoupleSession,
 } from "./coupleSession.ts";
 import { extractShortErrorCode, logSubmissionError } from "./errorLogger.ts";
+import {
+  clearPendingPhotosForSubmissionIdb,
+  deletePendingPhotoFromIdb,
+  getAllPendingPhotosFromIdb,
+  savePendingPhotoToIdb,
+} from "./photoIndexedDb.ts";
 import type {
   PhotoStatusEntry,
   QuestionnaireAnswers,
@@ -24,13 +30,17 @@ export type PhotoUploadStatus = "uploading" | "uploaded" | "error";
 
 export interface PhotoUploadEntry {
   localToken: string;
+  submissionId?: string;
   targetStoragePath: string;
   uploadedStoragePath?: string; // Set ONLY after Firebase Storage upload succeeds
   category: string;
+  fileName?: string;
+  extension?: string;
   previewUrl: string;
   blob: Blob;
   contentType: string;
   status: PhotoUploadStatus;
+  waitingForAuth?: boolean;
   progress: number;
   attempts: number;
   error?: string;
@@ -39,10 +49,66 @@ export interface PhotoUploadEntry {
   updatedAt: string;
 }
 
+export interface MissingPhotoSlot {
+  id: string;
+  category: string;
+  label: string;
+  stepNumber: number;
+  status: "pending" | "failed";
+  errorCode?: string;
+}
+
 const entriesMap = new Map<string, PhotoUploadEntry>();
 const activePromisesMap = new Map<string, Promise<string>>();
 const listeners = new Set<() => void>();
 const completionListeners = new Set<(entry: PhotoUploadEntry) => void>();
+
+export function getPhotoCategoryLabel(category: string): string {
+  const slug = (category || "").toLowerCase();
+  if (slug === "couple_photo") return "Couple Photo (Q1)";
+  if (slug === "family_tree") return "Family Tree Photo (Q10)";
+  if (slug.startsWith("bride_vip")) return "Bride's Side VIP Photo (Q10)";
+  if (slug.startsWith("groom_vip")) return "Groom's Side VIP Photo (Q10)";
+  if (slug === "family_member") return "VIP Reference Photo (Q10)";
+  if (slug.startsWith("bride_family")) return "Bride's Side Family Photo (Q10)";
+  if (slug.startsWith("groom_family")) return "Groom's Side Family Photo (Q10)";
+  if (slug === "reference") return "Visual Reference (Q12)";
+  if (slug === "bride_outfit") return "Bride's Wardrobe Photo (Q13)";
+  if (slug === "groom_outfit") return "Groom's Wardrobe Photo (Q13)";
+  if (slug === "outfit" || slug === "wardrobe") return "Wardrobe Photo (Q13)";
+  if (slug.startsWith("decor_")) {
+    const rawEvent = slug.replace(/^decor_/, "").replace(/_/g, " ").trim();
+    const prettyEvent = rawEvent
+      ? rawEvent.replace(/\b\w/g, (c) => c.toUpperCase())
+      : "Decor";
+    return `${prettyEvent} Decor Photo (Q14)`;
+  }
+  if (slug === "decor") return "Decor Mood Board Photo (Q14)";
+  if (slug === "last_thing") return "One Last Thing Photo (Q27)";
+  return "Uploaded Photo";
+}
+
+export function getPhotoStepNumber(category: string): number {
+  const slug = (category || "").toLowerCase();
+  if (slug === "couple_photo") return 1;
+  if (
+    slug === "family_tree" ||
+    slug === "family_member" ||
+    slug.startsWith("bride_vip") ||
+    slug.startsWith("groom_vip") ||
+    slug.startsWith("bride_family") ||
+    slug.startsWith("groom_family")
+  ) {
+    return 10;
+  }
+  if (slug === "reference") return 12;
+  if (slug === "bride_outfit" || slug === "groom_outfit" || slug === "outfit" || slug === "wardrobe") {
+    return 13;
+  }
+  if (slug === "decor" || slug.startsWith("decor_")) return 14;
+  if (slug === "last_thing") return 27;
+  return 1;
+}
 
 function notifyListeners() {
   listeners.forEach((cb) => {
@@ -90,13 +156,16 @@ export function getPhotoUploadEntry(
   if (!tokenOrPath) return undefined;
   const direct = entriesMap.get(tokenOrPath);
   if (direct) return direct;
-  // Also allow lookup by finalized storage path
   for (const entry of entriesMap.values()) {
     if (entry.uploadedStoragePath === tokenOrPath || entry.targetStoragePath === tokenOrPath) {
       return entry;
     }
   }
   return undefined;
+}
+
+export function getAllTrackedPhotoEntries(): PhotoUploadEntry[] {
+  return Array.from(entriesMap.values());
 }
 
 /**
@@ -130,9 +199,10 @@ export function usePhotoUploadStatus(
 }
 
 /**
- * Clears in-memory tracked photo entries when starting a brand new questionnaire.
+ * Clears in-memory tracked photo entries (and optional IndexedDB queue for a submission)
+ * when starting a brand new questionnaire.
  */
-export function resetDraftUploadFolder(): void {
+export function resetDraftUploadFolder(submissionIdToClear?: string): void {
   entriesMap.forEach((entry) => {
     try {
       URL.revokeObjectURL(entry.previewUrl);
@@ -142,6 +212,9 @@ export function resetDraftUploadFolder(): void {
   });
   entriesMap.clear();
   activePromisesMap.clear();
+  if (submissionIdToClear) {
+    void clearPendingPhotosForSubmissionIdb(submissionIdToClear);
+  }
   notifyListeners();
 }
 
@@ -161,19 +234,98 @@ export function getActivePendingOrFailedCount(): {
   return { uploading, failed, uploaded };
 }
 
+/**
+ * Strictly waits for anonymous sign-in to complete before ANY Storage upload begins.
+ * Never returns "anon_pending". If sign-in fails transiently (e.g., offline), retries
+ * with backoff while keeping the photo cleanly queued instead of failing it immediately.
+ */
+export async function waitForCoupleUidBeforeUpload(
+  authProvider: () => Promise<{ uid: string } | null> = ensureCoupleAnonymousAuth,
+  retryDelaysMs: number[] = [1000, 2500, 5000, 8000]
+): Promise<string | null> {
+  for (let attempt = 0; attempt <= retryDelaysMs.length; attempt++) {
+    try {
+      const res = await authProvider();
+      if (res?.uid && res.uid !== "anon_pending") {
+        return res.uid;
+      }
+    } catch {
+      // retry below
+    }
+    if (attempt < retryDelaysMs.length) {
+      await new Promise((r) => setTimeout(r, retryDelaysMs[attempt]));
+    }
+  }
+  return null;
+}
+
+function buildFinalStoragePath(
+  submissionId: string,
+  ownerUid: string,
+  localToken: string,
+  extension: string
+): string {
+  const tokenSuffix = localToken.replace(PENDING_PHOTO_PREFIX, "");
+  const cleanExt = (extension || "jpg").replace(/[^a-z0-9]/gi, "").toLowerCase() || "jpg";
+  return `submissions/${submissionId}/${ownerUid}/${tokenSuffix}.${cleanExt}`;
+}
+
 async function performSingleUploadWithTimeout(
   entry: PhotoUploadEntry,
   timeoutMs = PHOTO_UPLOAD_TIMEOUT_MS
 ): Promise<string> {
-  // Make sure the couple has an active anonymous UID before uploading
-  const authRes = await ensureCoupleAnonymousAuth();
-  let uploadPath = entry.targetStoragePath;
-  if (authRes?.uid && uploadPath.includes("/anon_pending/")) {
-    uploadPath = uploadPath.replace("/anon_pending/", `/${authRes.uid}/`);
-    const cur = entriesMap.get(entry.localToken);
-    if (cur) {
-      entriesMap.set(entry.localToken, { ...cur, targetStoragePath: uploadPath });
+  // Strictly wait for anonymous auth BEFORE touching Firebase Storage — never upload to "anon_pending"
+  const curBeforeAuth = entriesMap.get(entry.localToken);
+  if (curBeforeAuth) {
+    entriesMap.set(entry.localToken, {
+      ...curBeforeAuth,
+      status: "uploading",
+      waitingForAuth: true,
+      updatedAt: new Date().toISOString(),
+    });
+    notifyListeners();
+  }
+
+  const uid = await waitForCoupleUidBeforeUpload();
+  if (!uid) {
+    // Keep queued — do NOT upload under anon_pending!
+    const curQueued = entriesMap.get(entry.localToken);
+    if (curQueued) {
+      entriesMap.set(entry.localToken, {
+        ...curQueued,
+        status: "uploading",
+        waitingForAuth: true,
+        error: undefined,
+        errorCode: undefined,
+        updatedAt: new Date().toISOString(),
+      });
+      notifyListeners();
     }
+    const authWaitErr: any = new Error("Waiting for secure sign-in before uploading photo.");
+    authWaitErr.code = "auth/waiting-for-signin";
+    authWaitErr.keepQueued = true;
+    throw authWaitErr;
+  }
+
+  const submissionId = entry.submissionId || getOrCreateCoupleSession().submissionId;
+  const uploadPath = buildFinalStoragePath(
+    submissionId,
+    uid,
+    entry.localToken,
+    entry.extension || "jpg"
+  );
+
+  const curReady = entriesMap.get(entry.localToken);
+  if (curReady) {
+    entriesMap.set(entry.localToken, {
+      ...curReady,
+      submissionId,
+      targetStoragePath: uploadPath,
+      waitingForAuth: false,
+      progress: Math.max(curReady.progress, 5),
+      updatedAt: new Date().toISOString(),
+    });
+    notifyListeners();
   }
 
   const storageRef = ref(storage, uploadPath);
@@ -218,6 +370,7 @@ async function performSingleUploadWithTimeout(
             entriesMap.set(entry.localToken, {
               ...current,
               status: "uploading",
+              waitingForAuth: false,
               progress: Math.max(current.progress, pct),
               error: undefined,
               errorCode: undefined,
@@ -244,6 +397,9 @@ async function performSingleUploadWithTimeout(
     );
   });
 
+  // Upload is confirmed in Firebase Storage — safe to remove from IndexedDB queue now!
+  await deletePendingPhotoFromIdb(entry.localToken);
+
   // Couples do not have Storage read access (admin-only), so getDownloadURL is optional
   let downloadUrl: string | undefined;
   try {
@@ -256,9 +412,11 @@ async function performSingleUploadWithTimeout(
   if (latest) {
     const completed: PhotoUploadEntry = {
       ...latest,
+      submissionId,
       targetStoragePath: uploadPath,
       uploadedStoragePath: uploadPath, // ONLY stored after Firebase Storage confirms upload!
       status: "uploaded",
+      waitingForAuth: false,
       progress: 100,
       error: undefined,
       errorCode: undefined,
@@ -302,8 +460,18 @@ function runUploadWithRetries(localToken: string): Promise<string> {
 
       try {
         return await performSingleUploadWithTimeout(current);
-      } catch (err) {
+      } catch (err: any) {
         lastError = err;
+        if (err?.keepQueued) {
+          // Sign-in wasn't available yet: keep queued in IndexedDB & retry quietly later instead of failing
+          setTimeout(() => {
+            const stillQueued = entriesMap.get(localToken);
+            if (stillQueued && stillQueued.status !== "uploaded" && !activePromisesMap.has(localToken)) {
+              void runUploadWithRetries(localToken).catch(() => {});
+            }
+          }, 8000);
+          return "";
+        }
         if (attempt <= backoffMs.length) {
           await new Promise((r) => setTimeout(r, backoffMs[attempt - 1]));
         }
@@ -317,6 +485,7 @@ function runUploadWithRetries(localToken: string): Promise<string> {
       entriesMap.set(localToken, {
         ...latest,
         status: "error",
+        waitingForAuth: false,
         error: errorMsg,
         errorCode,
         updatedAt: new Date().toISOString(),
@@ -328,6 +497,7 @@ function runUploadWithRetries(localToken: string): Promise<string> {
       step: "photo_upload",
       error: lastError,
       photoCount: entriesMap.size,
+      submissionId: latest?.submissionId,
     });
 
     throw lastError instanceof Error ? lastError : new Error(errorMsg);
@@ -341,11 +511,8 @@ function runUploadWithRetries(localToken: string): Promise<string> {
 
 /**
  * Validates size (<= 15 MB), converts HEIC -> JPEG on device, resizes to max 2400px,
- * creates an immediate local preview, and kicks off Firebase Storage upload in the background
- * under the couple's stable submission ID & anonymous UID.
- *
- * Returns a local pending handle (`pending_photo:...`) so Firestore NEVER stores a Storage path
- * before the upload has actually succeeded.
+ * persists the compressed blob & metadata to IndexedDB so it survives page refreshes,
+ * and starts Firebase Storage upload strictly AFTER anonymous sign-in completes.
  */
 export async function startBackgroundPhotoUpload(
   file: File,
@@ -353,8 +520,6 @@ export async function startBackgroundPhotoUpload(
 ): Promise<string> {
   const prepared = await preparePhotoForUpload(file);
   const session = getOrCreateCoupleSession();
-  const authRes = await ensureCoupleAnonymousAuth();
-  const ownerSegment = authRes?.uid || "anon_pending";
 
   const safeSlug =
     categorySlug
@@ -363,20 +528,36 @@ export async function startBackgroundPhotoUpload(
       .replace(/^_+|_+$/g, "") || "photo";
   const uniqueSuffix = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   const localToken = `${PENDING_PHOTO_PREFIX}${uniqueSuffix}_${safeSlug}`;
-  const targetStoragePath = `submissions/${session.submissionId}/${ownerSegment}/${uniqueSuffix}_${safeSlug}.${prepared.extension}`;
+  const now = new Date().toISOString();
+
+  // Persist compressed blob + metadata to IndexedDB BEFORE uploading so refresh never loses it
+  await savePendingPhotoToIdb({
+    localToken,
+    submissionId: session.submissionId,
+    category: safeSlug,
+    fileName: file.name || `${safeSlug}.${prepared.extension}`,
+    extension: prepared.extension,
+    contentType: prepared.contentType,
+    blob: prepared.blob,
+    createdAt: now,
+  });
 
   const entry: PhotoUploadEntry = {
     localToken,
-    targetStoragePath,
+    submissionId: session.submissionId,
+    targetStoragePath: "", // Populated strictly after anonymous auth UID is confirmed
     uploadedStoragePath: undefined,
     category: safeSlug,
+    fileName: file.name || `${safeSlug}.${prepared.extension}`,
+    extension: prepared.extension,
     previewUrl: prepared.previewUrl,
     blob: prepared.blob,
     contentType: prepared.contentType,
     status: "uploading",
-    progress: 5,
+    waitingForAuth: true,
+    progress: 3,
     attempts: 1,
-    updatedAt: new Date().toISOString(),
+    updatedAt: now,
   };
 
   entriesMap.set(localToken, entry);
@@ -386,6 +567,134 @@ export async function startBackgroundPhotoUpload(
   void runUploadWithRetries(localToken).catch(() => {});
 
   return localToken;
+}
+
+/**
+ * On page reload or when reopening a resume link, restores any queued photo blobs
+ * from IndexedDB for this submission and immediately resumes uploading them.
+ * Returns any missing photo slots whose files are no longer in IndexedDB (e.g., cleared
+ * browser storage or opened on a different phone) so the couple can re-add only those.
+ */
+export async function resumePendingUploadsFromIndexedDb(
+  submissionId: string,
+  answers: QuestionnaireAnswers,
+  savedPhotoStatuses?: Record<string, PhotoStatusEntry>
+): Promise<{ resumedCount: number; missingSlots: MissingPhotoSlot[] }> {
+  const persistedItems = await getAllPendingPhotosFromIdb(submissionId);
+  let resumedCount = 0;
+
+  for (const item of persistedItems) {
+    if (entriesMap.has(item.localToken)) {
+      const existing = entriesMap.get(item.localToken)!;
+      if (existing.status !== "uploaded" && !activePromisesMap.has(item.localToken)) {
+        void runUploadWithRetries(item.localToken).catch(() => {});
+      }
+      continue;
+    }
+
+    let previewUrl = "";
+    try {
+      previewUrl = URL.createObjectURL(item.blob);
+    } catch {
+      previewUrl = "";
+    }
+
+    const restoredEntry: PhotoUploadEntry = {
+      localToken: item.localToken,
+      submissionId: item.submissionId,
+      targetStoragePath: "",
+      uploadedStoragePath: undefined,
+      category: item.category,
+      fileName: item.fileName,
+      extension: item.extension,
+      previewUrl,
+      blob: item.blob,
+      contentType: item.contentType,
+      status: "uploading",
+      waitingForAuth: true,
+      progress: 5,
+      attempts: 1,
+      updatedAt: new Date().toISOString(),
+    };
+
+    entriesMap.set(item.localToken, restoredEntry);
+    resumedCount++;
+    void runUploadWithRetries(item.localToken).catch(() => {});
+  }
+
+  if (resumedCount > 0) {
+    notifyListeners();
+  }
+
+  const missingSlots = findMissingPhotoSlots(answers, savedPhotoStatuses);
+  return { resumedCount, missingSlots };
+}
+
+/**
+ * Pure helper that finds any photo slots referenced in answers or saved photoStatuses
+ * that are NOT uploaded AND NOT currently recoverable from IndexedDB/RAM.
+ */
+export function findMissingPhotoSlots(
+  answers: QuestionnaireAnswers,
+  savedPhotoStatuses?: Record<string, PhotoStatusEntry>,
+  lookupEntry: (token: string) => PhotoUploadEntry | undefined = getPhotoUploadEntry
+): MissingPhotoSlot[] {
+  const missingById = new Map<string, MissingPhotoSlot>();
+
+  const checkToken = (raw: string | undefined, category: string) => {
+    if (!raw || !isPendingPhotoToken(raw)) return;
+    const entry = lookupEntry(raw);
+    if (!entry) {
+      missingById.set(raw, {
+        id: raw,
+        category,
+        label: getPhotoCategoryLabel(category),
+        stepNumber: getPhotoStepNumber(category),
+        status: "pending",
+      });
+    }
+  };
+
+  checkToken(answers.couplePhotoUrl, "couple_photo");
+  checkToken(answers.q10_people?.treePhotoUrl, "family_tree");
+  answers.q10_people?.familyMembers?.forEach((m) => checkToken(m.photoUrl, "family_member"));
+  answers.q10_people?.brideSide?.photos?.forEach((p) => checkToken(p.url, "bride_family"));
+  answers.q10_people?.groomSide?.photos?.forEach((p) => checkToken(p.url, "groom_family"));
+  answers.q12_references?.images?.forEach((img) => checkToken(img, "reference"));
+  answers.wardrobe?.bride?.photos?.forEach((img) => checkToken(img, "bride_outfit"));
+  answers.wardrobe?.groom?.photos?.forEach((img) => checkToken(img, "groom_outfit"));
+  answers.weddingOutfits?.images?.forEach((img) => checkToken(img, "outfit"));
+  answers.decorEvents?.forEach((ev) => {
+    const slug = (ev.id || ev.name || "decor").toLowerCase().replace(/[^a-z0-9]+/g, "_");
+    ev.images?.forEach((img) => checkToken(img, `decor_${slug}`));
+  });
+  answers.decorMoodBoard?.images?.forEach((img) => checkToken(img, "decor"));
+  answers.q23_oneLastThing?.images?.forEach((img) => checkToken(img, "last_thing"));
+
+  // Also check saved Firestore photoStatuses (for resume links opened on a different device
+  // where pending/failed tokens were stripped from Firestore answers)
+  if (savedPhotoStatuses) {
+    for (const [key, ps] of Object.entries(savedPhotoStatuses)) {
+      if (ps.status === "uploaded") continue;
+      const entry = lookupEntry(ps.id || key);
+      if (entry && (entry.status === "uploading" || entry.status === "uploaded")) {
+        continue;
+      }
+      const slotId = ps.id || key;
+      if (!missingById.has(slotId)) {
+        missingById.set(slotId, {
+          id: slotId,
+          category: ps.category || "photo",
+          label: ps.label || getPhotoCategoryLabel(ps.category || "photo"),
+          stepNumber: getPhotoStepNumber(ps.category || "photo"),
+          status: ps.status === "failed" ? "failed" : "pending",
+          errorCode: ps.errorCode,
+        });
+      }
+    }
+  }
+
+  return Array.from(missingById.values());
 }
 
 export function retryBackgroundPhotoUpload(tokenOrPath: string): Promise<string> {
@@ -409,11 +718,14 @@ export function retryBackgroundPhotoUpload(tokenOrPath: string): Promise<string>
 }
 
 /**
- * Kicks off background retries for any failed uploads without blocking the caller.
+ * Kicks off background retries for any failed or auth-queued uploads without blocking the caller.
  */
 export function kickOffPendingPhotoRetries(): void {
   entriesMap.forEach((entry) => {
-    if (entry.status === "error" && !activePromisesMap.has(entry.localToken)) {
+    if (
+      (entry.status === "error" || (entry.status === "uploading" && entry.waitingForAuth)) &&
+      !activePromisesMap.has(entry.localToken)
+    ) {
       void runUploadWithRetries(entry.localToken).catch(() => {});
     }
   });
@@ -428,7 +740,10 @@ export function removeBackgroundPhotoEntry(tokenOrPath: string): void {
       // ignore
     }
     entriesMap.delete(entry.localToken);
+    void deletePendingPhotoFromIdb(entry.localToken);
     notifyListeners();
+  } else if (isPendingPhotoToken(tokenOrPath)) {
+    void deletePendingPhotoFromIdb(tokenOrPath);
   }
 }
 
@@ -511,6 +826,7 @@ export function sanitizeAnswersForFirestore(
       photoStatuses[slotKey] = {
         id: slotKey,
         category,
+        label: getPhotoCategoryLabel(category),
         status: "failed",
         errorCode: "photo/not-uploaded",
         updatedAt: now,
@@ -525,6 +841,7 @@ export function sanitizeAnswersForFirestore(
         photoStatuses[entry.localToken] = {
           id: entry.localToken,
           category: entry.category || category,
+          label: getPhotoCategoryLabel(entry.category || category),
           status: "uploaded",
           storagePath: entry.uploadedStoragePath,
           updatedAt: entry.updatedAt || now,
@@ -536,17 +853,19 @@ export function sanitizeAnswersForFirestore(
         photoStatuses[entry.localToken] = {
           id: entry.localToken,
           category: entry.category || category,
+          label: getPhotoCategoryLabel(entry.category || category),
           status: "failed",
           errorCode: entry.errorCode || "storage/upload-failed",
           updatedAt: entry.updatedAt || now,
         };
         return undefined;
       }
-      // Still uploading (or pending in background)
+      // Still uploading (or queued waiting for auth/network)
       pendingCount++;
       photoStatuses[trimmed] = {
         id: trimmed,
         category: entry?.category || category,
+        label: getPhotoCategoryLabel(entry?.category || category),
         status: "pending",
         updatedAt: entry?.updatedAt || now,
       };
@@ -561,6 +880,7 @@ export function sanitizeAnswersForFirestore(
         photoStatuses[tracked.localToken] = {
           id: tracked.localToken,
           category: tracked.category || category,
+          label: getPhotoCategoryLabel(tracked.category || category),
           status: "failed",
           errorCode: tracked.errorCode,
           updatedAt: tracked.updatedAt || now,
@@ -570,6 +890,7 @@ export function sanitizeAnswersForFirestore(
         photoStatuses[tracked.localToken] = {
           id: tracked.localToken,
           category: tracked.category || category,
+          label: getPhotoCategoryLabel(tracked.category || category),
           status: "pending",
           updatedAt: tracked.updatedAt || now,
         };
@@ -581,6 +902,7 @@ export function sanitizeAnswersForFirestore(
     photoStatuses[slotKey] = {
       id: slotKey,
       category,
+      label: getPhotoCategoryLabel(category),
       status: "uploaded",
       storagePath: trimmed,
       updatedAt: now,

@@ -11,9 +11,35 @@ function escapeHtml(val: unknown): string {
     .replace(/"/g, "&quot;");
 }
 
+export interface EmailAttemptStatus {
+  sent: boolean;
+  skipped?: boolean;
+  status?: number;
+  error?: string;
+}
+
+export interface NotifyResponseBody {
+  success: boolean;
+  notified: boolean;
+  coupleReceiptSent: boolean;
+  studio: EmailAttemptStatus;
+  couple: EmailAttemptStatus;
+  errors: string[];
+}
+
+export const DEFAULT_FROM_EMAIL = "OAKS Wedding <hello@mail.oakswedding.com>";
+export const DEFAULT_REPLY_TO_EMAIL = "mywedding@oakswedding.com";
+
 export default async function handler(req: any, res: any) {
   if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+    return res.status(405).json({
+      success: false,
+      notified: false,
+      coupleReceiptSent: false,
+      studio: { sent: false, error: "Method not allowed" },
+      couple: { sent: false, skipped: true },
+      errors: ["Method not allowed"],
+    } satisfies NotifyResponseBody);
   }
 
   const {
@@ -25,22 +51,40 @@ export default async function handler(req: any, res: any) {
     phone,
     email,
     submittedAt,
+    uploadedPhotoCount,
+    totalPhotoCount,
     pendingPhotoCount,
   } = req.body || {};
 
-  const resendApiKey = process.env.RESEND_API_KEY;
-  const notifyEmails = process.env.NOTIFY_EMAILS;
+  const resendApiKey = process.env.RESEND_API_KEY?.trim();
+  const notifyEmails = process.env.NOTIFY_EMAILS?.trim();
   const fromAddress =
-    process.env.RESEND_FROM_EMAIL || "OAKS Studio <notifications@resend.dev>";
+    process.env.RESEND_FROM_EMAIL?.trim() || DEFAULT_FROM_EMAIL;
+  const replyToAddress =
+    process.env.RESEND_REPLY_TO?.trim() || DEFAULT_REPLY_TO_EMAIL;
+
+  const errors: string[] = [];
 
   if (!resendApiKey) {
-    return res.status(200).json({
-      success: true,
+    errors.push("studio: RESEND_API_KEY is not configured on the server");
+    return res.status(500).json({
+      success: false,
       notified: false,
       coupleReceiptSent: false,
-      message: "RESEND_API_KEY not set; email notifications skipped.",
-    });
+      studio: {
+        sent: false,
+        status: 500,
+        error: "RESEND_API_KEY is not configured on the server",
+      },
+      couple: { sent: false, skipped: true },
+      errors,
+    } satisfies NotifyResponseBody);
   }
+
+  const recipients = (notifyEmails || "")
+    .split(",")
+    .map((e: string) => e.trim())
+    .filter(Boolean);
 
   const safeP1 = escapeHtml(partner1 || "Partner 1");
   const safeP2 = escapeHtml(partner2 || "Partner 2");
@@ -49,28 +93,33 @@ export default async function handler(req: any, res: any) {
   const safePhone = escapeHtml(phone || "Not specified");
   const safeEmail = escapeHtml(email || "Not specified");
   const safeSubmittedAt = escapeHtml(submittedAt || new Date().toISOString());
+
+  const totalPhotos =
+    typeof totalPhotoCount === "number" && totalPhotoCount >= 0
+      ? totalPhotoCount
+      : typeof uploadedPhotoCount === "number"
+      ? uploadedPhotoCount
+      : 0;
+  const uploadedPhotos =
+    typeof uploadedPhotoCount === "number" && uploadedPhotoCount >= 0
+      ? uploadedPhotoCount
+      : Math.max(0, totalPhotos - (typeof pendingPhotoCount === "number" ? pendingPhotoCount : 0));
+
+  const photosSummaryLine = `Photos: ${uploadedPhotos} of ${totalPhotos} uploaded`;
   const pendingNote =
     typeof pendingPhotoCount === "number" && pendingPhotoCount > 0
-      ? `<p style="color:#b45309;"><strong>Note:</strong> ${pendingPhotoCount} photo(s) were still uploading in the background.</p>`
+      ? `<p style="color:#b45309;"><strong>Note:</strong> ${pendingPhotoCount} photo(s) were still uploading in the background when the form was sent.</p>`
       : "";
 
-  const results: {
-    notified: boolean;
-    coupleReceiptSent: boolean;
-    errors: string[];
-  } = {
-    notified: false,
-    coupleReceiptSent: false,
-    errors: [],
-  };
+  const studioStatus: EmailAttemptStatus = { sent: false };
+  const coupleStatus: EmailAttemptStatus = { sent: false };
 
-  // 1. Send studio notification email
-  const recipients = (notifyEmails || "")
-    .split(",")
-    .map((e: string) => e.trim())
-    .filter(Boolean);
-
-  if (recipients.length > 0) {
+  // 1. Send studio alert email
+  if (recipients.length === 0) {
+    studioStatus.status = 500;
+    studioStatus.error = "NOTIFY_EMAILS is not configured on the server";
+    errors.push(`studio(500): ${studioStatus.error}`);
+  } else {
     try {
       const studioHtml = `
         <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; padding: 24px; color: #1a1a1a;">
@@ -81,6 +130,7 @@ export default async function handler(req: any, res: any) {
           <p><strong>Phone:</strong> ${safePhone}</p>
           <p><strong>Email:</strong> ${safeEmail}</p>
           <p><strong>Submitted At:</strong> ${safeSubmittedAt}</p>
+          <p><strong>${escapeHtml(photosSummaryLine)}</strong></p>
           ${pendingNote}
           <div style="margin-top: 30px;">
             <a href="https://${escapeHtml(req.headers?.host || "")}/admin" style="display: inline-block; background-color: #1a1a1a; color: #ffffff; padding: 12px 24px; border-radius: 9999px; text-decoration: none; font-size: 15px;">
@@ -89,6 +139,16 @@ export default async function handler(req: any, res: any) {
           </div>
         </div>
       `;
+
+      const studioText = [
+        `OAKS Wedding Photography & Films`,
+        `New Couple Submission: ${partner1 || "Partner 1"} & ${partner2 || "Partner 2"} (${displayId || submissionId || "Unnumbered"})`,
+        `Wedding Date: ${weddingDate || "Not specified"}`,
+        `Phone: ${phone || "Not specified"}`,
+        `Email: ${email || "Not specified"}`,
+        `Submitted At: ${submittedAt || new Date().toISOString()}`,
+        photosSummaryLine,
+      ].join("\n");
 
       const response = await fetch("https://api.resend.com/emails", {
         method: "POST",
@@ -99,24 +159,33 @@ export default async function handler(req: any, res: any) {
         body: JSON.stringify({
           from: fromAddress,
           to: recipients,
-          subject: `New Questionnaire: ${partner1 || "Partner 1"} & ${partner2 || "Partner 2"} (${displayId || "New"})`,
+          reply_to: replyToAddress,
+          subject: `New Questionnaire: ${partner1 || "Partner 1"} & ${partner2 || "Partner 2"}${displayId ? ` (${displayId})` : ""}`,
           html: studioHtml,
+          text: studioText,
         }),
       });
 
+      studioStatus.status = response.status;
       if (response.ok) {
-        results.notified = true;
+        studioStatus.sent = true;
       } else {
-        results.errors.push(`studio: ${await response.text()}`);
+        const errText = (await response.text()).slice(0, 260);
+        studioStatus.error = errText || `Resend returned ${response.status}`;
+        errors.push(`studio(${response.status}): ${studioStatus.error}`);
       }
     } catch (err: any) {
-      results.errors.push(`studio: ${err?.message || "unknown"}`);
+      studioStatus.status = 502;
+      studioStatus.error = (err?.message || "Network error calling Resend").slice(0, 260);
+      errors.push(`studio(502): ${studioStatus.error}`);
     }
   }
 
-  // 2. Send couple receipt confirmation email if the couple entered an email address
+  // 2. Send couple receipt confirmation email if the couple entered a valid email
   const cleanCoupleEmail = typeof email === "string" ? email.trim() : "";
-  if (cleanCoupleEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanCoupleEmail)) {
+  if (!cleanCoupleEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanCoupleEmail)) {
+    coupleStatus.skipped = true;
+  } else {
     try {
       const coupleHtml = `
         <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; padding: 24px; color: #1a1a1a; background-color: #faf8f5;">
@@ -143,6 +212,14 @@ export default async function handler(req: any, res: any) {
         </div>
       `;
 
+      const coupleText = [
+        `We've received your story, ${partner1 || "Partner 1"} & ${partner2 || "Partner 2"}.`,
+        `Thank you for taking the time to share your story, your family, and your vision with us.`,
+        `Reference: ${displayId || submissionId || "Unnumbered"}`,
+        `Wedding Date: ${weddingDate || "Not specified"}`,
+        `With warmth, Team OAKS Wedding`,
+      ].join("\n\n");
+
       const coupleRes = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: {
@@ -152,23 +229,47 @@ export default async function handler(req: any, res: any) {
         body: JSON.stringify({
           from: fromAddress,
           to: [cleanCoupleEmail],
+          reply_to: replyToAddress,
           subject: `We received your OAKS Wedding questionnaire, ${partner1 || ""} & ${partner2 || ""}`,
           html: coupleHtml,
+          text: coupleText,
         }),
       });
 
+      coupleStatus.status = coupleRes.status;
       if (coupleRes.ok) {
-        results.coupleReceiptSent = true;
+        coupleStatus.sent = true;
       } else {
-        results.errors.push(`couple: ${await coupleRes.text()}`);
+        const errText = (await coupleRes.text()).slice(0, 260);
+        coupleStatus.error = errText || `Resend returned ${coupleRes.status}`;
+        errors.push(`couple(${coupleRes.status}): ${coupleStatus.error}`);
       }
     } catch (err: any) {
-      results.errors.push(`couple: ${err?.message || "unknown"}`);
+      coupleStatus.status = 502;
+      coupleStatus.error = (err?.message || "Network error calling Resend").slice(0, 260);
+      errors.push(`couple(502): ${coupleStatus.error}`);
     }
   }
 
-  return res.status(200).json({
-    success: true,
-    ...results,
-  });
+  const allAttemptedSucceeded =
+    studioStatus.sent && (coupleStatus.skipped || coupleStatus.sent);
+
+  const responsePayload: NotifyResponseBody = {
+    success: allAttemptedSucceeded,
+    notified: studioStatus.sent,
+    coupleReceiptSent: coupleStatus.sent,
+    studio: studioStatus,
+    couple: coupleStatus,
+    errors,
+  };
+
+  if (!allAttemptedSucceeded) {
+    const httpStatus =
+      (studioStatus.status && studioStatus.status >= 400 ? studioStatus.status : 0) ||
+      (coupleStatus.status && coupleStatus.status >= 400 ? coupleStatus.status : 0) ||
+      502;
+    return res.status(httpStatus).json(responsePayload);
+  }
+
+  return res.status(200).json(responsePayload);
 }

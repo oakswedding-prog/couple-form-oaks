@@ -27,17 +27,24 @@ import {
   validatePhotoFileBeforeCompression,
   resolveSafeFallbackBlob,
 } from "./imageCompressor.ts";
+import { readFileSync } from "node:fs";
 import {
   PENDING_PHOTO_PREFIX,
   sanitizeAnswersForFirestore,
+  waitForCoupleUidBeforeUpload,
+  findMissingPhotoSlots,
   __setPhotoEntryForTest,
   __clearPhotoEntriesForTest,
 } from "../lib/photoUploadManager.ts";
 import {
   executeBulletproofSubmit,
+  findResumeTokenForSubmission,
+  getSubmissionAttentionReasons,
   getSubmissionDeliveryState,
+  parseNotifyApiResponse,
   sortSubmissionsNewestFirst,
 } from "../lib/submissions.ts";
+import notifyHandler from "../../api/notify.ts";
 
 function makeSampleAnswers(overrides: Partial<QuestionnaireAnswers> = {}): QuestionnaireAnswers {
   return {
@@ -279,7 +286,7 @@ describe("Bulletproof Couple Questionnaire Reliability Suite (11 Scenarios)", ()
     // Unuploaded/failed photo tokens MUST NOT be saved as Storage paths in answers
     const savedAnswers = savedPayloads[0].answers as QuestionnaireAnswers;
     assert.deepEqual(savedAnswers.q12_references.images, []);
-    assert.equal(savedPayloads[0].submissionState, "photos_pending");
+    assert.equal(savedPayloads[0].submissionState, "needs_attention");
   });
 
   // Scenario 5: In-app browser (WhatsApp / Instagram) detection & safe error payload extraction
@@ -455,5 +462,388 @@ describe("Bulletproof Couple Questionnaire Reliability Suite (11 Scenarios)", ()
     );
     assert.equal(newerBuild, true);
     assert.ok(typeof getCurrentBuildId() === "string");
+  });
+
+  // Scenario 12 (Fix 3): vercel.json does NOT intercept /api/* routes, and parseNotifyApiResponse catches HTML/errors
+  it("12. Fix 3 (Emails): vercel.json excludes /api/* from SPA rewrite and parseNotifyApiResponse catches HTML & Resend errors", async () => {
+    const vercelConfig = JSON.parse(readFileSync("vercel.json", "utf-8"));
+    const rewriteSource: string = vercelConfig.rewrites?.[0]?.source || "";
+    assert.equal(rewriteSource, "/((?!api/).*)");
+    const regex = new RegExp(`^${rewriteSource}$`);
+    assert.equal(regex.test("/api/notify"), false, "/api/notify MUST NOT match SPA index.html rewrite");
+    assert.equal(regex.test("/admin"), true, "/admin should still route to SPA index.html");
+    assert.equal(regex.test("/admin/couple/sub_123"), true);
+
+    // Catch HTML 200 OK returned by misconfigured SPA fallback
+    await assert.rejects(
+      () =>
+        parseNotifyApiResponse({
+          ok: true,
+          status: 200,
+          headers: { get: () => "text/html; charset=utf-8" },
+          text: async () => "<!doctype html><html><body>SPA</body></html>",
+        }),
+      /non-JSON response/i
+    );
+
+    // Catch HTTP 502 with Resend error detail
+    await assert.rejects(
+      () =>
+        parseNotifyApiResponse({
+          ok: false,
+          status: 502,
+          headers: { get: () => "application/json" },
+          text: async () =>
+            JSON.stringify({
+              success: false,
+              notified: false,
+              errors: ["Studio alert failed (HTTP 403): Domain not verified"],
+            }),
+        }),
+      /Domain not verified/i
+    );
+
+    // Accept valid JSON success
+    const okRes = await parseNotifyApiResponse({
+      ok: true,
+      status: 200,
+      headers: { get: () => "application/json" },
+      text: async () =>
+        JSON.stringify({
+          success: true,
+          notified: true,
+          coupleReceiptSent: true,
+          errors: [],
+        }),
+    });
+    assert.deepEqual(okRes, { notified: true, coupleReceiptSent: true });
+  });
+
+  // Scenario 13 (Fix 3): /api/notify sends studio alert + couple receipt with reply_to & "Photos: X of Y uploaded", and returns non-200 on error
+  it("13. Fix 3 (/api/notify): sets reply_to default, includes 'Photos: X of Y uploaded', and returns 500/502 on missing env or Resend failure", async () => {
+    const originalFetch = globalThis.fetch;
+    const savedEnv = {
+      RESEND_API_KEY: process.env.RESEND_API_KEY,
+      NOTIFY_EMAILS: process.env.NOTIFY_EMAILS,
+      RESEND_FROM_EMAIL: process.env.RESEND_FROM_EMAIL,
+      RESEND_REPLY_TO: process.env.RESEND_REPLY_TO,
+    };
+
+    const runHandler = async (body: Record<string, unknown>) => {
+      let statusCode = 200;
+      let jsonBody: any = null;
+      const req = { method: "POST", body };
+      const res = {
+        status(code: number) {
+          statusCode = code;
+          return this;
+        },
+        json(payload: any) {
+          jsonBody = payload;
+          return this;
+        },
+      };
+      await notifyHandler(req, res);
+      return { statusCode, jsonBody };
+    };
+
+    try {
+      // 1. Missing RESEND_API_KEY returns HTTP 500 (not 200!)
+      delete process.env.RESEND_API_KEY;
+      process.env.NOTIFY_EMAILS = "studio@oakswedding.com";
+      const missingKeyRes = await runHandler({
+        partner1: "Boss",
+        partner2: "Queen",
+        email: "boss@example.com",
+      });
+      assert.equal(missingKeyRes.statusCode, 500);
+      assert.equal(missingKeyRes.jsonBody.success, false);
+
+      // 2. Valid env sends both studio alert & couple receipt with default reply_to and photo count line
+      process.env.RESEND_API_KEY = "re_test_key";
+      process.env.NOTIFY_EMAILS = "mywedding@oakswedding.com, team@oakswedding.com";
+      process.env.RESEND_FROM_EMAIL = "OAKS Wedding <hello@mail.oakswedding.com>";
+      delete process.env.RESEND_REPLY_TO;
+
+      const sentPayloads: any[] = [];
+      globalThis.fetch = (async (_url: any, init: any) => {
+        sentPayloads.push(JSON.parse(init.body));
+        return new Response(JSON.stringify({ id: `email_${sentPayloads.length}` }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }) as typeof fetch;
+
+      const ok = await runHandler({
+        submissionId: "sub_022",
+        displayId: "#022",
+        partner1: "Boss",
+        partner2: "Queen",
+        weddingDate: "2026-11-21",
+        phone: "+91 8590118094",
+        email: "couple@example.com",
+        uploadedPhotoCount: 7,
+        totalPhotoCount: 10,
+      });
+
+      assert.equal(ok.statusCode, 200);
+      assert.equal(ok.jsonBody.success, true);
+      assert.equal(ok.jsonBody.notified, true);
+      assert.equal(ok.jsonBody.coupleReceiptSent, true);
+      assert.equal(sentPayloads.length, 2);
+      // Studio email checks
+      assert.equal(sentPayloads[0].from, "OAKS Wedding <hello@mail.oakswedding.com>");
+      assert.equal(sentPayloads[0].reply_to, "mywedding@oakswedding.com");
+      assert.ok(String(sentPayloads[0].html).includes("Photos: 7 of 10 uploaded"));
+      assert.ok(String(sentPayloads[0].text).includes("Photos: 7 of 10 uploaded"));
+      // Couple receipt checks
+      assert.deepEqual(sentPayloads[1].to, ["couple@example.com"]);
+      assert.equal(sentPayloads[1].reply_to, "mywedding@oakswedding.com");
+
+      // 3. Resend failure returns non-200 status and explicit errors array
+      globalThis.fetch = (async () =>
+        new Response(JSON.stringify({ message: "Invalid API key" }), {
+          status: 403,
+          headers: { "Content-Type": "application/json" },
+        })) as typeof fetch;
+
+      const failedRes = await runHandler({
+        submissionId: "sub_023",
+        partner1: "Boss",
+        partner2: "Queen",
+        email: "couple@example.com",
+        uploadedPhotoCount: 0,
+        totalPhotoCount: 0,
+      });
+      assert.equal(failedRes.statusCode, 403);
+      assert.equal(failedRes.jsonBody.success, false);
+      assert.equal(failedRes.jsonBody.notified, false);
+      assert.ok(failedRes.jsonBody.errors.length >= 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+      for (const [k, v] of Object.entries(savedEnv)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
+  // Scenario 14 (Fix 2): "Needs attention" lists every plain-English reason and auto-clears once resolved
+  it("14. Fix 2 (Needs attention badge): explains exact reasons, checks submissionErrors for email failure, and clears back to Submitted when resolved", () => {
+    const brokenRecord: SubmissionRecord = {
+      id: "sub_broken_22",
+      submittedAt: "2026-11-21T10:00:00.000Z",
+      partner1: "Boss",
+      partner2: "Queen",
+      weddingDate: "2026-11-21",
+      phone: "",
+      email: "couple@example.com",
+      answers: makeSampleAnswers(),
+      photoStatuses: {
+        p1: { id: "p1", category: "couple_photo", status: "uploaded", updatedAt: "2026-11-21T10:00:00.000Z" },
+        p2: { id: "p2", category: "bride_outfit", status: "failed", errorCode: "storage/unauthorized", updatedAt: "2026-11-21T10:00:00.000Z" },
+        p3: { id: "p3", category: "decor", status: "failed", errorCode: "storage/upload-timeout", updatedAt: "2026-11-21T10:00:00.000Z" },
+      },
+    };
+
+    const errorLogs = [
+      {
+        id: "err_1",
+        timestamp: "2026-11-21T10:00:05.000Z",
+        step: "post_save_notify_email",
+        errorCode: "email/invalid-response",
+        message: "Notify endpoint returned non-JSON response",
+        deviceBrowser: "Desktop · Chrome",
+        photoCount: 3,
+        submissionId: "sub_broken_22",
+      },
+    ];
+
+    const reasons = getSubmissionAttentionReasons(brokenRecord, errorLogs);
+    assert.deepEqual(reasons, [
+      "2 photos failed to upload",
+      "Missing submission number",
+      "Missing status",
+      "Email not sent",
+    ]);
+    assert.equal(getSubmissionDeliveryState(brokenRecord, errorLogs), "needs_attention");
+
+    // Once resolved (photos uploaded, number assigned, status set, email sent), badge clears back to "submitted" automatically!
+    const fixedRecord: SubmissionRecord = {
+      ...brokenRecord,
+      sequenceNumber: 22,
+      displayId: "#022",
+      status: "new",
+      emailNotificationStatus: "sent",
+      photoStatuses: {
+        p1: { id: "p1", category: "couple_photo", status: "uploaded", updatedAt: "2026-11-21T10:05:00.000Z" },
+        p2: { id: "p2", category: "bride_outfit", status: "uploaded", updatedAt: "2026-11-21T10:05:00.000Z" },
+        p3: { id: "p3", category: "decor", status: "uploaded", updatedAt: "2026-11-21T10:05:00.000Z" },
+      },
+    };
+
+    assert.deepEqual(getSubmissionAttentionReasons(fixedRecord, errorLogs), []);
+    assert.equal(getSubmissionDeliveryState(fixedRecord, errorLogs), "submitted");
+
+    // Resume token lookup works from either record.resumeToken or drafts fallback
+    const token = generateResumeToken();
+    assert.equal(findResumeTokenForSubmission({ id: "sub_1", resumeToken: token }), token);
+    assert.equal(
+      findResumeTokenForSubmission({ id: "sub_2" }, [
+        {
+          id: token,
+          submissionId: "sub_2",
+          ownerUid: "u1",
+          status: "submitted",
+          currentStep: 28,
+          furthestStep: 28,
+          partner1: "A",
+          partner2: "B",
+          weddingDate: "2026-12-18",
+          phone: "",
+          email: "",
+          answers: makeSampleAnswers(),
+          answeredCount: 27,
+          mandatoryRemaining: 0,
+          createdAt: "2026-11-21T10:00:00.000Z",
+          updatedAt: "2026-11-21T10:00:00.000Z",
+        },
+      ]),
+      token
+    );
+  });
+
+  // Scenario 15 (Fix 1): waitForCoupleUidBeforeUpload retries auth and NEVER returns "anon_pending"
+  it("15. Fix 1 (Strict auth wait): retries anonymous sign-in and never falls back to 'anon_pending'", async () => {
+    let calls = 0;
+    const uid = await waitForCoupleUidBeforeUpload(async () => {
+      calls++;
+      if (calls < 3) return null;
+      return { uid: "real_firebase_anon_uid_99" };
+    }, [1, 1, 1]);
+
+    assert.equal(calls, 3);
+    assert.equal(uid, "real_firebase_anon_uid_99");
+
+    // If auth stays unavailable, returns null (keeps photo queued) — NEVER "anon_pending"
+    const failedUid = await waitForCoupleUidBeforeUpload(
+      async () => ({ uid: "anon_pending" }),
+      [1, 1]
+    );
+    assert.equal(failedUid, null);
+  });
+
+  // Scenario 16 (Fix 1): findMissingPhotoSlots identifies unrecoverable photos after cleared storage/new phone
+  it("16. Fix 1 (Missing photos checklist): detects missing slots across answers & saved photoStatuses and excludes uploaded ones", () => {
+    const missingToken = `${PENDING_PHOTO_PREFIX}lost_on_other_phone_1`;
+    const uploadedToken = `${PENDING_PHOTO_PREFIX}already_uploaded_2`;
+
+    __setPhotoEntryForTest({
+      localToken: uploadedToken,
+      targetStoragePath: "submissions/sub_x/uid_1/ok.jpg",
+      uploadedStoragePath: "submissions/sub_x/uid_1/ok.jpg",
+      previewUrl: "blob:ok",
+      category: "couple_photo",
+      status: "uploaded",
+      progress: 100,
+      blob: new Blob(["ok"], { type: "image/jpeg" }),
+      contentType: "image/jpeg",
+      attempts: 1,
+      updatedAt: new Date().toISOString(),
+    });
+
+    const answers = makeSampleAnswers({
+      couplePhotoUrl: uploadedToken,
+      wardrobe: {
+        bride: { notes: "Lehenga", links: [], photos: [missingToken] },
+        groom: { notes: "", links: [], photos: [] },
+      },
+    });
+
+    const savedPhotoStatuses = {
+      failed_decor_1: {
+        id: "failed_decor_1",
+        category: "decor_sangeet",
+        status: "failed" as const,
+        errorCode: "storage/unauthorized",
+        updatedAt: new Date().toISOString(),
+      },
+    };
+
+    const missing = findMissingPhotoSlots(answers, savedPhotoStatuses);
+    assert.equal(missing.length, 2);
+    assert.equal(missing[0].category, "bride_outfit");
+    assert.equal(missing[0].stepNumber, 13);
+    assert.equal(missing[1].category, "decor_sangeet");
+    assert.equal(missing[1].stepNumber, 14);
+    assert.equal(missing[1].errorCode, "storage/unauthorized");
+  });
+
+  // Scenario 17 (Fix 3 + Fix 1): executeBulletproofSubmit fires email immediately with uploadedPhotoCount & totalPhotoCount
+  it("17. Fix 3 (Immediate email with photo counts): sends studio alert & couple receipt right after save with 'uploadedPhotoCount' & 'totalPhotoCount'", async () => {
+    const uploadedToken = `${PENDING_PHOTO_PREFIX}imm_up_1`;
+    const pendingToken = `${PENDING_PHOTO_PREFIX}imm_pend_2`;
+
+    __setPhotoEntryForTest({
+      localToken: uploadedToken,
+      targetStoragePath: "submissions/sub_17/uid_17/up1.jpg",
+      uploadedStoragePath: "submissions/sub_17/uid_17/up1.jpg",
+      previewUrl: "blob:up1",
+      category: "couple_photo",
+      status: "uploaded",
+      progress: 100,
+      blob: new Blob(["ok"], { type: "image/jpeg" }),
+      contentType: "image/jpeg",
+      attempts: 1,
+      updatedAt: new Date().toISOString(),
+    });
+    __setPhotoEntryForTest({
+      localToken: pendingToken,
+      targetStoragePath: "",
+      previewUrl: "blob:pend2",
+      category: "decor",
+      status: "uploading",
+      waitingForAuth: true,
+      progress: 10,
+      blob: new Blob(["ok"], { type: "image/jpeg" }),
+      contentType: "image/jpeg",
+      attempts: 1,
+      updatedAt: new Date().toISOString(),
+    });
+
+    let notifyBody: Record<string, unknown> | null = null;
+    const emailStatusUpdates: string[] = [];
+
+    const result = await executeBulletproofSubmit(
+      {
+        submissionId: "sub_17",
+        resumeToken: generateResumeToken(),
+        ownerUid: "uid_17",
+        answers: makeSampleAnswers({
+          couplePhotoUrl: uploadedToken,
+          q23_oneLastThing: { notes: "Hi", images: [pendingToken] },
+        }),
+      },
+      {
+        writeSubmissionDoc: async () => {},
+        notifyStudioAndCouple: async (payload) => {
+          notifyBody = payload;
+        },
+        updateEmailStatus: async (_id, st) => {
+          emailStatusUpdates.push(st);
+        },
+        retryDelaysMs: [1],
+      }
+    );
+
+    await new Promise((r) => setTimeout(r, 25));
+
+    assert.equal(result.uploadedPhotoCount, 1);
+    assert.equal(result.totalPhotoCount, 2);
+    assert.equal(result.pendingPhotoCount, 1);
+    assert.ok(notifyBody, "notifyStudioAndCouple must be called immediately after main save");
+    assert.equal((notifyBody as any).uploadedPhotoCount, 1);
+    assert.equal((notifyBody as any).totalPhotoCount, 2);
+    assert.deepEqual(emailStatusUpdates, ["sent"]);
   });
 });

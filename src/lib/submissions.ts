@@ -24,6 +24,7 @@ import {
   SubmissionRecord,
   SubmissionStatus,
   SubmissionDeliveryState,
+  SubmissionErrorRecord,
   DraftRecord,
   OrphanedStorageFolder,
   PhotoStatusEntry,
@@ -48,14 +49,23 @@ import {
   countAllPhotosInAnswers,
   kickOffPendingPhotoRetries,
   resetDraftUploadFolder,
+  resumePendingUploadsFromIndexedDb,
   sanitizeAnswersForFirestore,
   subscribePhotoUploadComplete,
   waitBrieflyForActiveUploads,
 } from "./photoUploadManager.ts";
+import {
+  clearPendingPostSubmitState,
+  PendingPostSubmitState,
+  savePendingPostSubmitState,
+} from "./photoIndexedDb.ts";
 import { assertNoBase64Images } from "../utils/submissionSizeGuard.ts";
 import {
+  buildResumeUrl,
   ensureCoupleAnonymousAuth,
+  generateResumeToken,
   getOrCreateCoupleSession,
+  resetActiveCoupleSession,
 } from "./coupleSession.ts";
 import { logSubmissionError } from "./errorLogger.ts";
 import { markDraftSubmitted } from "./drafts.ts";
@@ -325,35 +335,258 @@ export interface SubmissionResult {
   id: string;
   displayId?: string;
   sequenceNumber?: number;
+  uploadedPhotoCount: number;
+  totalPhotoCount: number;
   pendingPhotoCount: number;
   failedPhotoCount: number;
 }
 
 /**
+ * Pure helper returning every plain-English reason why a submission needs attention.
+ * Returns an empty array once all issues are resolved so the badge clears back to "Submitted".
+ */
+export function getSubmissionAttentionReasons(
+  record: Partial<SubmissionRecord>,
+  submissionErrors?: SubmissionErrorRecord[]
+): string[] {
+  const reasons: string[] = [];
+  const statuses = record.photoStatuses ? Object.values(record.photoStatuses) : [];
+  const failedCount = statuses.filter((s) => s.status === "failed").length;
+
+  if (failedCount === 1) {
+    reasons.push("1 photo failed to upload");
+  } else if (failedCount > 1) {
+    reasons.push(`${failedCount} photos failed to upload`);
+  }
+
+  if (!record.displayId || typeof record.sequenceNumber !== "number") {
+    reasons.push("Missing submission number");
+  }
+
+  if (!record.status) {
+    reasons.push("Missing status");
+  }
+
+  const hasLoggedEmailError = Boolean(
+    record.id &&
+      Array.isArray(submissionErrors) &&
+      submissionErrors.some(
+        (err) => err.submissionId === record.id && err.step === "post_save_notify_email"
+      )
+  );
+  if (
+    record.emailNotificationStatus !== "sent" &&
+    (record.emailNotificationStatus === "failed" || hasLoggedEmailError)
+  ) {
+    reasons.push("Email not sent");
+  }
+
+  return reasons;
+}
+
+/**
  * Pure helper computing the delivery/health label for any submission in the Admin Dashboard:
- * - "photos_pending": one or more photos were still uploading at Send time
- * - "needs_attention": missing display number/sequenceNumber, missing status, or failed photos
- * - "submitted": normal complete submission
+ * - "photos_pending": one or more photos are still uploading
+ * - "needs_attention": one or more concrete reasons from getSubmissionAttentionReasons()
+ * - "submitted": normal complete submission (auto-clears once issues are resolved)
  */
 export function getSubmissionDeliveryState(
-  record: Partial<SubmissionRecord>
+  record: Partial<SubmissionRecord>,
+  submissionErrors?: SubmissionErrorRecord[]
 ): SubmissionDeliveryState {
   const statuses = record.photoStatuses ? Object.values(record.photoStatuses) : [];
-  const hasFailedPhotos = statuses.some((s) => s.status === "failed");
   const hasPendingPhotos =
     (typeof record.pendingPhotoCount === "number" && record.pendingPhotoCount > 0) ||
     statuses.some((s) => s.status === "pending");
 
-  if (hasPendingPhotos) return "photos_pending";
-  if (
-    hasFailedPhotos ||
-    !record.displayId ||
-    typeof record.sequenceNumber !== "number" ||
-    !record.status
-  ) {
+  const reasons = getSubmissionAttentionReasons(record, submissionErrors);
+  if (reasons.length > 0) {
     return "needs_attention";
   }
+  if (hasPendingPhotos) {
+    return "photos_pending";
+  }
   return "submitted";
+}
+
+/**
+ * Finds the best resumeToken for a submission (from the submission record itself or from drafts).
+ */
+export function findResumeTokenForSubmission(
+  record: Partial<SubmissionRecord>,
+  drafts?: DraftRecord[]
+): string | null {
+  if (record.resumeToken && record.resumeToken.length >= 22) {
+    return record.resumeToken;
+  }
+  if (record.id && Array.isArray(drafts)) {
+    const match = drafts.find((d) => d.submissionId === record.id && d.id.length >= 22);
+    if (match) return match.id;
+  }
+  return null;
+}
+
+/**
+ * Admin-only helper: returns a working resume URL for any submission.
+ * - If a draft/resumeToken already exists, re-opens that draft (`status: "draft"`) when the
+ *   submission still has missing/failed photos so the couple can re-add photos on any device.
+ * - If an older submission predates online drafts, creates a new draft document on demand and
+ *   saves `resumeToken` onto the submission record.
+ */
+export async function ensureResumeLinkForSubmission(
+  record: SubmissionRecord,
+  existingDrafts?: DraftRecord[]
+): Promise<{ token: string; url: string }> {
+  const existingToken = findResumeTokenForSubmission(record, existingDrafts);
+  const now = new Date().toISOString();
+  const hasPhotoIssues =
+    getSubmissionDeliveryState(record) !== "submitted" ||
+    Object.values(record.photoStatuses || {}).some((s) => s.status !== "uploaded");
+
+  if (existingToken) {
+    try {
+      const draftRef = doc(db, "drafts", existingToken);
+      const draftSnap = await getDoc(draftRef);
+      if (draftSnap.exists()) {
+        if (hasPhotoIssues) {
+          await updateDoc(draftRef, {
+            status: "draft",
+            photoStatuses: record.photoStatuses || {},
+            updatedAt: now,
+          });
+        }
+      } else if (auth.currentUser?.uid) {
+        const sanitized = sanitizeAnswersForFirestore(record.answers);
+        await setDoc(
+          draftRef,
+          stripUndefinedDeep({
+            id: existingToken,
+            submissionId: record.id,
+            ownerUid: auth.currentUser.uid,
+            status: "draft",
+            currentStep: 28,
+            furthestStep: 28,
+            partner1: record.partner1 || "",
+            partner2: record.partner2 || "",
+            weddingDate: record.weddingDate || "",
+            phone: record.phone || "",
+            email: record.email || "",
+            answers: sanitized.answers,
+            photoStatuses: record.photoStatuses || sanitized.photoStatuses,
+            answeredCount: 27,
+            mandatoryRemaining: 0,
+            createdAt: record.submittedAt || now,
+            updatedAt: now,
+          })
+        );
+      }
+      if (!record.resumeToken) {
+        await updateDoc(doc(db, "submissions", record.id), {
+          resumeToken: existingToken,
+          ...(hasPhotoIssues ? { finalized: false } : {}),
+        });
+        updateLocalCacheRecord(record.id, (rec) => ({
+          ...rec,
+          resumeToken: existingToken,
+          ...(hasPhotoIssues ? { finalized: false } : {}),
+        }));
+      }
+    } catch {
+      // Even if updating metadata fails, the existing resume token URL still works
+    }
+    return { token: existingToken, url: buildResumeUrl(existingToken) };
+  }
+
+  const newToken = generateResumeToken();
+  const adminUid = auth.currentUser?.uid || "admin";
+  const sanitized = sanitizeAnswersForFirestore(record.answers);
+  await setDoc(
+    doc(db, "drafts", newToken),
+    stripUndefinedDeep({
+      id: newToken,
+      submissionId: record.id,
+      ownerUid: adminUid,
+      status: "draft",
+      currentStep: 28,
+      furthestStep: 28,
+      partner1: record.partner1 || "",
+      partner2: record.partner2 || "",
+      weddingDate: record.weddingDate || "",
+      phone: record.phone || "",
+      email: record.email || "",
+      answers: sanitized.answers,
+      photoStatuses: record.photoStatuses || sanitized.photoStatuses,
+      answeredCount: 27,
+      mandatoryRemaining: 0,
+      createdAt: record.submittedAt || now,
+      updatedAt: now,
+    })
+  );
+
+  await updateDoc(doc(db, "submissions", record.id), {
+    resumeToken: newToken,
+    ...(hasPhotoIssues ? { finalized: false } : {}),
+  });
+  updateLocalCacheRecord(record.id, (rec) => ({
+    ...rec,
+    resumeToken: newToken,
+    ...(hasPhotoIssues ? { finalized: false } : {}),
+  }));
+
+  return { token: newToken, url: buildResumeUrl(newToken) };
+}
+
+/**
+ * Parses and validates the response from `/api/notify`, catching HTML rewrite responses
+ * and Resend API errors even if an endpoint returned HTTP 200.
+ */
+export async function parseNotifyApiResponse(res: {
+  ok: boolean;
+  status: number;
+  headers?: { get?: (name: string) => string | null };
+  text: () => Promise<string>;
+}): Promise<{ notified: boolean; coupleReceiptSent: boolean }> {
+  const contentType = res.headers?.get?.("content-type") || "";
+  const rawText = await res.text();
+
+  let parsed: any = null;
+  if (rawText) {
+    try {
+      parsed = JSON.parse(rawText);
+    } catch {
+      parsed = null;
+    }
+  }
+
+  if (!parsed || (!contentType.includes("application/json") && rawText.trim().startsWith("<"))) {
+    const htmlErr: any = new Error(
+      `Notify endpoint returned non-JSON response (HTTP ${res.status}). Check vercel.json /api rewrite.`
+    );
+    htmlErr.code = "email/invalid-response";
+    throw htmlErr;
+  }
+
+  const errorsList: string[] = Array.isArray(parsed.errors) ? parsed.errors : [];
+  const failed =
+    !res.ok ||
+    parsed.success === false ||
+    errorsList.length > 0 ||
+    parsed.notified === false;
+
+  if (failed) {
+    const detail =
+      errorsList.length > 0
+        ? errorsList.join(" | ")
+        : parsed.error || `Notify endpoint returned HTTP ${res.status}`;
+    const resendErr: any = new Error(`HTTP ${res.status}: ${detail}`.slice(0, 300));
+    resendErr.code = `email/http-${res.status}`;
+    throw resendErr;
+  }
+
+  return {
+    notified: Boolean(parsed.notified),
+    coupleReceiptSent: Boolean(parsed.coupleReceiptSent),
+  };
 }
 
 function getRecordTimestampMs(record: Partial<SubmissionRecord> & { createdAt?: any }): number {
@@ -394,6 +627,7 @@ export interface CoreSubmitDeps {
   assignDisplayNumber?: (submissionId: string) => Promise<{ sequenceNumber: number; displayId: string } | null>;
   markDraftDone?: (resumeToken: string | undefined, submissionId: string, submittedAt: string) => Promise<void>;
   notifyStudioAndCouple?: (payload: Record<string, unknown>) => Promise<void>;
+  updateEmailStatus?: (submissionId: string, status: "sent" | "failed") => Promise<void>;
   logError?: (step: string, err: unknown, submissionId: string, photoCount: number) => Promise<void>;
   retryDelaysMs?: number[];
 }
@@ -401,12 +635,11 @@ export interface CoreSubmitDeps {
 /**
  * Core save-main-record-first orchestrator (injectable for deterministic automated tests):
  * 1. Reuses ONE stable `submissionId` across up to 3 attempts (no duplicates, no burned numbers).
- * 2. Writes the main submission record to Firestore FIRST (with verified uploaded photos only;
- *    pending/failed photos NEVER block submission).
+ * 2. Writes the main submission record to Firestore FIRST without deep-merging stale photoStatuses.
  * 3. Immediately resolves success once Firestore confirms the main write.
- * 4. Runs post-save tasks (display number transaction, draft status update, studio + couple emails)
- *    quietly afterwards; any post-save failure is logged to `submissionErrors` and NEVER turns
- *    a saved submission into an error.
+ * 4. Runs post-save tasks (studio + couple emails right away with "Photos: X of Y uploaded",
+ *    display number transaction, and draft completion) quietly afterwards; any post-save failure
+ *    is logged to `submissionErrors` and NEVER turns a saved submission into an error.
  */
 export async function executeBulletproofSubmit(
   params: {
@@ -431,12 +664,13 @@ export async function executeBulletproofSubmit(
   const submissionData: SubmissionRecord = stripUndefinedDeep({
     id: submissionId,
     ownerUid,
+    ...(resumeToken ? { resumeToken } : {}),
     finalized: false, // Flipped to true after post-save numbering & any pending photo sync finish
     submissionState:
-      sanitized.pendingCount > 0
-        ? "photos_pending"
-        : sanitized.failedCount > 0
+      sanitized.failedCount > 0
         ? "needs_attention"
+        : sanitized.pendingCount > 0
+        ? "photos_pending"
         : "submitted",
     submittedAt,
     updatedAt: submittedAt,
@@ -482,95 +716,118 @@ export async function executeBulletproofSubmit(
   }
 
   // MAIN RECORD IS NOW CONFIRMED SAVED!
-  // Everything below runs quietly without EVER causing Send to report an error.
+  // Fire studio alert + couple receipt immediately, alongside display numbering & draft completion.
+  // None of these can EVER turn a saved submission into an error for the couple.
   const runPostSave = async () => {
-    let assignedDisplayId: string | undefined;
-
-    if (deps.assignDisplayNumber) {
-      try {
-        const assigned = await deps.assignDisplayNumber(submissionId);
-        if (assigned) {
-          assignedDisplayId = assigned.displayId;
-        }
-      } catch (err) {
-        await deps.logError?.("post_save_assign_number", err, submissionId, sanitized.totalCount);
-      }
-    }
-
-    if (deps.markDraftDone) {
-      try {
-        await deps.markDraftDone(resumeToken, submissionId, submittedAt);
-      } catch (err) {
-        await deps.logError?.("post_save_mark_draft", err, submissionId, sanitized.totalCount);
-      }
-    }
-
-    if (deps.notifyStudioAndCouple) {
+    const emailTask = (async () => {
+      if (!deps.notifyStudioAndCouple) return;
       try {
         await deps.notifyStudioAndCouple({
           submissionId,
-          displayId: assignedDisplayId || "",
+          displayId: "",
           partner1: submissionData.partner1,
           partner2: submissionData.partner2,
           weddingDate: submissionData.weddingDate,
           phone: submissionData.phone,
           email: submissionData.email,
           submittedAt,
+          uploadedPhotoCount: sanitized.uploadedCount,
+          totalPhotoCount: sanitized.totalCount,
           pendingPhotoCount: pendingOrFailed,
         });
+        await deps.updateEmailStatus?.(submissionId, "sent").catch(() => {});
       } catch (err) {
         await deps.logError?.("post_save_notify_email", err, submissionId, sanitized.totalCount);
+        await deps.updateEmailStatus?.(submissionId, "failed").catch(() => {});
       }
-    }
+    })();
+
+    const numberingTask = (async () => {
+      if (!deps.assignDisplayNumber) return;
+      try {
+        await deps.assignDisplayNumber(submissionId);
+      } catch (err) {
+        await deps.logError?.("post_save_assign_number", err, submissionId, sanitized.totalCount);
+      }
+    })();
+
+    const draftTask = (async () => {
+      if (!deps.markDraftDone) return;
+      try {
+        await deps.markDraftDone(resumeToken, submissionId, submittedAt);
+      } catch (err) {
+        await deps.logError?.("post_save_mark_draft", err, submissionId, sanitized.totalCount);
+      }
+    })();
+
+    await Promise.allSettled([emailTask, numberingTask, draftTask]);
   };
 
   void runPostSave();
 
   return {
     id: submissionId,
+    uploadedPhotoCount: sanitized.uploadedCount,
+    totalPhotoCount: sanitized.totalCount,
     pendingPhotoCount: sanitized.pendingCount,
     failedPhotoCount: sanitized.failedCount,
   };
 }
 
 let activePostSubmitPhotoUnsub: (() => void) | null = null;
+let activePostSubmitSyncSubmissionId: string | null = null;
 
 /**
- * Watches any photos that were still uploading/retrying when Send was tapped.
- * As each photo finishes in the background, quietly patches the verified Storage path
- * into the already-saved submission record (while finalized == false).
+ * Watches any photos that were still uploading/retrying when Send was tapped (or after a reload).
+ * As each photo finishes in the background, replaces `answers` and `photoStatuses` cleanly
+ * (no deep-merge that could leave stale "failed" keys behind). Once every photo finishes,
+ * clears pending post-submit state and resets the couple session so the next submission starts fresh.
  */
-function watchPendingPhotosAfterSubmit(
+export function watchPendingPhotosAfterSubmit(
   submissionId: string,
-  originalAnswers: QuestionnaireAnswers
+  originalAnswers: QuestionnaireAnswers,
+  onSyncUpdated?: (counts: { uploaded: number; pending: number; failed: number }) => void
 ): void {
   if (activePostSubmitPhotoUnsub) {
     activePostSubmitPhotoUnsub();
     activePostSubmitPhotoUnsub = null;
   }
+  activePostSubmitSyncSubmissionId = submissionId;
 
-  activePostSubmitPhotoUnsub = subscribePhotoUploadComplete(() => {
+  const pushLatestSnapshotToFirestore = () => {
     const nextSanitized = sanitizeAnswersForFirestore(originalAnswers);
     const allDone = nextSanitized.pendingCount === 0 && nextSanitized.failedCount === 0;
     const now = new Date().toISOString();
+
+    onSyncUpdated?.({
+      uploaded: nextSanitized.uploadedCount,
+      pending: nextSanitized.pendingCount,
+      failed: nextSanitized.failedCount,
+    });
 
     void updateDoc(doc(db, "submissions", submissionId), {
       answers: stripUndefinedDeep(nextSanitized.answers),
       photoStatuses: stripUndefinedDeep(nextSanitized.photoStatuses),
       pendingPhotoCount: nextSanitized.pendingCount,
       submissionState:
-        nextSanitized.pendingCount > 0
-          ? "photos_pending"
-          : nextSanitized.failedCount > 0
+        nextSanitized.failedCount > 0
           ? "needs_attention"
+          : nextSanitized.pendingCount > 0
+          ? "photos_pending"
           : "submitted",
       finalized: allDone,
       updatedAt: now,
     })
       .then(() => {
-        if (allDone && activePostSubmitPhotoUnsub) {
-          activePostSubmitPhotoUnsub();
-          activePostSubmitPhotoUnsub = null;
+        if (allDone) {
+          if (activePostSubmitPhotoUnsub) {
+            activePostSubmitPhotoUnsub();
+            activePostSubmitPhotoUnsub = null;
+          }
+          activePostSubmitSyncSubmissionId = null;
+          clearPendingPostSubmitState();
+          resetActiveCoupleSession();
+          resetDraftUploadFolder(submissionId);
         }
       })
       .catch((err) => {
@@ -581,7 +838,41 @@ function watchPendingPhotosAfterSubmit(
           submissionId,
         });
       });
+  };
+
+  activePostSubmitPhotoUnsub = subscribePhotoUploadComplete(() => {
+    pushLatestSnapshotToFirestore();
   });
+
+  // Also check immediately in case resumed IndexedDB uploads already finished
+  const immediate = sanitizeAnswersForFirestore(originalAnswers);
+  if (immediate.pendingCount === 0 && immediate.failedCount === 0) {
+    pushLatestSnapshotToFirestore();
+  }
+}
+
+/**
+ * Called on app mount if the couple refreshed the page while ThankYouScreen was still uploading photos.
+ * Restores blobs from IndexedDB, restarts uploads, and re-attaches the Firestore watcher so every
+ * uploaded Storage path still attaches cleanly to the submitted Firestore record.
+ */
+export async function resumePostSubmitPhotoSync(
+  state: PendingPostSubmitState
+): Promise<{ resumedCount: number; missingCount: number }> {
+  await ensureCoupleAnonymousAuth();
+  const { resumedCount, missingSlots } = await resumePendingUploadsFromIndexedDb(
+    state.submissionId,
+    state.answers
+  );
+
+  if (activePostSubmitSyncSubmissionId !== state.submissionId) {
+    watchPendingPhotosAfterSubmit(state.submissionId, state.answers);
+  }
+
+  return {
+    resumedCount,
+    missingCount: missingSlots.length,
+  };
 }
 
 /**
@@ -616,8 +907,9 @@ async function assignSequentialDisplayNumber(
  * Public entry point called by ReviewScreen when the couple taps "Send".
  * - Uses anonymous auth + stable submissionId
  * - Gives almost-finished photos a brief 2.5s window without ever blocking
- * - Saves main record first with up to 3 automatic retries
- * - Runs numbering, draft completion, and emails quietly after save
+ * - Saves main record first WITHOUT merging stale photoStatuses
+ * - Fires studio + couple emails right away (validating full JSON response & logging Resend errors)
+ * - Resets couple session once fully finished so a second submission in the same browser never reuses old IDs/photoStatuses
  */
 export async function createSubmission(
   answers: QuestionnaireAnswers
@@ -646,6 +938,19 @@ export async function createSubmission(
   const hasPendingOrFailed =
     sanitizedPreview.pendingCount > 0 || sanitizedPreview.failedCount > 0;
 
+  // Check if this submission already exists (e.g., couple reopened resume link to re-add missing photos)
+  const docRef = doc(db, "submissions", session.submissionId);
+  let existingDocSnap: Awaited<ReturnType<typeof getDoc>> | null = null;
+  try {
+    existingDocSnap = await getDoc(docRef);
+  } catch {
+    existingDocSnap = null;
+  }
+  const alreadyExistsWithNumber = Boolean(
+    existingDocSnap?.exists() &&
+      typeof (existingDocSnap.data() as Partial<SubmissionRecord>)?.sequenceNumber === "number"
+  );
+
   const result = await executeBulletproofSubmit(
     {
       submissionId: session.submissionId,
@@ -655,10 +960,26 @@ export async function createSubmission(
     },
     {
       writeSubmissionDoc: async (id, payload) => {
-        await setDoc(doc(db, "submissions", id), payload, { merge: true });
+        const targetRef = doc(db, "submissions", id);
+        if (existingDocSnap?.exists()) {
+          // Explicitly replace answers & photoStatuses via updateDoc so stale "failed" entries are wiped cleanly
+          const existingData = existingDocSnap.data() as Partial<SubmissionRecord>;
+          await updateDoc(targetRef, {
+            ...payload,
+            ...(existingData.displayId ? { displayId: existingData.displayId } : {}),
+            ...(typeof existingData.sequenceNumber === "number"
+              ? { sequenceNumber: existingData.sequenceNumber }
+              : {}),
+            finalized: !hasPendingOrFailed,
+          });
+        } else {
+          // Brand new document — full overwrite (NO { merge: true } that could inherit old photoStatuses)
+          await setDoc(targetRef, payload);
+        }
       },
-      assignDisplayNumber: async (id) =>
-        assignSequentialDisplayNumber(id, !hasPendingOrFailed),
+      assignDisplayNumber: alreadyExistsWithNumber
+        ? undefined
+        : async (id) => assignSequentialDisplayNumber(id, !hasPendingOrFailed),
       markDraftDone: async (token, id, submittedAt) => {
         await markDraftSubmitted(token, id, submittedAt);
       },
@@ -668,9 +989,13 @@ export async function createSubmission(
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         });
-        if (!res.ok) {
-          throw new Error(`Notify endpoint returned ${res.status}`);
-        }
+        await parseNotifyApiResponse(res);
+      },
+      updateEmailStatus: async (id, emailNotificationStatus) => {
+        await updateDoc(doc(db, "submissions", id), {
+          emailNotificationStatus,
+          updatedAt: new Date().toISOString(),
+        });
       },
       logError: async (step, err, id, photoCount) => {
         await logSubmissionError({ step, error: err, submissionId: id, photoCount });
@@ -679,9 +1004,19 @@ export async function createSubmission(
   );
 
   if (result.pendingPhotoCount > 0 || result.failedPhotoCount > 0) {
+    savePendingPostSubmitState({
+      submissionId: session.submissionId,
+      resumeToken: session.resumeToken,
+      answers,
+      submittedAt: new Date().toISOString(),
+    });
     watchPendingPhotosAfterSubmit(session.submissionId, answers);
   } else {
-    resetDraftUploadFolder();
+    // Fully complete: clear pending sync, IndexedDB queue, and reset session so the next
+    // submission in this browser ALWAYS gets a brand new submissionId & resumeToken.
+    clearPendingPostSubmitState();
+    resetActiveCoupleSession();
+    resetDraftUploadFolder(session.submissionId);
   }
 
   return result;
@@ -1007,6 +1342,7 @@ export async function recoverDraftAsSubmission(
   const record: SubmissionRecord = stripUndefinedDeep({
     id: submissionId,
     ownerUid: draft.ownerUid,
+    resumeToken: draft.id,
     submittedAt: draft.updatedAt || now,
     updatedAt: now,
     status: "new",
@@ -1028,14 +1364,10 @@ export async function recoverDraftAsSubmission(
     privateNotes: "Recovered from unfinished online draft by studio admin.",
   });
 
-  await setDoc(
-    doc(db, "submissions", submissionId),
-    {
-      ...record,
-      createdAt: serverTimestamp(),
-    },
-    { merge: true }
-  );
+  await setDoc(doc(db, "submissions", submissionId), {
+    ...record,
+    createdAt: serverTimestamp(),
+  });
 
   await markDraftSubmitted(draft.id, submissionId, now);
 

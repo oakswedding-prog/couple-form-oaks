@@ -116,6 +116,7 @@ export type PhotoRecordStatus = "uploaded" | "pending" | "failed";
 export interface PhotoStatusEntry {
   id: string;
   category: string;
+  label?: string;
   status: PhotoRecordStatus;
   storagePath?: string;
   errorCode?: string;
@@ -253,6 +254,8 @@ export interface SubmissionRecord {
   updatedAt?: string;
   status?: SubmissionStatus;
   ownerUid?: string;
+  resumeToken?: string;
+  emailNotificationStatus?: "sent" | "failed";
   finalized?: boolean;
   submissionState?: SubmissionDeliveryState;
   photoStatuses?: Record<string, PhotoStatusEntry>;

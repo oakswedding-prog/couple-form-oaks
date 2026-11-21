@@ -54,7 +54,21 @@ import {
   registerBeforeReloadFlusher,
 } from "./lib/versionGuard.ts";
 import { preloadHeicConverter } from "./utils/imageCompressor.ts";
-import { resetDraftUploadFolder } from "./lib/photoUploadManager.ts";
+import {
+  findMissingPhotoSlots,
+  MissingPhotoSlot,
+  resetDraftUploadFolder,
+  resumePendingUploadsFromIndexedDb,
+  subscribePhotoUploadComplete,
+} from "./lib/photoUploadManager.ts";
+import {
+  clearPendingPostSubmitState,
+  loadPendingPostSubmitState,
+} from "./lib/photoIndexedDb.ts";
+import {
+  resumePostSubmitPhotoSync,
+  watchPendingPhotosAfterSubmit,
+} from "./lib/submissions.ts";
 import { logSubmissionError } from "./lib/errorLogger.ts";
 
 const FamilyTreeBuilder = React.lazy(() =>
@@ -359,6 +373,7 @@ export default function App() {
   const [resumeBanner, setResumeBanner] = useState<string | null>(null);
   const [siteUpdatingNotice, setSiteUpdatingNotice] = useState<boolean>(false);
   const [pendingPhotosAfterSend, setPendingPhotosAfterSend] = useState<number>(0);
+  const [missingPhotoSlots, setMissingPhotoSlots] = useState<MissingPhotoSlot[]>([]);
 
   // Client-side URL Routing
   const [currentPath, setCurrentPath] = useState<string>(
@@ -504,7 +519,7 @@ export default function App() {
     };
   }, []);
 
-  // Load from ?resume=<token> OR localStorage on mount (BEFORE enabling auto-save)
+  // Load from ?resume=<token>, pending post-submit photo sync, OR localStorage on mount (BEFORE enabling auto-save)
   useEffect(() => {
     let cancelled = false;
 
@@ -519,21 +534,48 @@ export default function App() {
           const restored = await loadOnlineDraftByToken(resumeParam);
           if (!cancelled && restored) {
             const cleanAnswers = sanitizeAnswers(restored.answers);
-            const targetStep =
+
+            // Resume any unfinished photo blobs still in IndexedDB on this device
+            // and identify any missing slots that need to be re-added on a new device.
+            const { resumedCount, missingSlots } = await resumePendingUploadsFromIndexedDb(
+              restored.submissionId,
+              cleanAnswers,
+              restored.photoStatuses
+            );
+            if (cancelled) return;
+
+            let targetStep =
               restored.status === "submitted"
                 ? 29
                 : typeof restored.currentStep === "number" && restored.currentStep >= 1
                 ? Math.min(28, restored.currentStep)
                 : 1;
 
+            let bannerText = "Welcome back — your saved answers have been restored.";
+
+            if (restored.status === "submitted") {
+              if (missingSlots.length > 0) {
+                // Reopen directly on the first missing photo slot so the couple can re-add ONLY those photos
+                targetStep = missingSlots[0].stepNumber;
+                bannerText =
+                  "Your answers are already saved. Re-add the missing photo(s) listed below, then tap Send to attach them.";
+              } else if (resumedCount > 0) {
+                // Blobs were recovered from IndexedDB — stay on Thank You screen and finish syncing to Firestore
+                targetStep = 29;
+                setPendingPhotosAfterSend(resumedCount);
+                watchPendingPhotosAfterSubmit(restored.submissionId, cleanAnswers);
+              }
+            } else if (resumedCount > 0) {
+              bannerText = `Welcome back — your saved answers have been restored and ${resumedCount} photo upload${resumedCount === 1 ? "" : "s"} resumed automatically.`;
+            }
+
             setAnswers(cleanAnswers);
             setResumeToken(restored.id);
             setSavedStepNotice(targetStep);
             setCurrentStep(targetStep);
+            setMissingPhotoSlots(missingSlots);
             setAutoSaveStatus("saved");
-            setResumeBanner(
-              "Welcome back — your saved answers have been restored."
-            );
+            setResumeBanner(bannerText);
             try {
               localStorage.setItem(
                 STORAGE_KEY,
@@ -557,12 +599,35 @@ export default function App() {
           }
         }
 
-        // Fallback: load local browser backup
+        // Check if the couple refreshed the Thank You page while photos were still uploading!
+        const pendingPostSubmit = loadPendingPostSubmitState();
+        if (pendingPostSubmit && !window.location.pathname.startsWith("/admin")) {
+          const cleanAnswers = sanitizeAnswers(pendingPostSubmit.answers);
+          const { resumedCount, missingCount } = await resumePostSubmitPhotoSync(
+            pendingPostSubmit
+          );
+          if (cancelled) return;
+          const missingSlots = findMissingPhotoSlots(cleanAnswers);
+          setAnswers(cleanAnswers);
+          if (pendingPostSubmit.resumeToken) {
+            setResumeToken(pendingPostSubmit.resumeToken);
+          }
+          setPendingPhotosAfterSend(resumedCount);
+          setMissingPhotoSlots(missingCount > 0 ? missingSlots : []);
+          setCurrentStep(29);
+          setHasLoadedStorage(true);
+          return;
+        }
+
+        // Fallback: load local browser backup & resume any queued IndexedDB photo uploads
+        let restoredAnswersForIdb: QuestionnaireAnswers | null = null;
         const stored = localStorage.getItem(STORAGE_KEY);
         if (stored) {
           const parsed = JSON.parse(stored);
           if (parsed.answers) {
-            setAnswers(sanitizeAnswers(parsed.answers));
+            const cleanLocal = sanitizeAnswers(parsed.answers);
+            restoredAnswersForIdb = cleanLocal;
+            setAnswers(cleanLocal);
           }
           if (typeof parsed.step === "number" && parsed.step > 0) {
             setSavedStepNotice(parsed.step);
@@ -572,6 +637,22 @@ export default function App() {
         const existingSession = getActiveCoupleSession();
         if (existingSession) {
           setResumeToken(existingSession.resumeToken);
+          if (restoredAnswersForIdb && !window.location.pathname.startsWith("/admin")) {
+            const { resumedCount, missingSlots } = await resumePendingUploadsFromIndexedDb(
+              existingSession.submissionId,
+              restoredAnswersForIdb
+            );
+            if (!cancelled) {
+              if (missingSlots.length > 0) {
+                setMissingPhotoSlots(missingSlots);
+              }
+              if (resumedCount > 0) {
+                setResumeBanner(
+                  `Resumed ${resumedCount} photo upload${resumedCount === 1 ? "" : "s"} automatically.`
+                );
+              }
+            }
+          }
         }
 
         if (isAutostart) {
@@ -661,6 +742,25 @@ export default function App() {
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [hasLoadedStorage, currentPath]);
+
+  // Whenever any background photo upload confirms in Firebase Storage while filling the form,
+  // clear matching missing-photo slots and save the newly confirmed Storage path to the online draft.
+  useEffect(() => {
+    if (!hasLoadedStorage || currentPath.startsWith("/admin")) return;
+    return subscribePhotoUploadComplete((completedEntry) => {
+      setMissingPhotoSlots((prev) =>
+        prev.filter(
+          (slot) =>
+            slot.id !== completedEntry.localToken &&
+            slot.category !== completedEntry.category
+        )
+      );
+      if (currentStepRef.current < 29) {
+        lastSavedDigestRef.current = "";
+        void flushOnlineDraftNow();
+      }
+    });
   }, [hasLoadedStorage, currentPath]);
 
   // Clean up timers
@@ -775,15 +875,19 @@ export default function App() {
 
   // Reset form
   const handleReset = () => {
+    const activeSessionId = getActiveCoupleSession()?.submissionId;
     setAnswers(INITIAL_ANSWERS);
     setCurrentStep(0);
     setSavedStepNotice(0);
     setAutoSaveStatus("idle");
     setResumeToken(null);
     setPendingPhotosAfterSend(0);
+    setMissingPhotoSlots([]);
+    setResumeBanner(null);
     lastSavedDigestRef.current = "";
+    clearPendingPostSubmitState();
     resetActiveCoupleSession();
-    resetDraftUploadFolder();
+    resetDraftUploadFolder(activeSessionId);
     try {
       localStorage.removeItem(STORAGE_KEY);
     } catch {
@@ -954,7 +1058,12 @@ export default function App() {
         }}
         onBack={() => setCurrentStep(27)}
         onSubmitted={(result) => {
-          setPendingPhotosAfterSend(result.pendingPhotoCount + result.failedPhotoCount);
+          const remaining = result.pendingPhotoCount + result.failedPhotoCount;
+          setPendingPhotosAfterSend(remaining);
+          if (remaining === 0) {
+            setResumeToken(null);
+            setMissingPhotoSlots([]);
+          }
           setCurrentStep(29);
         }}
       />
@@ -967,6 +1076,11 @@ export default function App() {
       <ThankYouScreen
         answers={answers}
         initialPendingPhotos={pendingPhotosAfterSend}
+        missingPhotoSlots={missingPhotoSlots}
+        onReaddMissingPhoto={(stepNumber) => {
+          setEditingFromReview(true);
+          setCurrentStep(stepNumber);
+        }}
         onReset={handleReset}
       />
     );
@@ -1013,6 +1127,45 @@ export default function App() {
           >
             Dismiss
           </button>
+        </div>
+      )}
+
+      {/* Missing Photos Checklist (only appears if previously selected photos couldn't be restored from IndexedDB, e.g. different phone or cleared browser data) */}
+      {missingPhotoSlots.length > 0 && (
+        <div className="bg-amber-50 border-b border-amber-200 px-4 py-3">
+          <div className="max-w-[640px] mx-auto space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold text-amber-950">
+                {missingPhotoSlots.length === 1
+                  ? "1 photo needs to be re-added (its original file wasn't stored on this device):"
+                  : `${missingPhotoSlots.length} photos need to be re-added (their original files weren't stored on this device):`}
+              </p>
+              <button
+                type="button"
+                onClick={() => setMissingPhotoSlots([])}
+                className="text-[11px] text-amber-800 hover:text-amber-950 underline cursor-pointer shrink-0"
+              >
+                Dismiss
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {missingPhotoSlots.map((slot) => (
+                <button
+                  key={slot.id}
+                  type="button"
+                  onClick={() => setCurrentStep(slot.stepNumber)}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
+                    currentStep === slot.stepNumber
+                      ? "bg-[#1A1A1A] text-white border-[#1A1A1A]"
+                      : "bg-white text-amber-950 border-amber-300 hover:border-[#1A1A1A]"
+                  }`}
+                >
+                  <span>{slot.label}</span>
+                  <span className="opacity-75">→ Q{slot.stepNumber}</span>
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
