@@ -3,23 +3,49 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from "react";
-import { CheckCircle2, Heart, RefreshCw } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { CheckCircle2, Heart, RefreshCw, Loader2 } from "lucide-react";
 import { QuestionnaireAnswers } from "../types/questionnaire.ts";
 import { STUDIO_NAME, STUDIO_LOGO_URL } from "../constants.ts";
+import {
+  getActivePendingOrFailedCount,
+  subscribePhotoUploads,
+} from "../lib/photoUploadManager.ts";
 
 interface ThankYouScreenProps {
   answers: QuestionnaireAnswers;
+  initialPendingPhotos?: number;
   onReset: () => void;
 }
 
 export const ThankYouScreen: React.FC<ThankYouScreenProps> = ({
   answers,
+  initialPendingPhotos = 0,
   onReset,
 }) => {
   const p1 = answers.partner1 || "Partner 1";
   const p2 = answers.partner2 || "Partner 2";
   const coupleTitle = `${p1} & ${p2}`;
+
+  const [pendingCounts, setPendingCounts] = useState(() => {
+    const live = getActivePendingOrFailedCount();
+    return {
+      uploading: Math.max(live.uploading, initialPendingPhotos),
+      failed: live.failed,
+    };
+  });
+
+  useEffect(() => {
+    return subscribePhotoUploads(() => {
+      const live = getActivePendingOrFailedCount();
+      setPendingCounts({
+        uploading: live.uploading,
+        failed: live.failed,
+      });
+    });
+  }, []);
+
+  const hasBackgroundPhotos = pendingCounts.uploading > 0 || pendingCounts.failed > 0;
 
   return (
     <div className="min-h-[100dvh] bg-[#FAF8F5] text-[#1A1A1A] flex flex-col safe-bottom">
@@ -71,6 +97,15 @@ export const ThankYouScreen: React.FC<ThankYouScreenProps> = ({
               <span className="w-2 h-2 rounded-full bg-emerald-500" />
               <span>Responses saved &amp; received by {STUDIO_NAME}</span>
             </div>
+
+            {hasBackgroundPhotos && (
+              <div className="max-w-md mx-auto p-3.5 rounded-2xl bg-[#FAF7F2] border border-[#E8DFD3] text-xs text-[#5C492A] flex items-center justify-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin text-[#B08D57] shrink-0" />
+                <span>
+                  All your written answers are saved. A few photos are still finishing up in the background — keeping this tab open for a moment helps them complete.
+                </span>
+              </div>
+            )}
           </section>
 
           {/* Subtle Footer */}

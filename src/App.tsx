@@ -13,6 +13,7 @@ import {
   STORAGE_KEY,
 } from "./constants.ts";
 import {
+  AutoSaveStatus,
   QuestionnaireAnswers,
   FamilyMember,
 } from "./types/questionnaire.ts";
@@ -22,6 +23,8 @@ import { ChapterCard } from "./components/ChapterCard.tsx";
 import { VoiceTextarea } from "./components/VoiceTextarea.tsx";
 import { OptionCard } from "./components/OptionCard.tsx";
 import { ImageUploader } from "./components/ImageUploader.tsx";
+import { ReviewScreen } from "./components/ReviewScreen.tsx";
+import { ThankYouScreen } from "./components/ThankYouScreen.tsx";
 import { useAdminAuth } from "./lib/auth.ts";
 import { Analytics } from "@vercel/analytics/react";
 import { sanitizeWardrobe } from "./utils/wardrobe.ts";
@@ -37,6 +40,22 @@ import {
   toggleMultiSelectWithMax,
   validateQuestionStep,
 } from "./utils/questionnaireValidation.ts";
+import {
+  computePersistedStep,
+  ensureCoupleAnonymousAuth,
+  getActiveCoupleSession,
+  getOrCreateCoupleSession,
+  isValidResumeToken,
+  resetActiveCoupleSession,
+} from "./lib/coupleSession.ts";
+import { loadOnlineDraftByToken, saveOnlineDraft } from "./lib/drafts.ts";
+import {
+  installSiteUpdateGuard,
+  registerBeforeReloadFlusher,
+} from "./lib/versionGuard.ts";
+import { preloadHeicConverter } from "./utils/imageCompressor.ts";
+import { resetDraftUploadFolder } from "./lib/photoUploadManager.ts";
+import { logSubmissionError } from "./lib/errorLogger.ts";
 
 const FamilyTreeBuilder = React.lazy(() =>
   import("./components/FamilyTreeBuilder.tsx").then((m) => ({ default: m.FamilyTreeBuilder }))
@@ -46,12 +65,6 @@ const WardrobeQuestion = React.lazy(() =>
 );
 const DecorQuestion = React.lazy(() =>
   import("./components/DecorQuestion.tsx").then((m) => ({ default: m.DecorQuestion }))
-);
-const ReviewScreen = React.lazy(() =>
-  import("./components/ReviewScreen.tsx").then((m) => ({ default: m.ReviewScreen }))
-);
-const ThankYouScreen = React.lazy(() =>
-  import("./components/ThankYouScreen.tsx").then((m) => ({ default: m.ThankYouScreen }))
 );
 const AdminLogin = React.lazy(() =>
   import("./pages/AdminLogin.tsx").then((m) => ({ default: m.AdminLogin }))
@@ -338,6 +351,14 @@ export default function App() {
   const [editingFromReview, setEditingFromReview] = useState<boolean>(false);
   const [hasLoadedStorage, setHasLoadedStorage] = useState<boolean>(false);
   const [savedStepNotice, setSavedStepNotice] = useState<number>(0);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<AutoSaveStatus>("idle");
+  const [resumeToken, setResumeToken] = useState<string | null>(
+    () => getActiveCoupleSession()?.resumeToken ?? null
+  );
+  const [isRestoringResumeLink, setIsRestoringResumeLink] = useState<boolean>(false);
+  const [resumeBanner, setResumeBanner] = useState<string | null>(null);
+  const [siteUpdatingNotice, setSiteUpdatingNotice] = useState<boolean>(false);
+  const [pendingPhotosAfterSend, setPendingPhotosAfterSend] = useState<number>(0);
 
   // Client-side URL Routing
   const [currentPath, setCurrentPath] = useState<string>(
@@ -377,61 +398,277 @@ export default function App() {
   // Link input state for Q12
   const [newLinkInput, setNewLinkInput] = useState<string>("");
 
-  // Auto-advance debounce ref and latest answers ref (for timer callbacks)
+  // Refs for latest state inside debounced/flush callbacks
   const autoAdvanceTimerRef = useRef<any>(null);
+  const draftDebounceTimerRef = useRef<any>(null);
+  const draftRetryTimerRef = useRef<any>(null);
   const answersRef = useRef<QuestionnaireAnswers>(answers);
   answersRef.current = answers;
+  const currentStepRef = useRef<number>(currentStep);
+  currentStepRef.current = currentStep;
+  const savedStepNoticeRef = useRef<number>(savedStepNotice);
+  savedStepNoticeRef.current = savedStepNotice;
+  const lastSavedDigestRef = useRef<string>("");
 
-
-  // Load from localStorage or check autostart on mount
+  // Silent anonymous login & HEIC converter preload for couples (non-admin routes)
   useEffect(() => {
-    try {
-      const urlParams = new URLSearchParams(window.location.search);
-      const isAutostart = urlParams.get("autostart") === "1";
+    if (currentPath.startsWith("/admin")) return;
+    void ensureCoupleAnonymousAuth();
 
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (parsed.answers) {
-          setAnswers(sanitizeAnswers(parsed.answers));
-        }
-        if (typeof parsed.step === "number" && parsed.step > 0) {
-          setSavedStepNotice(parsed.step);
-        }
-      }
-
-      if (isAutostart) {
-        setAnswers((prev) => ({
-          ...prev,
-          partner1: prev.partner1 || "Aarav",
-          partner2: prev.partner2 || "Meera",
-        }));
-        setCurrentStep(1);
-      }
-    } catch {
-      // ignore
-    } finally {
-      setHasLoadedStorage(true);
+    const w = window as typeof window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    if (typeof w.requestIdleCallback === "function") {
+      const idleId = w.requestIdleCallback(() => void preloadHeicConverter(), {
+        timeout: 2500,
+      });
+      return () => w.cancelIdleCallback?.(idleId);
     }
-  }, []);
+    const timer = window.setTimeout(() => void preloadHeicConverter(), 800);
+    return () => window.clearTimeout(timer);
+  }, [currentPath]);
 
-  // Auto-save to localStorage
-  useEffect(() => {
-    if (!hasLoadedStorage) return;
+  // Flush draft helper (local + Firestore) used by debounced auto-save, visibility hide, and site-update guard
+  const flushOnlineDraftNow = async (): Promise<boolean> => {
+    const latestAnswers = answersRef.current;
+    const latestStep = currentStepRef.current;
+    if (latestStep === 29) return true; // Already submitted
+
+    const hasNames =
+      latestAnswers.partner1.trim().length > 0 &&
+      latestAnswers.partner2.trim().length > 0;
+    if (!hasNames && latestStep === 0) return true;
+
+    const session = getOrCreateCoupleSession();
+    if (session.resumeToken !== resumeToken) {
+      setResumeToken(session.resumeToken);
+    }
+
+    const persistedStep = computePersistedStep(latestStep, savedStepNoticeRef.current);
+
+    // Local browser backup (immediate)
     try {
       localStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify({ answers, step: currentStep })
+        JSON.stringify({ answers: latestAnswers, step: persistedStep })
       );
     } catch {
-      // ignore
+      // localStorage blocked or full — online draft below still protects the couple
     }
-  }, [answers, currentStep, hasLoadedStorage]);
 
-  // Clean up auto advance timer
+    const digest = JSON.stringify({
+      a: latestAnswers,
+      s: persistedStep,
+      id: session.submissionId,
+    });
+    if (digest === lastSavedDigestRef.current) {
+      return true;
+    }
+
+    setAutoSaveStatus("saving");
+    try {
+      await saveOnlineDraft({
+        resumeToken: session.resumeToken,
+        submissionId: session.submissionId,
+        answers: latestAnswers,
+        currentStep: persistedStep,
+        furthestStep: Math.max(persistedStep, savedStepNoticeRef.current),
+        createdAt: session.createdAt,
+      });
+      lastSavedDigestRef.current = digest;
+      setAutoSaveStatus("saved");
+      return true;
+    } catch (err) {
+      setAutoSaveStatus("retrying");
+      void logSubmissionError({
+        step: "draft_save",
+        error: err,
+        submissionId: session.submissionId,
+      });
+      return false;
+    }
+  };
+
+  // Site update guard: detect new deploys, flush draft safely, then reload with resume token
+  useEffect(() => {
+    registerBeforeReloadFlusher(async () => {
+      await flushOnlineDraftNow();
+    });
+    const uninstall = installSiteUpdateGuard(() => {
+      setSiteUpdatingNotice(true);
+    });
+    return () => {
+      uninstall();
+      registerBeforeReloadFlusher(null);
+    };
+  }, []);
+
+  // Load from ?resume=<token> OR localStorage on mount (BEFORE enabling auto-save)
+  useEffect(() => {
+    let cancelled = false;
+
+    async function hydrateInitialState() {
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const resumeParam = urlParams.get("resume");
+        const isAutostart = urlParams.get("autostart") === "1";
+
+        if (isValidResumeToken(resumeParam)) {
+          setIsRestoringResumeLink(true);
+          const restored = await loadOnlineDraftByToken(resumeParam);
+          if (!cancelled && restored) {
+            const cleanAnswers = sanitizeAnswers(restored.answers);
+            const targetStep =
+              restored.status === "submitted"
+                ? 29
+                : typeof restored.currentStep === "number" && restored.currentStep >= 1
+                ? Math.min(28, restored.currentStep)
+                : 1;
+
+            setAnswers(cleanAnswers);
+            setResumeToken(restored.id);
+            setSavedStepNotice(targetStep);
+            setCurrentStep(targetStep);
+            setAutoSaveStatus("saved");
+            setResumeBanner(
+              "Welcome back — your saved answers have been restored."
+            );
+            try {
+              localStorage.setItem(
+                STORAGE_KEY,
+                JSON.stringify({ answers: cleanAnswers, step: targetStep })
+              );
+            } catch {
+              // ignore
+            }
+            // Remove ?resume=<token> from visible URL bar to prevent accidental leaks/referrers
+            try {
+              window.history.replaceState({}, "", window.location.pathname || "/");
+            } catch {
+              // ignore
+            }
+            setIsRestoringResumeLink(false);
+            setHasLoadedStorage(true);
+            return;
+          }
+          if (!cancelled) {
+            setIsRestoringResumeLink(false);
+          }
+        }
+
+        // Fallback: load local browser backup
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed.answers) {
+            setAnswers(sanitizeAnswers(parsed.answers));
+          }
+          if (typeof parsed.step === "number" && parsed.step > 0) {
+            setSavedStepNotice(parsed.step);
+          }
+        }
+
+        const existingSession = getActiveCoupleSession();
+        if (existingSession) {
+          setResumeToken(existingSession.resumeToken);
+        }
+
+        if (isAutostart) {
+          setAnswers((prev) => ({
+            ...prev,
+            partner1: prev.partner1 || "Aarav",
+            partner2: prev.partner2 || "Meera",
+          }));
+          setCurrentStep(1);
+        }
+      } catch {
+        // ignore
+      } finally {
+        if (!cancelled) {
+          setHasLoadedStorage(true);
+        }
+      }
+    }
+
+    void hydrateInitialState();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Create stable submission ID + resume token the moment couple enters both names
+  useEffect(() => {
+    if (!hasLoadedStorage || currentPath.startsWith("/admin")) return;
+    if (answers.partner1.trim() && answers.partner2.trim()) {
+      const session = getOrCreateCoupleSession();
+      if (session.resumeToken !== resumeToken) {
+        setResumeToken(session.resumeToken);
+      }
+    }
+  }, [answers.partner1, answers.partner2, hasLoadedStorage, currentPath, resumeToken]);
+
+  // Keep localStorage synced WITHOUT overwriting saved step > 0 with Step 0,
+  // and debounce online Firestore draft auto-save (1.4s) with automatic retry on failure.
+  useEffect(() => {
+    if (!hasLoadedStorage || currentPath.startsWith("/admin") || currentStep === 29) {
+      return;
+    }
+
+    const persistedStep = computePersistedStep(currentStep, savedStepNotice);
+    if (currentStep > 0 && currentStep > savedStepNotice) {
+      setSavedStepNotice(currentStep);
+    }
+
+    try {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ answers, step: persistedStep })
+      );
+    } catch {
+      // ignore localStorage quota/privacy blocks
+    }
+
+    const hasNames =
+      answers.partner1.trim().length > 0 && answers.partner2.trim().length > 0;
+    if (!hasNames && currentStep === 0) return;
+
+    if (draftDebounceTimerRef.current) clearTimeout(draftDebounceTimerRef.current);
+    if (draftRetryTimerRef.current) clearTimeout(draftRetryTimerRef.current);
+
+    draftDebounceTimerRef.current = setTimeout(async () => {
+      const ok = await flushOnlineDraftNow();
+      if (!ok) {
+        draftRetryTimerRef.current = setTimeout(() => {
+          void flushOnlineDraftNow();
+        }, 4500);
+      }
+    }, 1400);
+
+    return () => {
+      if (draftDebounceTimerRef.current) clearTimeout(draftDebounceTimerRef.current);
+      if (draftRetryTimerRef.current) clearTimeout(draftRetryTimerRef.current);
+    };
+  }, [answers, currentStep, hasLoadedStorage, currentPath]);
+
+  // Flush online draft immediately if the couple switches apps or minimizes WhatsApp/Safari
+  useEffect(() => {
+    if (currentPath.startsWith("/admin")) return;
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden" && hasLoadedStorage) {
+        void flushOnlineDraftNow();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [hasLoadedStorage, currentPath]);
+
+  // Clean up timers
   useEffect(() => {
     return () => {
       if (autoAdvanceTimerRef.current) clearTimeout(autoAdvanceTimerRef.current);
+      if (draftDebounceTimerRef.current) clearTimeout(draftDebounceTimerRef.current);
+      if (draftRetryTimerRef.current) clearTimeout(draftRetryTimerRef.current);
     };
   }, []);
 
@@ -541,6 +778,12 @@ export default function App() {
     setAnswers(INITIAL_ANSWERS);
     setCurrentStep(0);
     setSavedStepNotice(0);
+    setAutoSaveStatus("idle");
+    setResumeToken(null);
+    setPendingPhotosAfterSend(0);
+    lastSavedDigestRef.current = "";
+    resetActiveCoupleSession();
+    resetDraftUploadFolder();
     try {
       localStorage.removeItem(STORAGE_KEY);
     } catch {
@@ -656,6 +899,15 @@ export default function App() {
     }
   }
 
+  if (isRestoringResumeLink) {
+    return (
+      <div className="min-h-[100dvh] bg-[#FAF8F5] flex flex-col items-center justify-center space-y-3 p-6">
+        <div className="w-8 h-8 border-2 border-[#B08D57] border-t-transparent rounded-full animate-spin" />
+        <p className="text-sm text-[#5F5F5F]">Restoring your saved answers…</p>
+      </div>
+    );
+  }
+
   // Welcome Screen (Step 0)
   if (currentStep === 0) {
     return (
@@ -690,36 +942,40 @@ export default function App() {
   }
 
 
-  // Review Screen (Step 28)
+  // Review Screen (Step 28 — bundled directly, never lazy-loaded)
   if (currentStep === 28) {
     return (
-      <React.Suspense fallback={<ScreenSkeleton />}>
-        <ReviewScreen
-          answers={answers}
-          onEditQuestion={(stepNum) => {
-            setEditingFromReview(true);
-            setCurrentStep(stepNum);
-          }}
-          onBack={() => setCurrentStep(27)}
-          onSubmitted={() => setCurrentStep(29)}
-        />
-      </React.Suspense>
+      <ReviewScreen
+        answers={answers}
+        resumeToken={resumeToken}
+        onEditQuestion={(stepNum) => {
+          setEditingFromReview(true);
+          setCurrentStep(stepNum);
+        }}
+        onBack={() => setCurrentStep(27)}
+        onSubmitted={(result) => {
+          setPendingPhotosAfterSend(result.pendingPhotoCount + result.failedPhotoCount);
+          setCurrentStep(29);
+        }}
+      />
     );
   }
 
-  // Thank You Screen (Step 29)
+  // Thank You Screen (Step 29 — bundled directly, never lazy-loaded)
   if (currentStep === 29) {
     return (
-      <React.Suspense fallback={<ScreenSkeleton />}>
-        <ThankYouScreen answers={answers} onReset={handleReset} />
-      </React.Suspense>
+      <ThankYouScreen
+        answers={answers}
+        initialPendingPhotos={pendingPhotosAfterSend}
+        onReset={handleReset}
+      />
     );
   }
 
   // Question Screens (1-27)
   return (
     <div className="min-h-[100dvh] flex flex-col justify-between bg-white safe-bottom">
-      {/* Sticky Header with Progress Bar */}
+      {/* Sticky Header with Progress Bar, Real Auto-Save Status & Resume Link */}
       <Header
         currentStep={currentStep}
         totalSteps={27}
@@ -734,7 +990,31 @@ export default function App() {
           setCurrentStep(28);
           setEditingFromReview(false);
         }}
+        autoSaveStatus={autoSaveStatus}
+        resumeToken={resumeToken}
+        partner1={answers.partner1}
+        partner2={answers.partner2}
+        email={answers.email}
       />
+
+      {siteUpdatingNotice && (
+        <div className="bg-[#FAF7F2] border-b border-[#E8DFD3] px-4 py-2 text-center text-xs text-[#5C492A]">
+          Updating to the latest version — your answers are saved…
+        </div>
+      )}
+
+      {resumeBanner && (
+        <div className="bg-[#ECFDF5] border-b border-[#A7F3D0] px-4 py-2 text-center text-xs text-[#065F46] flex items-center justify-center gap-3">
+          <span>{resumeBanner}</span>
+          <button
+            type="button"
+            onClick={() => setResumeBanner(null)}
+            className="underline font-medium cursor-pointer"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Main One-Question Container (widened on Step 10 for side-by-side Bride & Groom cards) */}
       <main

@@ -349,7 +349,7 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
             </button>
             <div className="flex items-center gap-2 min-w-0">
               <span className="font-mono text-xs font-bold text-[#8C7043] bg-[#FAF7F2] px-2 py-1 rounded border border-[#E8DFD3] shrink-0">
-                {submission.displayId}
+                {submission.displayId || "Unnumbered"}
               </span>
               <h1 className="font-cormorant text-2xl font-semibold text-[#1A1A1A] truncate">
                 {p1} &amp; {p2}
@@ -361,10 +361,10 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
           <div className="flex items-center gap-2.5 shrink-0">
             {/* Status Dropdown */}
             <select
-              value={submission.status}
+              value={submission.status || "new"}
               onChange={(e) => handleStatusChange(e.target.value as SubmissionStatus)}
               className={`text-xs font-semibold px-3 py-1.5 rounded-full border cursor-pointer focus:outline-hidden ${
-                submission.status === "new"
+                (submission.status || "new") === "new"
                   ? "bg-[#FFF9EE] text-[#B08D57] border-[#E5C388]"
                   : submission.status === "reviewed"
                   ? "bg-[#EFF6FF] text-[#2563EB] border-[#BFDBFE]"
@@ -445,17 +445,17 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
                 <ArrowLeft className="w-5 h-5" />
               </button>
               <span className="font-mono text-xs font-bold text-[#8C7043] bg-[#FAF7F2] px-2 py-0.5 rounded border border-[#E8DFD3]">
-                {submission.displayId}
+                {submission.displayId || "Unnumbered"}
               </span>
             </div>
 
             <div className="flex items-center gap-1.5">
               {/* Status Dropdown */}
               <select
-                value={submission.status}
+                value={submission.status || "new"}
                 onChange={(e) => handleStatusChange(e.target.value as SubmissionStatus)}
                 className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border cursor-pointer focus:outline-hidden ${
-                  submission.status === "new"
+                  (submission.status || "new") === "new"
                     ? "bg-[#FFF9EE] text-[#B08D57] border-[#E5C388]"
                     : submission.status === "reviewed"
                     ? "bg-[#EFF6FF] text-[#2563EB] border-[#BFDBFE]"
@@ -629,7 +629,7 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
               letter={submission.coupleLetter || synthesizeCoupleLetter(submission.answers)}
               answers={submission.answers}
               coupleNames={`${p1} & ${p2}`}
-              displayId={submission.displayId}
+              displayId={submission.displayId || "Unnumbered"}
               weddingDate={submission.weddingDate}
               onSaveLetter={handleSaveLetter}
             />
@@ -650,7 +650,7 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
               answers={submission.answers}
               coupleNames={`${p1} & ${p2}`}
               weddingDate={submission.weddingDate}
-              displayId={submission.displayId}
+              displayId={submission.displayId || "Unnumbered"}
               onSaveBrief={handleSaveBrief}
             />
           </section>
@@ -669,7 +669,7 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
               questionsText={submission.interviewQuestions}
               answers={submission.answers}
               coupleNames={`${p1} & ${p2}`}
-              displayId={submission.displayId}
+              displayId={submission.displayId || "Unnumbered"}
               onSaveInterview={handleSaveInterview}
             />
           </section>
@@ -1714,7 +1714,7 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
                 <strong className="text-[#1A1A1A] font-semibold">
                   {p1} &amp; {p2}
                 </strong>{" "}
-                (<span className="font-mono text-[#8C7043] font-bold">{submission.displayId}</span>)?
+                (<span className="font-mono text-[#8C7043] font-bold">{submission.displayId || "Unnumbered"}</span>)?
               </p>
             </div>
 

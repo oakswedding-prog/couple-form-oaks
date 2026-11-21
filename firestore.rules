@@ -2,10 +2,16 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper: Checks if the user is authenticated and authorized either via
-    // verified studio team email or an active document in the 'admins' collection.
+    // Helper: Any signed-in user (including silent Anonymous couple sessions)
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Helper: Checks if the user is an authenticated, NON-ANONYMOUS studio admin
+    // authorized via verified team email or an active document in the 'admins' collection.
     function isAdmin() {
       return request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
         && request.auth.token.email != null
         && (
           (
@@ -150,34 +156,83 @@ service cloud.firestore {
     }
 
     // Admin Allow-List:
-    // Any signed-in user can read admin docs to verify their access status.
-    // Only existing admins can add or modify admin emails.
+    // Non-anonymous signed-in users can check their own admin doc; only admins can write.
     match /admins/{adminEmail} {
-      allow read: if request.auth != null;
+      allow read: if request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous';
       allow write: if isAdmin();
     }
 
     // Sequential Counter:
-    // Used by transactions to assign sequential submission numbers (#001, #002...)
+    // Used by post-save transactions to assign sequential submission numbers (#001, #002...)
     match /counters/{counterId} {
-      allow read, write: if true;
+      allow read, write: if isSignedIn();
+    }
+
+    // Online Drafts (document ID = 192-bit unguessable resume token):
+    // - Listing is strictly admin-only (non-admins can NEVER browse or list drafts).
+    // - A signed-in couple can get a single draft ONLY if they possess its unguessable token (>= 22 chars).
+    // - Couples can create their own draft (ownerUid == auth.uid) and update their own draft
+    //   (or re-link it to a new anonymous uid when resuming via the unguessable token while keeping submissionId fixed).
+    match /drafts/{draftId} {
+      allow list: if isAdmin();
+      allow get: if isAdmin() || (isSignedIn() && draftId.size() >= 22);
+      allow create: if isSignedIn()
+        && draftId.size() >= 22
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.submissionId is string;
+      allow update: if isAdmin()
+        || (
+          isSignedIn()
+          && draftId.size() >= 22
+          && request.resource.data.ownerUid == request.auth.uid
+          && request.resource.data.submissionId == resource.data.submissionId
+          && (
+            resource.data.ownerUid == request.auth.uid
+            || resource.data.get('status', 'draft') != 'submitted'
+          )
+        );
+      allow delete: if isAdmin();
+    }
+
+    // Error Diagnostics Log:
+    // - Signed-in couples can ONLY create error logs (no personal answers, no resume token).
+    // - Only verified studio admins can read; nobody can update or delete.
+    match /submissionErrors/{errorId} {
+      allow create: if isSignedIn()
+        && !('answers' in request.resource.data)
+        && !('resumeToken' in request.resource.data);
+      allow read: if isAdmin();
+      allow update, delete: if false;
     }
 
     // Submissions:
-    // - Couples can ONLY create a new submission document (write-only).
-    // - Only verified team admins can read/update/delete, and any submitted/locked
-    //   standard event ('sangeet', 'wedding', 'reception') is permanently immutable at DB level.
+    // - Listing is strictly admin-only (blocks listing of any couple data by non-admins).
+    // - Couples can create and update ONLY their own record (ownerUid == auth.uid) BEFORE it is finalized.
+    // - Only verified studio admins keep full read/update/delete access, and locked checklist events stay immutable.
     match /submissions/{submissionId} {
-      allow create: if true;
-      allow read, delete: if isAdmin();
-      allow update: if isAdmin()
-        && standardEventTransitionValid(resource.data, request.resource.data, submissionId, 'sangeet')
-        && standardEventTransitionValid(resource.data, request.resource.data, submissionId, 'wedding')
-        && standardEventTransitionValid(resource.data, request.resource.data, submissionId, 'reception')
-        && (
-          (!isStandardEventSubmitted(resource.data, 'wedding') && !isEventArchived(submissionId, 'wedding'))
-          || weddingLegacyMirrorsPreserved(resource.data, request.resource.data)
+      allow list: if isAdmin();
+      allow get: if isAdmin()
+        || (isSignedIn() && resource.data.ownerUid == request.auth.uid);
+      allow create: if isSignedIn()
+        && request.resource.data.ownerUid == request.auth.uid;
+      allow update: if (
+          isAdmin()
+          && standardEventTransitionValid(resource.data, request.resource.data, submissionId, 'sangeet')
+          && standardEventTransitionValid(resource.data, request.resource.data, submissionId, 'wedding')
+          && standardEventTransitionValid(resource.data, request.resource.data, submissionId, 'reception')
+          && (
+            (!isStandardEventSubmitted(resource.data, 'wedding') && !isEventArchived(submissionId, 'wedding'))
+            || weddingLegacyMirrorsPreserved(resource.data, request.resource.data)
+          )
+        )
+        || (
+          isSignedIn()
+          && resource.data.ownerUid == request.auth.uid
+          && resource.data.get('finalized', false) != true
+          && request.resource.data.ownerUid == resource.data.ownerUid
         );
+      allow delete: if isAdmin();
 
       // Custom Production Events:
       // - Editable & deletable ONLY before submission

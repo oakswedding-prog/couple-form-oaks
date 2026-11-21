@@ -72,7 +72,8 @@ export async function exportToPdf(rawSubmission: SubmissionRecord) {
   const p1 = submission.partner1 || "Partner 1";
   const p2 = submission.partner2 || "Partner 2";
   const title = `${p1} & ${p2}`;
-  const filename = `${submission.displayId}_${p1}_${p2}_OAKS_Brief.pdf`.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const displayLabel = submission.displayId || "OAKS";
+  const filename = `${displayLabel}_${p1}_${p2}_OAKS_Brief.pdf`.replace(/[^a-zA-Z0-9_-]/g, "_");
 
   let y = 18;
   const left = 16;
@@ -88,7 +89,7 @@ export async function exportToPdf(rawSubmission: SubmissionRecord) {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
   doc.setTextColor(100, 100, 100);
-  doc.text(submission.displayId, pageWidth - left - 15, y);
+  doc.text(submission.displayId || "Unnumbered", pageWidth - left - 22, y);
 
   y += 8;
   doc.setFont("helvetica", "bold");
@@ -1011,7 +1012,8 @@ export async function exportToDocx(rawSubmission: SubmissionRecord) {
   const p1 = submission.partner1 || "Partner 1";
   const p2 = submission.partner2 || "Partner 2";
   const ans = submission.answers;
-  const filename = `${submission.displayId}_${p1}_${p2}_OAKS_Brief.docx`.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const docxDisplayId = submission.displayId || "OAKS";
+  const filename = `${docxDisplayId}_${p1}_${p2}_OAKS_Brief.docx`.replace(/[^a-zA-Z0-9_-]/g, "_");
 
   const filmFeelDocxStr = Array.isArray((ans.q11_filmFeel as any)?.selected)
     ? [
@@ -1151,7 +1153,7 @@ export async function exportToDocx(rawSubmission: SubmissionRecord) {
           }),
           new Paragraph({
             children: [
-              new TextRun({ text: `${p1} & ${p2} (${submission.displayId})`, bold: true, size: 36 }),
+              new TextRun({ text: `${p1} & ${p2} (${submission.displayId || "Unnumbered"})`, bold: true, size: 36 }),
             ],
           }),
           new Paragraph({

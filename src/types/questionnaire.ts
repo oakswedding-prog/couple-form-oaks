@@ -111,6 +111,65 @@ export interface QuestionnaireAnswers {
 
 export type SubmissionStatus = "new" | "reviewed" | "shared";
 
+export type PhotoRecordStatus = "uploaded" | "pending" | "failed";
+
+export interface PhotoStatusEntry {
+  id: string;
+  category: string;
+  status: PhotoRecordStatus;
+  storagePath?: string;
+  errorCode?: string;
+  updatedAt: string;
+}
+
+export type SubmissionDeliveryState =
+  | "draft"
+  | "submitted"
+  | "photos_pending"
+  | "needs_attention";
+
+export type AutoSaveStatus = "idle" | "saving" | "saved" | "retrying";
+
+export interface DraftRecord {
+  id: string; // resumeToken (unguessable 192-bit doc ID)
+  submissionId: string;
+  ownerUid: string;
+  status: "draft" | "submitted";
+  currentStep: number;
+  furthestStep: number;
+  partner1: string;
+  partner2: string;
+  weddingDate: string;
+  phone: string;
+  email: string;
+  answers: QuestionnaireAnswers;
+  photoStatuses?: Record<string, PhotoStatusEntry>;
+  answeredCount?: number;
+  mandatoryRemaining?: number;
+  createdAt: string;
+  updatedAt: string;
+  submittedAt?: string;
+}
+
+export interface SubmissionErrorRecord {
+  id: string;
+  step: string;
+  errorCode: string;
+  message: string;
+  deviceBrowser: string;
+  timestamp: string;
+  photoCount: number;
+  submissionId: string;
+  ownerUid?: string | null;
+}
+
+export interface OrphanedStorageFolder {
+  folderName: string;
+  fullPath: string;
+  photoPaths: string[];
+  estimatedDate?: string;
+}
+
 export type ChecklistItemStatus = "got_it" | "missed";
 
 export type ChecklistEventKey = "sangeet" | "wedding" | "reception";
@@ -188,10 +247,18 @@ export interface ProductionChecklistData {
 
 export interface SubmissionRecord {
   id: string;
-  sequenceNumber: number;
-  displayId: string; // e.g. "#001"
+  sequenceNumber?: number;
+  displayId?: string; // e.g. "#001" (may be empty if counter transaction failed)
   submittedAt: string; // ISO string
-  status: SubmissionStatus;
+  updatedAt?: string;
+  status?: SubmissionStatus;
+  ownerUid?: string;
+  finalized?: boolean;
+  submissionState?: SubmissionDeliveryState;
+  photoStatuses?: Record<string, PhotoStatusEntry>;
+  pendingPhotoCount?: number;
+  recoveredFromStorage?: boolean;
+  recoveredFromDraft?: boolean;
   partner1: string;
   partner2: string;
   weddingDate: string;

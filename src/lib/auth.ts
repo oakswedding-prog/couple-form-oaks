@@ -118,56 +118,60 @@ export function useAdminAuth(): AdminAuthState {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
-      if (currentUser && currentUser.email) {
-        const cleanEmail = normalizeAdminEmail(currentUser.email);
-        // Fast path: allowlisted studio team accounts or cached session admins unlock at 0ms
-        // without waiting on a Firestore network round-trip.
-        const fastVerified =
-          isAllowlistedAdminEmail(cleanEmail) || readCachedVerifiedAdmin(cleanEmail);
-        if (fastVerified) {
-          setIsAdmin(true);
-          setIsLoading(false);
-          setError(null);
-          writeCachedVerifiedAdmin(cleanEmail);
-          // Background revalidate & ensure built-in admins stay synced in Firestore
-          checkIsAdmin(currentUser.email)
-            .then((verified) => {
-              if (!verified) {
-                writeCachedVerifiedAdmin(null);
-                setIsAdmin(false);
-                setError(`Account ${currentUser.email} does not have admin permissions.`);
-              } else {
-                syncBuiltInAdmins(currentUser.email!).catch(() => {});
-              }
-            })
-            .catch(() => {});
-          return;
-        }
-
-        setIsLoading(true);
-        try {
-          const verified = await checkIsAdmin(currentUser.email);
-          setIsAdmin(verified);
-          if (!verified) {
-            writeCachedVerifiedAdmin(null);
-            setError(`Account ${currentUser.email} does not have admin permissions.`);
-          } else {
-            writeCachedVerifiedAdmin(cleanEmail);
-            setError(null);
-            syncBuiltInAdmins(currentUser.email).catch(() => {});
-          }
-        } catch (err: any) {
-          setError(err?.message || "Failed to verify administrator privileges.");
-          setIsAdmin(false);
-        } finally {
-          setIsLoading(false);
-        }
-      } else {
+      // Anonymous couple sessions are completely separate from studio admin sessions
+      // and must NEVER be treated as admins or show permission errors on /admin.
+      if (!currentUser || currentUser.isAnonymous || !currentUser.email) {
+        setUser(null);
         writeCachedVerifiedAdmin(null);
         setIsAdmin(false);
         setIsLoading(false);
         setError(null);
+        return;
+      }
+
+      setUser(currentUser);
+      const cleanEmail = normalizeAdminEmail(currentUser.email);
+      // Fast path: allowlisted studio team accounts or cached session admins unlock at 0ms
+      // without waiting on a Firestore network round-trip.
+      const fastVerified =
+        isAllowlistedAdminEmail(cleanEmail) || readCachedVerifiedAdmin(cleanEmail);
+      if (fastVerified) {
+        setIsAdmin(true);
+        setIsLoading(false);
+        setError(null);
+        writeCachedVerifiedAdmin(cleanEmail);
+        // Background revalidate & ensure built-in admins stay synced in Firestore
+        checkIsAdmin(currentUser.email)
+          .then((verified) => {
+            if (!verified) {
+              writeCachedVerifiedAdmin(null);
+              setIsAdmin(false);
+              setError(`Account ${currentUser.email} does not have admin permissions.`);
+            } else {
+              syncBuiltInAdmins(currentUser.email!).catch(() => {});
+            }
+          })
+          .catch(() => {});
+        return;
+      }
+
+      setIsLoading(true);
+      try {
+        const verified = await checkIsAdmin(currentUser.email);
+        setIsAdmin(verified);
+        if (!verified) {
+          writeCachedVerifiedAdmin(null);
+          setError(`Account ${currentUser.email} does not have admin permissions.`);
+        } else {
+          writeCachedVerifiedAdmin(cleanEmail);
+          setError(null);
+          syncBuiltInAdmins(currentUser.email).catch(() => {});
+        }
+      } catch (err: any) {
+        setError(err?.message || "Failed to verify administrator privileges.");
+        setIsAdmin(false);
+      } finally {
+        setIsLoading(false);
       }
     });
 

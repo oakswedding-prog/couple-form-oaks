@@ -4,11 +4,26 @@ import path from 'path';
 import {defineConfig} from 'vite';
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 
-export default defineConfig(() => {
+const APP_BUILD_ID = `build_${Date.now()}`;
+
+export default defineConfig(({ command }) => {
   return {
+    define: {
+      __APP_BUILD_ID__: JSON.stringify(command === 'build' ? APP_BUILD_ID : 'dev'),
+    },
     plugins: [
       react(),
       tailwindcss(),
+      {
+        name: 'emit-version-manifest',
+        generateBundle() {
+          this.emitFile({
+            type: 'asset',
+            fileName: 'version.json',
+            source: JSON.stringify({ buildId: APP_BUILD_ID, builtAt: new Date().toISOString() }),
+          });
+        },
+      },
       {
         name: 'live-token-api-dev',
         configureServer(server) {

@@ -1190,7 +1190,7 @@ export const AdminWeddingChecklist: React.FC<AdminWeddingChecklistProps> = ({
                   >
                     {submissions.map((sub) => (
                       <option key={sub.id} value={sub.id}>
-                        {sub.displayId} · {sub.partner1} &amp; {sub.partner2}
+                        {sub.displayId || "Unnumbered"} · {sub.partner1} &amp; {sub.partner2}
                         {sub.weddingDate ? ` (${sub.weddingDate})` : ""}
                       </option>
                     ))}

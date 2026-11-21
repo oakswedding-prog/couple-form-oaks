@@ -17,12 +17,16 @@ import {
   serverTimestamp,
   onSnapshot,
 } from "firebase/firestore";
-import { ref, uploadString, getDownloadURL } from "firebase/storage";
+import { ref, getDownloadURL, listAll } from "firebase/storage";
 import { db, storage, auth } from "./firebase.ts";
 import {
   QuestionnaireAnswers,
   SubmissionRecord,
   SubmissionStatus,
+  SubmissionDeliveryState,
+  DraftRecord,
+  OrphanedStorageFolder,
+  PhotoStatusEntry,
   ProductionChecklistData,
   CustomProductionEvent,
   EventSubmissionRecord,
@@ -41,10 +45,20 @@ import {
   upgradeCoupleLetterIfNeeded,
 } from "../utils/coupleLetterGenerator.ts";
 import {
-  ensureStoragePathUploaded,
+  countAllPhotosInAnswers,
+  kickOffPendingPhotoRetries,
   resetDraftUploadFolder,
+  sanitizeAnswersForFirestore,
+  subscribePhotoUploadComplete,
+  waitBrieflyForActiveUploads,
 } from "./photoUploadManager.ts";
 import { assertNoBase64Images } from "../utils/submissionSizeGuard.ts";
+import {
+  ensureCoupleAnonymousAuth,
+  getOrCreateCoupleSession,
+} from "./coupleSession.ts";
+import { logSubmissionError } from "./errorLogger.ts";
+import { markDraftSubmitted } from "./drafts.ts";
 
 /**
  * In-memory + sessionStorage cache for resolved Firebase Storage download URLs
@@ -307,350 +321,370 @@ export async function prefetchSubmissionMedia(record: SubmissionRecord): Promise
   }
 }
 
-/**
- * Uploads a base64 image data URL to Firebase Storage under submissions/{folder}/{name}.
- * Since couples are unauthenticated and storage rules enforce `allow read: if isAdmin();`,
- * attempting getDownloadURL right after upload throws storage/unauthorized for couples.
- *
- * When this occurs, we store the storagePath (e.g. "submissions/...").
- * The authenticated admin dashboard resolves storage paths to signed download URLs on demand.
- * This guarantees the Firestore document stays tiny (<10KB) and avoids Firestore's 1MB limit.
- */
-async function uploadMediaFile(
-  submissionFolder: string,
-  fileName: string,
-  dataUrl: string
-): Promise<string> {
-  if (!dataUrl || !dataUrl.startsWith("data:image/")) {
-    return dataUrl;
-  }
-
-  // Derive mime type and file extension
-  const mimeMatch = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+_-]+);base64,/);
-  const contentType = mimeMatch ? mimeMatch[1] : "image/jpeg";
-  let ext = "jpg";
-  if (contentType === "image/png") ext = "png";
-  else if (contentType === "image/webp") ext = "webp";
-
-  const storagePath = `submissions/${submissionFolder}/${Date.now()}_${fileName}.${ext}`;
-  const storageRef = ref(storage, storagePath);
-
-  try {
-    await uploadString(storageRef, dataUrl, "data_url", {
-      contentType,
-    });
-  } catch (uploadErr: any) {
-    console.error(`Firebase Storage upload failed for ${fileName}:`, uploadErr);
-    throw new Error(
-      `Failed to upload ${fileName.replace(/_/g, " ")}. Please check your internet connection and try again.`
-    );
-  }
-
-  // File was successfully uploaded to Storage.
-  // Now attempt to obtain a download URL; if unauthenticated (expected for couples),
-  // return the storagePath so the authenticated admin can resolve it securely.
-  try {
-    const downloadUrl = await getDownloadURL(storageRef);
-    return downloadUrl;
-  } catch {
-    return storagePath;
-  }
-}
-
-async function finalizePhotoValue(
-  value: string | undefined,
-  submissionFolder: string,
-  fileName: string
-): Promise<string> {
-  if (!value) return "";
-  const trimmed = value.trim();
-  if (!trimmed) return "";
-
-  if (trimmed.startsWith("submissions/")) {
-    return await ensureStoragePathUploaded(trimmed);
-  }
-  if (trimmed.startsWith("data:image/")) {
-    return await uploadMediaFile(submissionFolder, fileName, trimmed);
-  }
-  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-    return trimmed;
-  }
-  if (trimmed.startsWith("blob:")) {
-    return "";
-  }
-  return trimmed;
-}
-
-async function finalizePhotoArray(
-  values: string[],
-  submissionFolder: string,
-  prefix: string
-): Promise<string[]> {
-  const results: string[] = [];
-  for (let i = 0; i < values.length; i++) {
-    const finalized = await finalizePhotoValue(
-      values[i],
-      submissionFolder,
-      `${prefix}_${i + 1}`
-    );
-    if (finalized) results.push(finalized);
-  }
-  return results;
+export interface SubmissionResult {
+  id: string;
+  displayId?: string;
+  sequenceNumber?: number;
+  pendingPhotoCount: number;
+  failedPhotoCount: number;
 }
 
 /**
- * Ensures every uploaded photo across all sections is finalized in Firebase Storage
- * and guarantees Firestore stores only lightweight Storage paths or HTTPS URLs (never base64).
+ * Pure helper computing the delivery/health label for any submission in the Admin Dashboard:
+ * - "photos_pending": one or more photos were still uploading at Send time
+ * - "needs_attention": missing display number/sequenceNumber, missing status, or failed photos
+ * - "submitted": normal complete submission
  */
-async function processAllImages(
-  answers: QuestionnaireAnswers,
-  submissionFolder: string
-): Promise<QuestionnaireAnswers> {
-  const updatedAnswers: QuestionnaireAnswers = JSON.parse(JSON.stringify(answers));
+export function getSubmissionDeliveryState(
+  record: Partial<SubmissionRecord>
+): SubmissionDeliveryState {
+  const statuses = record.photoStatuses ? Object.values(record.photoStatuses) : [];
+  const hasFailedPhotos = statuses.some((s) => s.status === "failed");
+  const hasPendingPhotos =
+    (typeof record.pendingPhotoCount === "number" && record.pendingPhotoCount > 0) ||
+    statuses.some((s) => s.status === "pending");
 
-  // Process Q1 couple photo if present
-  if (updatedAnswers.couplePhotoUrl) {
-    updatedAnswers.couplePhotoUrl = await finalizePhotoValue(
-      updatedAnswers.couplePhotoUrl,
-      submissionFolder,
-      "couple_photo"
-    );
+  if (hasPendingPhotos) return "photos_pending";
+  if (
+    hasFailedPhotos ||
+    !record.displayId ||
+    typeof record.sequenceNumber !== "number" ||
+    !record.status
+  ) {
+    return "needs_attention";
   }
+  return "submitted";
+}
 
-  // Process legacy family tree photo if present
-  if (updatedAnswers.q10_people?.treePhotoUrl) {
-    updatedAnswers.q10_people.treePhotoUrl = await finalizePhotoValue(
-      updatedAnswers.q10_people.treePhotoUrl,
-      submissionFolder,
-      "family_tree"
-    );
+function getRecordTimestampMs(record: Partial<SubmissionRecord> & { createdAt?: any }): number {
+  if (record.submittedAt) {
+    const t = Date.parse(record.submittedAt);
+    if (!Number.isNaN(t)) return t;
   }
-
-  // Process family member VIP reference photos
-  if (Array.isArray(updatedAnswers.q10_people?.familyMembers)) {
-    for (let i = 0; i < updatedAnswers.q10_people.familyMembers.length; i++) {
-      const member = updatedAnswers.q10_people.familyMembers[i];
-      if (member.photoUrl) {
-        member.photoUrl = await finalizePhotoValue(
-          member.photoUrl,
-          submissionFolder,
-          `family_member_${i + 1}`
-        );
-      }
-    }
+  if (record.updatedAt) {
+    const t = Date.parse(record.updatedAt);
+    if (!Number.isNaN(t)) return t;
   }
-
-  // Process Q10 Bride's Side photos
-  if (Array.isArray(updatedAnswers.q10_people?.brideSide?.photos)) {
-    for (let i = 0; i < updatedAnswers.q10_people.brideSide.photos.length; i++) {
-      const photo = updatedAnswers.q10_people.brideSide.photos[i];
-      if (photo.url) {
-        photo.url = await finalizePhotoValue(
-          photo.url,
-          submissionFolder,
-          `bride_family_${i + 1}`
-        );
-      }
-    }
+  if (record.createdAt && typeof record.createdAt.toMillis === "function") {
+    return record.createdAt.toMillis();
   }
-
-  // Process Q10 Groom's Side photos
-  if (Array.isArray(updatedAnswers.q10_people?.groomSide?.photos)) {
-    for (let i = 0; i < updatedAnswers.q10_people.groomSide.photos.length; i++) {
-      const photo = updatedAnswers.q10_people.groomSide.photos[i];
-      if (photo.url) {
-        photo.url = await finalizePhotoValue(
-          photo.url,
-          submissionFolder,
-          `groom_family_${i + 1}`
-        );
-      }
-    }
+  if (typeof record.createdAt === "string") {
+    const t = Date.parse(record.createdAt);
+    if (!Number.isNaN(t)) return t;
   }
-
-  // Process Q12 reference mood images
-  if (Array.isArray(updatedAnswers.q12_references?.images)) {
-    updatedAnswers.q12_references.images = await finalizePhotoArray(
-      updatedAnswers.q12_references.images,
-      submissionFolder,
-      "reference"
-    );
-  }
-
-  // Process Q13 bride & groom wardrobe photos separately
-  if (Array.isArray(updatedAnswers.wardrobe?.bride?.photos)) {
-    updatedAnswers.wardrobe.bride.photos = await finalizePhotoArray(
-      updatedAnswers.wardrobe.bride.photos,
-      submissionFolder,
-      "bride_outfit"
-    );
-  }
-
-  if (Array.isArray(updatedAnswers.wardrobe?.groom?.photos)) {
-    updatedAnswers.wardrobe.groom.photos = await finalizePhotoArray(
-      updatedAnswers.wardrobe.groom.photos,
-      submissionFolder,
-      "groom_outfit"
-    );
-  }
-
-  // Process legacy Q13 wedding outfit images
-  if (Array.isArray(updatedAnswers.weddingOutfits?.images)) {
-    updatedAnswers.weddingOutfits.images = await finalizePhotoArray(
-      updatedAnswers.weddingOutfits.images,
-      submissionFolder,
-      "outfit"
-    );
-  }
-
-  // Process Q14 per-event decor mood board images
-  if (Array.isArray(updatedAnswers.decorEvents)) {
-    for (let evIdx = 0; evIdx < updatedAnswers.decorEvents.length; evIdx++) {
-      const ev = updatedAnswers.decorEvents[evIdx];
-      if (!Array.isArray(ev?.images)) continue;
-      const safeEventSlug =
-        (ev.id || ev.name || `event_${evIdx + 1}`)
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, "_")
-          .replace(/^_+|_+$/g, "") || `event_${evIdx + 1}`;
-      ev.images = await finalizePhotoArray(
-        ev.images,
-        submissionFolder,
-        `decor_${safeEventSlug}`
-      );
-    }
-  }
-
-  // Process legacy Q14 decor mood board images
-  if (Array.isArray(updatedAnswers.decorMoodBoard?.images)) {
-    updatedAnswers.decorMoodBoard.images = await finalizePhotoArray(
-      updatedAnswers.decorMoodBoard.images,
-      submissionFolder,
-      "decor"
-    );
-  }
-
-  // Process Q27 one last thing images
-  if (Array.isArray(updatedAnswers.q23_oneLastThing?.images)) {
-    updatedAnswers.q23_oneLastThing.images = await finalizePhotoArray(
-      updatedAnswers.q23_oneLastThing.images,
-      submissionFolder,
-      "last_thing"
-    );
-  }
-
-  return updatedAnswers;
+  return 0;
 }
 
 /**
- * Saves a questionnaire submission with atomic sequential numbering (#001, #002...)
- * and automatic retry (up to 3 times) on network errors.
+ * Sorts submissions newest-first by submittedAt / updatedAt / createdAt so records
+ * WITHOUT a sequenceNumber are never hidden and always sort chronologically.
  */
-export async function createSubmission(
-  answers: QuestionnaireAnswers
-): Promise<{ id: string; displayId: string; sequenceNumber: number }> {
-  let attempt = 0;
-  const maxAttempts = 3;
+export function sortSubmissionsNewestFirst(
+  records: SubmissionRecord[]
+): SubmissionRecord[] {
+  return [...records].sort((a, b) => {
+    const timeDiff = getRecordTimestampMs(b) - getRecordTimestampMs(a);
+    if (timeDiff !== 0) return timeDiff;
+    return (b.sequenceNumber || 0) - (a.sequenceNumber || 0);
+  });
+}
 
-  while (attempt < maxAttempts) {
-    attempt++;
+export interface CoreSubmitDeps {
+  writeSubmissionDoc: (submissionId: string, payload: Record<string, unknown>) => Promise<void>;
+  assignDisplayNumber?: (submissionId: string) => Promise<{ sequenceNumber: number; displayId: string } | null>;
+  markDraftDone?: (resumeToken: string | undefined, submissionId: string, submittedAt: string) => Promise<void>;
+  notifyStudioAndCouple?: (payload: Record<string, unknown>) => Promise<void>;
+  logError?: (step: string, err: unknown, submissionId: string, photoCount: number) => Promise<void>;
+  retryDelaysMs?: number[];
+}
+
+/**
+ * Core save-main-record-first orchestrator (injectable for deterministic automated tests):
+ * 1. Reuses ONE stable `submissionId` across up to 3 attempts (no duplicates, no burned numbers).
+ * 2. Writes the main submission record to Firestore FIRST (with verified uploaded photos only;
+ *    pending/failed photos NEVER block submission).
+ * 3. Immediately resolves success once Firestore confirms the main write.
+ * 4. Runs post-save tasks (display number transaction, draft status update, studio + couple emails)
+ *    quietly afterwards; any post-save failure is logged to `submissionErrors` and NEVER turns
+ *    a saved submission into an error.
+ */
+export async function executeBulletproofSubmit(
+  params: {
+    submissionId: string;
+    resumeToken?: string;
+    ownerUid: string;
+    answers: QuestionnaireAnswers;
+  },
+  deps: CoreSubmitDeps
+): Promise<SubmissionResult> {
+  const { submissionId, resumeToken, ownerUid, answers } = params;
+  const sanitized = sanitizeAnswersForFirestore(answers);
+  assertNoBase64Images(sanitized.answers);
+
+  const submittedAt = new Date().toISOString();
+  const pendingOrFailed = sanitized.pendingCount + sanitized.failedCount;
+  const editorialBrief = synthesizeEditorialBrief(sanitized.answers);
+  const interviewQuestions = synthesizeInterviewQuestions(sanitized.answers);
+  const cheatSheet = synthesizeCheatSheet(sanitized.answers);
+  const coupleLetter = synthesizeCoupleLetter(sanitized.answers);
+
+  const submissionData: SubmissionRecord = stripUndefinedDeep({
+    id: submissionId,
+    ownerUid,
+    finalized: false, // Flipped to true after post-save numbering & any pending photo sync finish
+    submissionState:
+      sanitized.pendingCount > 0
+        ? "photos_pending"
+        : sanitized.failedCount > 0
+        ? "needs_attention"
+        : "submitted",
+    submittedAt,
+    updatedAt: submittedAt,
+    status: "new",
+    partner1: (answers.partner1 || "Partner 1").trim(),
+    partner2: (answers.partner2 || "Partner 2").trim(),
+    weddingDate: answers.weddingDate || "",
+    phone: answers.phone || "",
+    email: answers.email || "",
+    answers: sanitized.answers,
+    photoStatuses: sanitized.photoStatuses,
+    pendingPhotoCount: sanitized.pendingCount,
+    coupleLetter,
+    editorialBrief,
+    interviewQuestions,
+    cheatSheet,
+    privateNotes: "",
+  });
+
+  const retryDelays = deps.retryDelaysMs ?? [1000, 2200];
+  const maxAttempts = retryDelays.length + 1;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      // 1. Determine sequential number via Firestore transaction
-      const counterRef = doc(db, "counters", "submissions");
-      let nextSeq = 1;
-
-      try {
-        nextSeq = await runTransaction(db, async (transaction) => {
-          const counterDoc = await transaction.get(counterRef);
-          let current = 0;
-          if (counterDoc.exists()) {
-            current = counterDoc.data()?.current || 0;
-          }
-          const next = current + 1;
-          transaction.set(counterRef, { current: next }, { merge: true });
-          return next;
-        });
-      } catch (counterErr) {
-        console.warn("Counter transaction issue, falling back to timestamp-based sequence", counterErr);
-        nextSeq = Date.now() % 10000;
-      }
-
-      const displayId = `#${String(nextSeq).padStart(3, "0")}`;
-      const submissionId = `sub_${String(nextSeq).padStart(3, "0")}_${Date.now()}`;
-
-      // 2. Finalize any in-flight background uploads or base64 images to Storage
-      const processedAnswers = await processAllImages(answers, submissionId);
-      assertNoBase64Images(processedAnswers);
-
-      // Generate editorial brief, 11 interview questions, shoot day cheat sheet & couple letter
-      const editorialBrief = synthesizeEditorialBrief(processedAnswers);
-      const interviewQuestions = synthesizeInterviewQuestions(processedAnswers);
-      const cheatSheet = synthesizeCheatSheet(processedAnswers);
-      const coupleLetter = synthesizeCoupleLetter(processedAnswers);
-
-      const submissionDocRef = doc(db, "submissions", submissionId);
-      const submissionData: SubmissionRecord = {
-        id: submissionId,
-        sequenceNumber: nextSeq,
-        displayId,
-        submittedAt: new Date().toISOString(),
-        status: "new",
-        partner1: (answers.partner1 || "Partner 1").trim(),
-        partner2: (answers.partner2 || "Partner 2").trim(),
-        weddingDate: answers.weddingDate || "",
-        phone: answers.phone || "",
-        email: answers.email || "",
-        answers: processedAnswers,
-        coupleLetter,
-        editorialBrief,
-        interviewQuestions,
-        cheatSheet,
-        privateNotes: "",
-      };
-
-      await setDoc(submissionDocRef, {
+      await deps.writeSubmissionDoc(submissionId, {
         ...submissionData,
         createdAt: serverTimestamp(),
       });
-
-      resetDraftUploadFolder();
-
-      // 3. Fire-and-forget notification to Vercel API
-      try {
-        fetch("/api/notify", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            submissionId,
-            displayId,
-            partner1: submissionData.partner1,
-            partner2: submissionData.partner2,
-            weddingDate: submissionData.weddingDate,
-            phone: submissionData.phone,
-            email: submissionData.email,
-            submittedAt: submissionData.submittedAt,
-          }),
-        }).catch(() => {
-          // Non-blocking notification failure is fine
-        });
-      } catch {
-        // Ignore notification errors
+      lastError = null;
+      break;
+    } catch (err) {
+      lastError = err;
+      if (attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, retryDelays[attempt - 1]));
       }
-
-      return { id: submissionId, displayId, sequenceNumber: nextSeq };
-    } catch (err: any) {
-      console.error(`Submission attempt ${attempt} failed:`, err);
-      if (attempt >= maxAttempts) {
-        throw new Error(
-          err?.message || "Failed to save submission after 3 attempts. Please try again."
-        );
-      }
-      // Wait before retry
-      await new Promise((resolve) => setTimeout(resolve, attempt * 1200));
     }
   }
 
-  throw new Error("Unable to save submission.");
+  if (lastError) {
+    await deps.logError?.("send_main_save", lastError, submissionId, sanitized.totalCount);
+    throw lastError;
+  }
+
+  // MAIN RECORD IS NOW CONFIRMED SAVED!
+  // Everything below runs quietly without EVER causing Send to report an error.
+  const runPostSave = async () => {
+    let assignedDisplayId: string | undefined;
+
+    if (deps.assignDisplayNumber) {
+      try {
+        const assigned = await deps.assignDisplayNumber(submissionId);
+        if (assigned) {
+          assignedDisplayId = assigned.displayId;
+        }
+      } catch (err) {
+        await deps.logError?.("post_save_assign_number", err, submissionId, sanitized.totalCount);
+      }
+    }
+
+    if (deps.markDraftDone) {
+      try {
+        await deps.markDraftDone(resumeToken, submissionId, submittedAt);
+      } catch (err) {
+        await deps.logError?.("post_save_mark_draft", err, submissionId, sanitized.totalCount);
+      }
+    }
+
+    if (deps.notifyStudioAndCouple) {
+      try {
+        await deps.notifyStudioAndCouple({
+          submissionId,
+          displayId: assignedDisplayId || "",
+          partner1: submissionData.partner1,
+          partner2: submissionData.partner2,
+          weddingDate: submissionData.weddingDate,
+          phone: submissionData.phone,
+          email: submissionData.email,
+          submittedAt,
+          pendingPhotoCount: pendingOrFailed,
+        });
+      } catch (err) {
+        await deps.logError?.("post_save_notify_email", err, submissionId, sanitized.totalCount);
+      }
+    }
+  };
+
+  void runPostSave();
+
+  return {
+    id: submissionId,
+    pendingPhotoCount: sanitized.pendingCount,
+    failedPhotoCount: sanitized.failedCount,
+  };
+}
+
+let activePostSubmitPhotoUnsub: (() => void) | null = null;
+
+/**
+ * Watches any photos that were still uploading/retrying when Send was tapped.
+ * As each photo finishes in the background, quietly patches the verified Storage path
+ * into the already-saved submission record (while finalized == false).
+ */
+function watchPendingPhotosAfterSubmit(
+  submissionId: string,
+  originalAnswers: QuestionnaireAnswers
+): void {
+  if (activePostSubmitPhotoUnsub) {
+    activePostSubmitPhotoUnsub();
+    activePostSubmitPhotoUnsub = null;
+  }
+
+  activePostSubmitPhotoUnsub = subscribePhotoUploadComplete(() => {
+    const nextSanitized = sanitizeAnswersForFirestore(originalAnswers);
+    const allDone = nextSanitized.pendingCount === 0 && nextSanitized.failedCount === 0;
+    const now = new Date().toISOString();
+
+    void updateDoc(doc(db, "submissions", submissionId), {
+      answers: stripUndefinedDeep(nextSanitized.answers),
+      photoStatuses: stripUndefinedDeep(nextSanitized.photoStatuses),
+      pendingPhotoCount: nextSanitized.pendingCount,
+      submissionState:
+        nextSanitized.pendingCount > 0
+          ? "photos_pending"
+          : nextSanitized.failedCount > 0
+          ? "needs_attention"
+          : "submitted",
+      finalized: allDone,
+      updatedAt: now,
+    })
+      .then(() => {
+        if (allDone && activePostSubmitPhotoUnsub) {
+          activePostSubmitPhotoUnsub();
+          activePostSubmitPhotoUnsub = null;
+        }
+      })
+      .catch((err) => {
+        void logSubmissionError({
+          step: "post_save_pending_photo_sync",
+          error: err,
+          photoCount: countAllPhotosInAnswers(originalAnswers),
+          submissionId,
+        });
+      });
+  });
+}
+
+/**
+ * Assigns the next sequential submission number (#001, #002...) inside a Firestore transaction
+ * AFTER the main record has already been saved. Never falls back to a clock-based number.
+ */
+async function assignSequentialDisplayNumber(
+  submissionId: string,
+  shouldFinalize: boolean
+): Promise<{ sequenceNumber: number; displayId: string } | null> {
+  const counterRef = doc(db, "counters", "submissions");
+  const nextSeq = await runTransaction(db, async (transaction) => {
+    const counterDoc = await transaction.get(counterRef);
+    const current = counterDoc.exists() ? Number(counterDoc.data()?.current || 0) : 0;
+    const next = current + 1;
+    transaction.set(counterRef, { current: next }, { merge: true });
+    return next;
+  });
+
+  const displayId = `#${String(nextSeq).padStart(3, "0")}`;
+  await updateDoc(doc(db, "submissions", submissionId), {
+    sequenceNumber: nextSeq,
+    displayId,
+    finalized: shouldFinalize,
+    updatedAt: new Date().toISOString(),
+  });
+
+  return { sequenceNumber: nextSeq, displayId };
+}
+
+/**
+ * Public entry point called by ReviewScreen when the couple taps "Send".
+ * - Uses anonymous auth + stable submissionId
+ * - Gives almost-finished photos a brief 2.5s window without ever blocking
+ * - Saves main record first with up to 3 automatic retries
+ * - Runs numbering, draft completion, and emails quietly after save
+ */
+export async function createSubmission(
+  answers: QuestionnaireAnswers
+): Promise<SubmissionResult> {
+  const session = getOrCreateCoupleSession();
+  const authRes = await ensureCoupleAnonymousAuth();
+  if (!authRes?.uid) {
+    const authErr: any = new Error(
+      "Could not start a secure session. Please make sure Anonymous Sign-In is enabled."
+    );
+    authErr.code = "auth/anonymous-disabled";
+    void logSubmissionError({
+      step: "send_auth",
+      error: authErr,
+      photoCount: countAllPhotosInAnswers(answers),
+      submissionId: session.submissionId,
+    });
+    throw authErr;
+  }
+
+  // Give almost-finished uploads a brief window, and trigger background retries for any paused ones
+  kickOffPendingPhotoRetries();
+  await waitBrieflyForActiveUploads(2500);
+
+  const sanitizedPreview = sanitizeAnswersForFirestore(answers);
+  const hasPendingOrFailed =
+    sanitizedPreview.pendingCount > 0 || sanitizedPreview.failedCount > 0;
+
+  const result = await executeBulletproofSubmit(
+    {
+      submissionId: session.submissionId,
+      resumeToken: session.resumeToken,
+      ownerUid: authRes.uid,
+      answers,
+    },
+    {
+      writeSubmissionDoc: async (id, payload) => {
+        await setDoc(doc(db, "submissions", id), payload, { merge: true });
+      },
+      assignDisplayNumber: async (id) =>
+        assignSequentialDisplayNumber(id, !hasPendingOrFailed),
+      markDraftDone: async (token, id, submittedAt) => {
+        await markDraftSubmitted(token, id, submittedAt);
+      },
+      notifyStudioAndCouple: async (body) => {
+        const res = await fetch("/api/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          throw new Error(`Notify endpoint returned ${res.status}`);
+        }
+      },
+      logError: async (step, err, id, photoCount) => {
+        await logSubmissionError({ step, error: err, submissionId: id, photoCount });
+      },
+    }
+  );
+
+  if (result.pendingPhotoCount > 0 || result.failedPhotoCount > 0) {
+    watchPendingPhotosAfterSubmit(session.submissionId, answers);
+  } else {
+    resetDraftUploadFolder();
+  }
+
+  return result;
 }
 
 const SESSION_CACHE_KEY = "oaks_submissions_cache_v1";
@@ -690,10 +724,13 @@ function removeFromLocalCache(id: string) {
   }
 }
 
+/**
+ * Fetches EVERY submission document in Firestore WITHOUT `orderBy("sequenceNumber")`
+ * so no submission missing `sequenceNumber` or `status` is ever silently hidden.
+ */
 async function fetchSubmissionsFromServer(): Promise<SubmissionRecord[]> {
   const submissionsRef = collection(db, "submissions");
-  const q = query(submissionsRef, orderBy("sequenceNumber", "desc"));
-  const snapshot = await getDocs(q);
+  const snapshot = await getDocs(submissionsRef);
 
   const results: SubmissionRecord[] = [];
   snapshot.forEach((docSnapshot) => {
@@ -703,7 +740,7 @@ async function fetchSubmissionsFromServer(): Promise<SubmissionRecord[]> {
       id: docSnapshot.id,
     });
   });
-  return results;
+  return sortSubmissionsNewestFirst(results);
 }
 
 /**
@@ -735,7 +772,7 @@ export function getCachedSubmissionById(id: string): SubmissionRecord | null {
 }
 
 /**
- * Admin: Fetch all submissions ordered by newest sequence number first.
+ * Admin: Fetch all submissions ordered by newest timestamp first.
  * Employs SWR (Stale-While-Revalidate) with in-memory & sessionStorage caching
  * so repeat visits and back navigation appear in 0ms without blank screens.
  */
@@ -776,6 +813,239 @@ export async function getSubmissions(
   memorySubmissionsCache = fresh;
   saveToSessionCache(fresh);
   return fresh;
+}
+
+/**
+ * Admin: Lists orphaned Firebase Storage folders under `submissions/` that do not
+ * have a matching Firestore submission document (e.g. failed submits whose photos uploaded).
+ */
+export async function listOrphanedStorageFolders(
+  existingSubmissions: SubmissionRecord[]
+): Promise<OrphanedStorageFolder[]> {
+  const knownIds = new Set(existingSubmissions.map((s) => s.id));
+  const referencedFolders = new Set<string>();
+
+  // Also collect any Storage folder names referenced inside existing submission answers
+  for (const sub of existingSubmissions) {
+    const rawJson = JSON.stringify(sub.answers || {});
+    const matches = rawJson.matchAll(/submissions\/([^/"\\]+)\//g);
+    for (const m of matches) {
+      if (m[1]) referencedFolders.add(m[1]);
+    }
+  }
+
+  const rootRef = ref(storage, "submissions");
+  const rootListing = await listAll(rootRef);
+  const orphaned: OrphanedStorageFolder[] = [];
+
+  await Promise.all(
+    rootListing.prefixes.map(async (folderRef) => {
+      const folderName = folderRef.name;
+      if (knownIds.has(folderName) || referencedFolders.has(folderName)) {
+        return;
+      }
+
+      const photoPaths: string[] = [];
+      try {
+        const level1 = await listAll(folderRef);
+        level1.items.forEach((item) => photoPaths.push(item.fullPath));
+        // Also check one nested level for `submissions/{submissionId}/{ownerUid}/{file}`
+        await Promise.all(
+          level1.prefixes.map(async (subPrefix) => {
+            try {
+              const level2 = await listAll(subPrefix);
+              level2.items.forEach((item) => photoPaths.push(item.fullPath));
+            } catch {
+              // ignore subfolder listing error
+            }
+          })
+        );
+      } catch {
+        // ignore folder listing error
+      }
+
+      // Extract estimated timestamp from folder name (e.g. sub_010_1794830537946 or draft_179...)
+      let estimatedDate: string | undefined;
+      const tsMatch = folderName.match(/(\d{13})/);
+      if (tsMatch) {
+        const ms = Number(tsMatch[1]);
+        if (!Number.isNaN(ms) && ms > 1_600_000_000_000) {
+          estimatedDate = new Date(ms).toISOString();
+        }
+      }
+
+      orphaned.push({
+        folderName,
+        fullPath: folderRef.fullPath,
+        photoPaths,
+        estimatedDate,
+      });
+    })
+  );
+
+  return orphaned.sort((a, b) =>
+    (b.estimatedDate || b.folderName).localeCompare(a.estimatedDate || a.folderName)
+  );
+}
+
+/**
+ * Admin: One-time recovery action that creates a visible Firestore submission record
+ * from an orphaned Firebase Storage folder so the studio can inspect and download its photos.
+ */
+export async function recoverOrphanedStorageFolder(
+  folder: OrphanedStorageFolder,
+  partner1 = "Recovered Couple",
+  partner2 = "(Photos Only)"
+): Promise<SubmissionRecord> {
+  const now = new Date().toISOString();
+  const submissionId = folder.folderName;
+  const answers: QuestionnaireAnswers = {
+    partner1: partner1.trim() || "Recovered Couple",
+    partner2: partner2.trim() || "(Photos Only)",
+    weddingDate: "",
+    phone: "",
+    email: "",
+    q1_calls: { aCallsB: "", bCallsA: "" },
+    q2_workPassion: { partnerA: "", partnerB: "" },
+    q3_firstMeet: "",
+    q4_firstImpression: { partnerA: "", partnerB: "" },
+    q5_threeWords: ["", "", ""],
+    q6_activities: { selected: [], other: "" },
+    q7_loveMost: { partnerA: "", partnerB: "" },
+    q8_funnyStory: "",
+    q9_proposal: { choice: "", story: "" },
+    q10_people: {
+      familyMembers: [],
+      treeNotes: "",
+      brideSide: { photos: [], notes: "" },
+      groomSide: { photos: [], notes: "" },
+    },
+    q11_filmFeel: { selected: [], other: "" },
+    q12_references: { links: [], images: [], notes: "" },
+    wardrobe: {
+      bride: { notes: "", links: [], photos: [] },
+      groom: { notes: "", links: [], photos: [] },
+    },
+    weddingOutfits: { links: [], images: [], notes: "" },
+    decorMoodBoard: { links: [], images: [], notes: "" },
+    q13_tone: { selected: [], other: "" },
+    q14_moments: { selected: [], other: "" },
+    q15_captureAvoid: { definitelyCapture: "", pleaseAvoid: "" },
+    q16_nonNegotiables: "",
+    q17_emotional: "",
+    q18_cameraVersatility: "",
+    choosingOaks: "",
+    q19_whatMattersMost: { selected: [], other: "" },
+    q20_guidanceComfort: "",
+    q21_comfortTips: { selected: [], notes: "" },
+    q22_futureFeeling: "",
+    q23_oneLastThing: {
+      notes: `Recovered ${folder.photoPaths.length} photo(s) from orphaned Storage folder "${folder.folderName}".`,
+      images: folder.photoPaths,
+    },
+  };
+
+  const photoStatuses: Record<string, PhotoStatusEntry> = {};
+  folder.photoPaths.forEach((p, idx) => {
+    photoStatuses[`recovered_${idx + 1}`] = {
+      id: `recovered_${idx + 1}`,
+      category: "recovered",
+      status: "uploaded",
+      storagePath: p,
+      updatedAt: now,
+    };
+  });
+
+  const record: SubmissionRecord = stripUndefinedDeep({
+    id: submissionId,
+    submittedAt: folder.estimatedDate || now,
+    updatedAt: now,
+    status: "new",
+    submissionState: "needs_attention",
+    recoveredFromStorage: true,
+    finalized: true,
+    partner1: answers.partner1,
+    partner2: answers.partner2,
+    weddingDate: "",
+    phone: "",
+    email: "",
+    answers,
+    photoStatuses,
+    pendingPhotoCount: 0,
+    privateNotes: `Recovered from orphaned Firebase Storage folder: ${folder.folderName}`,
+  });
+
+  await setDoc(doc(db, "submissions", submissionId), {
+    ...record,
+    createdAt: serverTimestamp(),
+  });
+
+  if (memorySubmissionsCache) {
+    memorySubmissionsCache = sortSubmissionsNewestFirst([record, ...memorySubmissionsCache]);
+    saveToSessionCache(memorySubmissionsCache);
+  }
+  return record;
+}
+
+/**
+ * Admin: Converts an unfinished online draft into a full SubmissionRecord in Firestore
+ * (helpful when a couple answered all questions in their draft but never tapped Send).
+ */
+export async function recoverDraftAsSubmission(
+  draft: DraftRecord
+): Promise<SubmissionRecord> {
+  const now = new Date().toISOString();
+  const sanitized = sanitizeAnswersForFirestore(draft.answers);
+  assertNoBase64Images(sanitized.answers);
+
+  const submissionId = draft.submissionId || `rec_${Date.now()}`;
+  const editorialBrief = synthesizeEditorialBrief(sanitized.answers);
+  const interviewQuestions = synthesizeInterviewQuestions(sanitized.answers);
+  const cheatSheet = synthesizeCheatSheet(sanitized.answers);
+  const coupleLetter = synthesizeCoupleLetter(sanitized.answers);
+
+  const record: SubmissionRecord = stripUndefinedDeep({
+    id: submissionId,
+    ownerUid: draft.ownerUid,
+    submittedAt: draft.updatedAt || now,
+    updatedAt: now,
+    status: "new",
+    submissionState: "needs_attention",
+    recoveredFromDraft: true,
+    finalized: true,
+    partner1: (draft.partner1 || draft.answers.partner1 || "Partner 1").trim(),
+    partner2: (draft.partner2 || draft.answers.partner2 || "Partner 2").trim(),
+    weddingDate: draft.weddingDate || draft.answers.weddingDate || "",
+    phone: draft.phone || draft.answers.phone || "",
+    email: draft.email || draft.answers.email || "",
+    answers: sanitized.answers,
+    photoStatuses: draft.photoStatuses || sanitized.photoStatuses,
+    pendingPhotoCount: 0,
+    coupleLetter,
+    editorialBrief,
+    interviewQuestions,
+    cheatSheet,
+    privateNotes: "Recovered from unfinished online draft by studio admin.",
+  });
+
+  await setDoc(
+    doc(db, "submissions", submissionId),
+    {
+      ...record,
+      createdAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+
+  await markDraftSubmitted(draft.id, submissionId, now);
+
+  if (memorySubmissionsCache) {
+    const withoutOld = memorySubmissionsCache.filter((r) => r.id !== submissionId);
+    memorySubmissionsCache = sortSubmissionsNewestFirst([record, ...withoutOld]);
+    saveToSessionCache(memorySubmissionsCache);
+  }
+
+  return record;
 }
 
 /**

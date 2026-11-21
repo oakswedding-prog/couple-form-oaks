@@ -4,10 +4,26 @@
  */
 
 import React, { useState } from "react";
-import { ArrowLeft, Send, Edit3, Loader2, AlertCircle, CloudCheck, RotateCcw, User } from "lucide-react";
+import {
+  ArrowLeft,
+  Send,
+  Edit3,
+  Loader2,
+  AlertCircle,
+  CloudCheck,
+  RotateCcw,
+  User,
+  Share2,
+  Copy,
+  Check,
+  MessageCircle,
+  Mail,
+} from "lucide-react";
 import { QuestionnaireAnswers } from "../types/questionnaire.ts";
 import { STUDIO_NAME, ACCENT_COLOR, STORAGE_KEY } from "../constants.ts";
-import { createSubmission } from "../lib/submissions.ts";
+import { createSubmission, SubmissionResult } from "../lib/submissions.ts";
+import { extractShortErrorCode } from "../lib/errorLogger.ts";
+import { generateBriefSummary } from "../utils/briefGenerator.ts";
 import { getMissingMandatoryQuestions } from "../utils/questionnaireValidation.ts";
 import { getGroupedQ10People } from "../utils/familyPeople.ts";
 import { getGroupedWardrobe } from "../utils/wardrobe.ts";
@@ -17,89 +33,137 @@ import {
   retryBackgroundPhotoUpload,
   usePhotoUploadStatus,
 } from "../lib/photoUploadManager.ts";
+import { ResumeLinkButton } from "./ResumeLinkButton.tsx";
 
 interface ReviewScreenProps {
   answers: QuestionnaireAnswers;
+  resumeToken?: string | null;
   onEditQuestion: (stepNumber: number) => void;
   onBack: () => void;
-  onSubmitted: () => void;
+  onSubmitted: (result: SubmissionResult) => void;
 }
 
 
 export const ReviewScreen: React.FC<ReviewScreenProps> = ({
   answers,
+  resumeToken = null,
   onEditQuestion,
   onBack,
   onSubmitted,
 }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [failureCode, setFailureCode] = useState<string | null>(null);
+  const [showShareBackup, setShowShareBackup] = useState(false);
+  const [copiedBackup, setCopiedBackup] = useState(false);
 
   const p1 = answers.partner1 || "Partner 1";
   const p2 = answers.partner2 || "Partner 2";
   const missingMandatorySteps = getMissingMandatoryQuestions(answers);
   const hasMissingMandatory = missingMandatorySteps.length > 0;
 
+  const buildBackupText = () => generateBriefSummary(STUDIO_NAME, answers);
+
+  const handleCopyBackup = async () => {
+    const text = buildBackupText();
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedBackup(true);
+      window.setTimeout(() => setCopiedBackup(false), 2600);
+    } catch {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        setCopiedBackup(true);
+        window.setTimeout(() => setCopiedBackup(false), 2600);
+      } catch {
+        // ignore
+      }
+    }
+  };
+
   const handleSend = async () => {
     if (hasMissingMandatory) {
       setErrorMessage(
         "Please complete the highlighted required questions above before sending your story."
       );
+      setFailureCode(null);
       return;
     }
     setIsSubmitting(true);
     setErrorMessage(null);
+    setFailureCode(null);
 
     try {
-      await createSubmission(answers);
+      const result = await createSubmission(answers);
 
-      // Successfully saved to Firestore! Clear draft from localStorage
+      // Main record is confirmed saved! Clear local draft quietly (never blocks Thank You screen)
       try {
         localStorage.removeItem(STORAGE_KEY);
       } catch {
         // ignore
       }
 
-      // Celebratory luxury confetti (dynamically imported)
-      try {
-        const confetti = (await import("canvas-confetti")).default;
-        confetti({
-          particleCount: 80,
-          spread: 70,
-          origin: { y: 0.6 },
-          colors: ["#B08D57", "#D4AF37", "#1A1A1A", "#8C7043", "#F5F2ED"],
-        });
-      } catch {
-        // ignore
-      }
+      // Transition immediately to Thank You screen (already preloaded in main bundle)
+      setIsSubmitting(false);
+      onSubmitted(result);
 
-      setIsSubmitting(false);
-      onSubmitted();
+      // Celebratory confetti runs quietly after transition; never triggers an error
+      void import("canvas-confetti")
+        .then((mod) => {
+          const confetti = mod.default;
+          confetti({
+            particleCount: 80,
+            spread: 70,
+            origin: { y: 0.6 },
+            colors: ["#B08D57", "#D4AF37", "#1A1A1A", "#8C7043", "#F5F2ED"],
+          });
+        })
+        .catch(() => {});
     } catch (err: any) {
-      console.error("Submission failed:", err);
       setIsSubmitting(false);
-      setErrorMessage(
-        "We could not send your answers just yet. Your words are completely safe. Please try tapping Send again."
-      );
+      setFailureCode(extractShortErrorCode(err, "send/failed"));
+      setErrorMessage("We couldn't send this just now. Your answers are safe.");
     }
   };
 
+  const backupTextSummary = showShareBackup ? buildBackupText() : "";
+  const compactShareSnippet = backupTextSummary.slice(0, 3500);
+  const whatsappShareUrl = `https://wa.me/?text=${encodeURIComponent(compactShareSnippet)}`;
+  const emailShareUrl = `mailto:mywedding@oakswedding.com?subject=${encodeURIComponent(
+    `${STUDIO_NAME} Questionnaire Answers — ${p1} & ${p2}`
+  )}&body=${encodeURIComponent(compactShareSnippet)}`;
 
   return (
     <div className="max-w-[680px] mx-auto px-5 py-8 sm:py-12 safe-bottom">
-      {/* Top bar with back */}
-      <div className="flex items-center justify-between pb-6 border-b border-[#E8E8E8]">
+      {/* Top bar with back & resume link */}
+      <div className="flex items-center justify-between gap-2 pb-6 border-b border-[#E8E8E8]">
         <button
           type="button"
           onClick={onBack}
-          className="flex items-center gap-1.5 px-3 py-2 -ml-2 rounded-xl text-[#1A1A1A] hover:bg-[#FAFAFA] font-medium"
+          className="flex items-center gap-1.5 px-3 py-2 -ml-2 rounded-xl text-[#1A1A1A] hover:bg-[#FAFAFA] font-medium cursor-pointer"
         >
           <ArrowLeft className="w-5 h-5" />
           <span>Back</span>
         </button>
-        <span className="text-xs uppercase tracking-widest font-semibold text-[#5F5F5F]">
-          Review &amp; Confirm
-        </span>
+        <div className="flex items-center gap-2">
+          <ResumeLinkButton
+            resumeToken={resumeToken}
+            partner1={answers.partner1}
+            partner2={answers.partner2}
+            email={answers.email}
+            compact
+          />
+          <span className="text-xs uppercase tracking-widest font-semibold text-[#5F5F5F] hidden sm:inline">
+            Review &amp; Confirm
+          </span>
+        </div>
       </div>
 
       {/* Header */}
@@ -739,11 +803,99 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
         </div>
       )}
 
-      {/* Error alert if sending fails */}
+      {/* Friendly Send Failure Recovery Card */}
       {errorMessage && (
-        <div className="mt-6 p-4 rounded-2xl bg-red-50 border border-red-200 text-red-900 flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 shrink-0 mt-0.5 text-red-600" />
-          <div className="text-sm">{errorMessage}</div>
+        <div
+          role="alert"
+          className="mt-6 p-5 sm:p-6 rounded-2xl bg-[#FAF7F2] border border-[#E5DDD2] space-y-4"
+        >
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 shrink-0 mt-0.5 text-[#B08D57]" />
+            <div className="space-y-1">
+              <p className="text-base font-semibold text-[#1A1A1A]">
+                {errorMessage}
+              </p>
+              {failureCode && (
+                <p className="text-xs text-[#5F5F5F] leading-relaxed">
+                  Nothing has been lost. You can try sending again right now, or share a copy of your written answers directly with our studio.
+                </p>
+              )}
+            </div>
+          </div>
+
+          {failureCode && (
+            <div className="space-y-3 pl-0 sm:pl-8">
+              <div className="flex flex-col sm:flex-row gap-2.5">
+                <button
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={handleSend}
+                  className="flex-1 min-h-[44px] px-4 py-2.5 rounded-xl bg-[#1A1A1A] hover:bg-[#333333] text-white text-sm font-medium inline-flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-60"
+                >
+                  <RotateCcw className="w-4 h-4 text-[#E5C687]" />
+                  <span>Try again</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowShareBackup((v) => !v)}
+                  className="flex-1 min-h-[44px] px-4 py-2.5 rounded-xl bg-white hover:bg-[#F5F0E6] border border-[#DFD4C3] text-[#1A1A1A] text-sm font-medium inline-flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                >
+                  <Share2 className="w-4 h-4 text-[#8C7043]" />
+                  <span>Share my answers with the studio</span>
+                </button>
+              </div>
+
+              {showShareBackup && (
+                <div className="p-3.5 rounded-xl bg-white border border-[#E8DFD3] space-y-2.5">
+                  <p className="text-xs text-[#5F5F5F]">
+                    Send your complete written answers to {STUDIO_NAME} as an instant backup:
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleCopyBackup()}
+                      className="min-h-[40px] px-3 py-2 rounded-xl bg-[#FAF8F5] hover:bg-[#F2ECE1] border border-[#E5DDD2] text-xs font-medium text-[#1A1A1A] inline-flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      {copiedBackup ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Copied answers</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5 text-[#8C7043]" />
+                          <span>Copy all text</span>
+                        </>
+                      )}
+                    </button>
+
+                    <a
+                      href={whatsappShareUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="min-h-[40px] px-3 py-2 rounded-xl bg-[#FAF8F5] hover:bg-[#F2ECE1] border border-[#E5DDD2] text-xs font-medium text-[#1A1A1A] inline-flex items-center justify-center gap-1.5"
+                    >
+                      <MessageCircle className="w-3.5 h-3.5 text-emerald-700" />
+                      <span>WhatsApp studio</span>
+                    </a>
+
+                    <a
+                      href={emailShareUrl}
+                      className="min-h-[40px] px-3 py-2 rounded-xl bg-[#FAF8F5] hover:bg-[#F2ECE1] border border-[#E5DDD2] text-xs font-medium text-[#1A1A1A] inline-flex items-center justify-center gap-1.5"
+                    >
+                      <Mail className="w-3.5 h-3.5 text-[#8C7043]" />
+                      <span>Email studio</span>
+                    </a>
+                  </div>
+                </div>
+              )}
+
+              <p className="text-[11px] font-mono text-[#8A857D]">
+                Error: {failureCode}
+              </p>
+            </div>
+          )}
         </div>
       )}
 
