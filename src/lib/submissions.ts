@@ -69,6 +69,7 @@ import {
 } from "./coupleSession.ts";
 import { logSubmissionError } from "./errorLogger.ts";
 import { markDraftSubmitted } from "./drafts.ts";
+import { buildNormalizedPhotoReport } from "../utils/photoStatusSummary.ts";
 
 /**
  * In-memory + sessionStorage cache for resolved Firebase Storage download URLs
@@ -350,13 +351,12 @@ export function getSubmissionAttentionReasons(
   submissionErrors?: SubmissionErrorRecord[]
 ): string[] {
   const reasons: string[] = [];
-  const statuses = record.photoStatuses ? Object.values(record.photoStatuses) : [];
-  const failedCount = statuses.filter((s) => s.status === "failed").length;
+  const photoReport = buildNormalizedPhotoReport(record.answers, record.photoStatuses);
 
-  if (failedCount === 1) {
+  if (photoReport.failedCount === 1) {
     reasons.push("1 photo failed to upload");
-  } else if (failedCount > 1) {
-    reasons.push(`${failedCount} photos failed to upload`);
+  } else if (photoReport.failedCount > 1) {
+    reasons.push(`${photoReport.failedCount} photos failed to upload`);
   }
 
   if (!record.displayId || typeof record.sequenceNumber !== "number") {
@@ -394,10 +394,14 @@ export function getSubmissionDeliveryState(
   record: Partial<SubmissionRecord>,
   submissionErrors?: SubmissionErrorRecord[]
 ): SubmissionDeliveryState {
-  const statuses = record.photoStatuses ? Object.values(record.photoStatuses) : [];
+  const photoReport = buildNormalizedPhotoReport(record.answers, record.photoStatuses);
+  const hasPhotoStatusEntries =
+    Boolean(record.photoStatuses) && Object.keys(record.photoStatuses!).length > 0;
   const hasPendingPhotos =
-    (typeof record.pendingPhotoCount === "number" && record.pendingPhotoCount > 0) ||
-    statuses.some((s) => s.status === "pending");
+    photoReport.uploadingCount > 0 ||
+    (!hasPhotoStatusEntries &&
+      typeof record.pendingPhotoCount === "number" &&
+      record.pendingPhotoCount > 0);
 
   const reasons = getSubmissionAttentionReasons(record, submissionErrors);
   if (reasons.length > 0) {
@@ -427,11 +431,12 @@ export function findResumeTokenForSubmission(
 }
 
 /**
- * Admin-only helper: returns a working resume URL for any submission.
- * - If a draft/resumeToken already exists, re-opens that draft (`status: "draft"`) when the
- *   submission still has missing/failed photos so the couple can re-add photos on any device.
- * - If an older submission predates online drafts, creates a new draft document on demand and
- *   saves `resumeToken` onto the submission record.
+ * Admin-only helper: returns a working resume URL for any submission that ANY client
+ * can open on ANY phone/browser with zero email login required.
+ * - Always re-opens the linked draft (`status: "draft"`, synced answers & photoStatuses)
+ *   and unlocks the submission (`finalized: false` + `resumeToken`) so the couple can open
+ *   their saved form, edit answers or add photos on any device, and save right back into
+ *   the exact same submission without creating duplicates or burning a new ticket number.
  */
 export async function ensureResumeLinkForSubmission(
   record: SubmissionRecord,
@@ -439,101 +444,47 @@ export async function ensureResumeLinkForSubmission(
 ): Promise<{ token: string; url: string }> {
   const existingToken = findResumeTokenForSubmission(record, existingDrafts);
   const now = new Date().toISOString();
-  const hasPhotoIssues =
-    getSubmissionDeliveryState(record) !== "submitted" ||
-    Object.values(record.photoStatuses || {}).some((s) => s.status !== "uploaded");
-
-  if (existingToken) {
-    try {
-      const draftRef = doc(db, "drafts", existingToken);
-      const draftSnap = await getDoc(draftRef);
-      if (draftSnap.exists()) {
-        if (hasPhotoIssues) {
-          await updateDoc(draftRef, {
-            status: "draft",
-            photoStatuses: record.photoStatuses || {},
-            updatedAt: now,
-          });
-        }
-      } else if (auth.currentUser?.uid) {
-        const sanitized = sanitizeAnswersForFirestore(record.answers);
-        await setDoc(
-          draftRef,
-          stripUndefinedDeep({
-            id: existingToken,
-            submissionId: record.id,
-            ownerUid: auth.currentUser.uid,
-            status: "draft",
-            currentStep: 28,
-            furthestStep: 28,
-            partner1: record.partner1 || "",
-            partner2: record.partner2 || "",
-            weddingDate: record.weddingDate || "",
-            phone: record.phone || "",
-            email: record.email || "",
-            answers: sanitized.answers,
-            photoStatuses: record.photoStatuses || sanitized.photoStatuses,
-            answeredCount: 27,
-            mandatoryRemaining: 0,
-            createdAt: record.submittedAt || now,
-            updatedAt: now,
-          })
-        );
-      }
-      if (!record.resumeToken) {
-        await updateDoc(doc(db, "submissions", record.id), {
-          resumeToken: existingToken,
-          ...(hasPhotoIssues ? { finalized: false } : {}),
-        });
-        updateLocalCacheRecord(record.id, (rec) => ({
-          ...rec,
-          resumeToken: existingToken,
-          ...(hasPhotoIssues ? { finalized: false } : {}),
-        }));
-      }
-    } catch {
-      // Even if updating metadata fails, the existing resume token URL still works
-    }
-    return { token: existingToken, url: buildResumeUrl(existingToken) };
-  }
-
-  const newToken = generateResumeToken();
-  const adminUid = auth.currentUser?.uid || "admin";
   const sanitized = sanitizeAnswersForFirestore(record.answers);
-  await setDoc(
-    doc(db, "drafts", newToken),
-    stripUndefinedDeep({
-      id: newToken,
-      submissionId: record.id,
-      ownerUid: adminUid,
-      status: "draft",
-      currentStep: 28,
-      furthestStep: 28,
-      partner1: record.partner1 || "",
-      partner2: record.partner2 || "",
-      weddingDate: record.weddingDate || "",
-      phone: record.phone || "",
-      email: record.email || "",
-      answers: sanitized.answers,
-      photoStatuses: record.photoStatuses || sanitized.photoStatuses,
-      answeredCount: 27,
-      mandatoryRemaining: 0,
-      createdAt: record.submittedAt || now,
-      updatedAt: now,
-    })
-  );
+  const token = existingToken || generateResumeToken();
+  const adminUid = auth.currentUser?.uid || "admin";
+
+  const draftRef = doc(db, "drafts", token);
+  const draftPayload = stripUndefinedDeep({
+    id: token,
+    submissionId: record.id,
+    ownerUid: adminUid,
+    status: "draft" as const,
+    currentStep: 28,
+    furthestStep: 28,
+    partner1: record.partner1 || "",
+    partner2: record.partner2 || "",
+    weddingDate: record.weddingDate || "",
+    phone: record.phone || "",
+    email: record.email || "",
+    answers: sanitized.answers,
+    photoStatuses: record.photoStatuses || sanitized.photoStatuses,
+    answeredCount: 27,
+    mandatoryRemaining: 0,
+    createdAt: record.submittedAt || now,
+    updatedAt: now,
+  });
+
+  await setDoc(draftRef, draftPayload);
 
   await updateDoc(doc(db, "submissions", record.id), {
-    resumeToken: newToken,
-    ...(hasPhotoIssues ? { finalized: false } : {}),
+    resumeToken: token,
+    finalized: false,
+    updatedAt: now,
   });
+
   updateLocalCacheRecord(record.id, (rec) => ({
     ...rec,
-    resumeToken: newToken,
-    ...(hasPhotoIssues ? { finalized: false } : {}),
+    resumeToken: token,
+    finalized: false,
+    updatedAt: now,
   }));
 
-  return { token: newToken, url: buildResumeUrl(newToken) };
+  return { token, url: buildResumeUrl(token) };
 }
 
 /**
@@ -647,15 +598,16 @@ export async function executeBulletproofSubmit(
     resumeToken?: string;
     ownerUid: string;
     answers: QuestionnaireAnswers;
+    existingDisplayId?: string;
   },
   deps: CoreSubmitDeps
 ): Promise<SubmissionResult> {
-  const { submissionId, resumeToken, ownerUid, answers } = params;
+  const { submissionId, resumeToken, ownerUid, answers, existingDisplayId } = params;
   const sanitized = sanitizeAnswersForFirestore(answers);
   assertNoBase64Images(sanitized.answers);
 
   const submittedAt = new Date().toISOString();
-  const pendingOrFailed = sanitized.pendingCount + sanitized.failedCount;
+  const photoReport = buildNormalizedPhotoReport(sanitized.answers, sanitized.photoStatuses);
   const editorialBrief = synthesizeEditorialBrief(sanitized.answers);
   const interviewQuestions = synthesizeInterviewQuestions(sanitized.answers);
   const cheatSheet = synthesizeCheatSheet(sanitized.answers);
@@ -667,9 +619,9 @@ export async function executeBulletproofSubmit(
     ...(resumeToken ? { resumeToken } : {}),
     finalized: false, // Flipped to true after post-save numbering & any pending photo sync finish
     submissionState:
-      sanitized.failedCount > 0
+      photoReport.failedCount > 0
         ? "needs_attention"
-        : sanitized.pendingCount > 0
+        : photoReport.uploadingCount > 0
         ? "photos_pending"
         : "submitted",
     submittedAt,
@@ -724,16 +676,19 @@ export async function executeBulletproofSubmit(
       try {
         await deps.notifyStudioAndCouple({
           submissionId,
-          displayId: "",
+          displayId: existingDisplayId || "",
           partner1: submissionData.partner1,
           partner2: submissionData.partner2,
           weddingDate: submissionData.weddingDate,
           phone: submissionData.phone,
           email: submissionData.email,
           submittedAt,
-          uploadedPhotoCount: sanitized.uploadedCount,
+          uploadedPhotoCount: photoReport.uploadedCount,
+          notAddedPhotoSlotCount: photoReport.notAddedCount,
+          failedPhotoCount: photoReport.failedCount,
+          uploadingPhotoCount: photoReport.uploadingCount,
           totalPhotoCount: sanitized.totalCount,
-          pendingPhotoCount: pendingOrFailed,
+          pendingPhotoCount: photoReport.uploadingCount,
         });
         await deps.updateEmailStatus?.(submissionId, "sent").catch(() => {});
       } catch (err) {
@@ -946,9 +901,12 @@ export async function createSubmission(
   } catch {
     existingDocSnap = null;
   }
+  const existingSubmissionData = existingDocSnap?.exists()
+    ? (existingDocSnap.data() as Partial<SubmissionRecord>)
+    : null;
   const alreadyExistsWithNumber = Boolean(
-    existingDocSnap?.exists() &&
-      typeof (existingDocSnap.data() as Partial<SubmissionRecord>)?.sequenceNumber === "number"
+    existingSubmissionData &&
+      typeof existingSubmissionData.sequenceNumber === "number"
   );
 
   const result = await executeBulletproofSubmit(
@@ -957,18 +915,34 @@ export async function createSubmission(
       resumeToken: session.resumeToken,
       ownerUid: authRes.uid,
       answers,
+      existingDisplayId: existingSubmissionData?.displayId,
     },
     {
       writeSubmissionDoc: async (id, payload) => {
         const targetRef = doc(db, "submissions", id);
-        if (existingDocSnap?.exists()) {
-          // Explicitly replace answers & photoStatuses via updateDoc so stale "failed" entries are wiped cleanly
-          const existingData = existingDocSnap.data() as Partial<SubmissionRecord>;
+        if (existingSubmissionData) {
+          // Explicitly replace answers & photoStatuses via updateDoc so stale "failed" entries are wiped cleanly,
+          // while preserving admin-managed fields (displayId, sequenceNumber, status, privateNotes, original submittedAt).
+          const { createdAt: _ignoredCreatedAt, ...updateFields } = payload;
           await updateDoc(targetRef, {
-            ...payload,
-            ...(existingData.displayId ? { displayId: existingData.displayId } : {}),
-            ...(typeof existingData.sequenceNumber === "number"
-              ? { sequenceNumber: existingData.sequenceNumber }
+            ...updateFields,
+            ...(existingSubmissionData.displayId
+              ? { displayId: existingSubmissionData.displayId }
+              : {}),
+            ...(typeof existingSubmissionData.sequenceNumber === "number"
+              ? { sequenceNumber: existingSubmissionData.sequenceNumber }
+              : {}),
+            ...(existingSubmissionData.status
+              ? { status: existingSubmissionData.status }
+              : {}),
+            ...(typeof existingSubmissionData.privateNotes === "string"
+              ? { privateNotes: existingSubmissionData.privateNotes }
+              : {}),
+            ...(existingSubmissionData.submittedAt
+              ? { submittedAt: existingSubmissionData.submittedAt }
+              : {}),
+            ...(existingSubmissionData.resumeToken
+              ? { resumeToken: existingSubmissionData.resumeToken }
               : {}),
             finalized: !hasPendingOrFailed,
           });

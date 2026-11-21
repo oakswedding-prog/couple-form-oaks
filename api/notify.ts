@@ -52,7 +52,9 @@ export default async function handler(req: any, res: any) {
     email,
     submittedAt,
     uploadedPhotoCount,
-    totalPhotoCount,
+    notAddedPhotoSlotCount,
+    failedPhotoCount,
+    uploadingPhotoCount,
     pendingPhotoCount,
   } = req.body || {};
 
@@ -94,21 +96,29 @@ export default async function handler(req: any, res: any) {
   const safeEmail = escapeHtml(email || "Not specified");
   const safeSubmittedAt = escapeHtml(submittedAt || new Date().toISOString());
 
-  const totalPhotos =
-    typeof totalPhotoCount === "number" && totalPhotoCount >= 0
-      ? totalPhotoCount
-      : typeof uploadedPhotoCount === "number"
-      ? uploadedPhotoCount
-      : 0;
   const uploadedPhotos =
     typeof uploadedPhotoCount === "number" && uploadedPhotoCount >= 0
       ? uploadedPhotoCount
-      : Math.max(0, totalPhotos - (typeof pendingPhotoCount === "number" ? pendingPhotoCount : 0));
+      : 0;
+  const notAddedSlots =
+    typeof notAddedPhotoSlotCount === "number" && notAddedPhotoSlotCount >= 0
+      ? notAddedPhotoSlotCount
+      : 0;
+  const failedPhotos =
+    typeof failedPhotoCount === "number" && failedPhotoCount >= 0
+      ? failedPhotoCount
+      : 0;
+  const uploadingPhotos =
+    typeof uploadingPhotoCount === "number" && uploadingPhotoCount >= 0
+      ? uploadingPhotoCount
+      : typeof pendingPhotoCount === "number" && pendingPhotoCount >= 0
+      ? pendingPhotoCount
+      : 0;
 
-  const photosSummaryLine = `Photos: ${uploadedPhotos} of ${totalPhotos} uploaded`;
+  const photosSummaryLine = `Photos: ${uploadedPhotos} uploaded, ${notAddedSlots} not added by couple, ${failedPhotos} failed`;
   const pendingNote =
-    typeof pendingPhotoCount === "number" && pendingPhotoCount > 0
-      ? `<p style="color:#b45309;"><strong>Note:</strong> ${pendingPhotoCount} photo(s) were still uploading in the background when the form was sent.</p>`
+    uploadingPhotos > 0
+      ? `<p style="color:#b45309;"><strong>Note:</strong> ${uploadingPhotos} photo(s) were still uploading in the background when the form was sent.</p>`
       : "";
 
   const studioStatus: EmailAttemptStatus = { sent: false };
@@ -148,6 +158,11 @@ export default async function handler(req: any, res: any) {
         `Email: ${email || "Not specified"}`,
         `Submitted At: ${submittedAt || new Date().toISOString()}`,
         photosSummaryLine,
+        ...(uploadingPhotos > 0
+          ? [
+              `Note: ${uploadingPhotos} photo(s) were still uploading in the background when the form was sent.`,
+            ]
+          : []),
       ].join("\n");
 
       const response = await fetch("https://api.resend.com/emails", {

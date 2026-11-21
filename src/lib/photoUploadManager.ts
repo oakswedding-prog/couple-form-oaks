@@ -22,6 +22,10 @@ import type {
   PhotoStatusEntry,
   QuestionnaireAnswers,
 } from "../types/questionnaire.ts";
+import {
+  isLegacyNonFailurePhotoError,
+  normalizeMediaPathKey,
+} from "../utils/photoStatusSummary.ts";
 
 export const PENDING_PHOTO_PREFIX = "pending_photo:";
 export const PHOTO_UPLOAD_TIMEOUT_MS = 60_000; // 60 seconds per attempt
@@ -676,6 +680,9 @@ export function findMissingPhotoSlots(
   if (savedPhotoStatuses) {
     for (const [key, ps] of Object.entries(savedPhotoStatuses)) {
       if (ps.status === "uploaded") continue;
+      if (ps.status === "failed" && isLegacyNonFailurePhotoError(ps.errorCode)) {
+        continue;
+      }
       const entry = lookupEntry(ps.id || key);
       if (entry && (entry.status === "uploading" || entry.status === "uploaded")) {
         continue;
@@ -811,6 +818,30 @@ export function sanitizeAnswersForFirestore(
   let failedCount = 0;
   const now = new Date().toISOString();
 
+  const seenUploadedPaths = new Set<string>();
+
+  const recordUploadedStatus = (
+    statusKey: string,
+    category: string,
+    storagePath: string,
+    updatedAt: string
+  ) => {
+    const pathKey = normalizeMediaPathKey(storagePath);
+    if (pathKey && seenUploadedPaths.has(pathKey)) {
+      return;
+    }
+    if (pathKey) seenUploadedPaths.add(pathKey);
+    uploadedCount++;
+    photoStatuses[statusKey] = {
+      id: statusKey,
+      category,
+      label: getPhotoCategoryLabel(category),
+      status: "uploaded",
+      storagePath,
+      updatedAt,
+    };
+  };
+
   const resolveSingle = (
     raw: string | undefined,
     category: string,
@@ -820,7 +851,7 @@ export function sanitizeAnswersForFirestore(
     const trimmed = raw.trim();
     if (!trimmed) return undefined;
 
-    // Never allow base64 or raw blob URLs into Firestore
+    // Never allow base64 or raw blob URLs into Firestore (only occurs if an actual selected photo failed to upload)
     if (trimmed.startsWith("data:image/") || trimmed.startsWith("blob:")) {
       failedCount++;
       photoStatuses[slotKey] = {
@@ -828,7 +859,7 @@ export function sanitizeAnswersForFirestore(
         category,
         label: getPhotoCategoryLabel(category),
         status: "failed",
-        errorCode: "photo/not-uploaded",
+        errorCode: "storage/upload-failed",
         updatedAt: now,
       };
       return undefined;
@@ -837,15 +868,12 @@ export function sanitizeAnswersForFirestore(
     if (isPendingPhotoToken(trimmed)) {
       const entry = lookupEntry(trimmed);
       if (entry?.status === "uploaded" && entry.uploadedStoragePath) {
-        uploadedCount++;
-        photoStatuses[entry.localToken] = {
-          id: entry.localToken,
-          category: entry.category || category,
-          label: getPhotoCategoryLabel(entry.category || category),
-          status: "uploaded",
-          storagePath: entry.uploadedStoragePath,
-          updatedAt: entry.updatedAt || now,
-        };
+        recordUploadedStatus(
+          entry.localToken,
+          entry.category || category,
+          entry.uploadedStoragePath,
+          entry.updatedAt || now
+        );
         return entry.uploadedStoragePath;
       }
       if (entry?.status === "error") {
@@ -860,14 +888,27 @@ export function sanitizeAnswersForFirestore(
         };
         return undefined;
       }
-      // Still uploading (or queued waiting for auth/network)
-      pendingCount++;
+      if (entry?.status === "uploading") {
+        // Actively uploading or queued waiting for anonymous auth/network
+        pendingCount++;
+        photoStatuses[trimmed] = {
+          id: trimmed,
+          category: entry.category || category,
+          label: getPhotoCategoryLabel(entry.category || category),
+          status: "pending",
+          updatedAt: entry.updatedAt || now,
+        };
+        return undefined;
+      }
+      // Pending token has no active upload in RAM/IndexedDB (e.g., browser cleared before upload finished)
+      failedCount++;
       photoStatuses[trimmed] = {
         id: trimmed,
-        category: entry?.category || category,
-        label: getPhotoCategoryLabel(entry?.category || category),
-        status: "pending",
-        updatedAt: entry?.updatedAt || now,
+        category,
+        label: getPhotoCategoryLabel(category),
+        status: "failed",
+        errorCode: "storage/upload-interrupted",
+        updatedAt: now,
       };
       return undefined;
     }
@@ -882,7 +923,7 @@ export function sanitizeAnswersForFirestore(
           category: tracked.category || category,
           label: getPhotoCategoryLabel(tracked.category || category),
           status: "failed",
-          errorCode: tracked.errorCode,
+          errorCode: tracked.errorCode || "storage/upload-failed",
           updatedAt: tracked.updatedAt || now,
         };
       } else {
@@ -898,15 +939,7 @@ export function sanitizeAnswersForFirestore(
       return undefined;
     }
 
-    uploadedCount++;
-    photoStatuses[slotKey] = {
-      id: slotKey,
-      category,
-      label: getPhotoCategoryLabel(category),
-      status: "uploaded",
-      storagePath: trimmed,
-      updatedAt: now,
-    };
+    recordUploadedStatus(slotKey, category, trimmed, now);
     return trimmed;
   };
 
@@ -941,10 +974,16 @@ export function sanitizeAnswersForFirestore(
     if (Array.isArray(cloned.q10_people.familyMembers)) {
       cloned.q10_people.familyMembers.forEach((m, idx) => {
         if (m.photoUrl) {
+          const memberCat =
+            m.side === "bride"
+              ? "bride_vip"
+              : m.side === "groom"
+              ? "groom_vip"
+              : "family_member";
           m.photoUrl = resolveSingle(
             m.photoUrl,
-            "family_member",
-            `family_member_${m.id || idx + 1}`
+            memberCat,
+            `${memberCat}_${m.id || idx + 1}`
           );
         }
       });

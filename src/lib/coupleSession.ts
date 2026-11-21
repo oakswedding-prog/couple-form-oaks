@@ -150,11 +150,47 @@ export function resetActiveCoupleSession(): void {
   clearStoredCoupleSession();
 }
 
-export function buildResumeUrl(resumeToken: string, originOverride?: string): string {
+/**
+ * Detects whether an origin is a private AI Studio preview or localhost URL
+ * (which other users/clients cannot open without the owner's Google account).
+ */
+export function isPrivatePreviewOrigin(originOverride?: string): boolean {
   const origin =
-    originOverride ||
+    originOverride ??
     (typeof window !== "undefined" ? window.location.origin : "");
-  return `${origin}/?resume=${encodeURIComponent(resumeToken)}`;
+  if (!origin) return false;
+  try {
+    const host = new URL(origin).hostname.toLowerCase();
+    return (
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      /^ais-(dev|pre)-[a-z0-9.-]+\.run\.app$/.test(host)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function getConfiguredPublicAppOrigin(): string {
+  try {
+    const raw = (import.meta as unknown as { env?: Record<string, string | undefined> })
+      ?.env?.VITE_PUBLIC_APP_URL;
+    if (typeof raw === "string" && /^https?:\/\//i.test(raw.trim())) {
+      return raw.trim().replace(/\/+$/, "");
+    }
+  } catch {
+    // ignore in non-Vite test runtimes
+  }
+  return "";
+}
+
+export function buildResumeUrl(resumeToken: string, originOverride?: string): string {
+  const rawOrigin =
+    originOverride ||
+    getConfiguredPublicAppOrigin() ||
+    (typeof window !== "undefined" ? window.location.origin : "");
+  const cleanOrigin = rawOrigin.replace(/\/+$/, "");
+  return `${cleanOrigin}/?resume=${encodeURIComponent(resumeToken)}`;
 }
 
 /**

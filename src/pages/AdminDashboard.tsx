@@ -20,10 +20,7 @@ import {
   X,
   ClipboardList,
   RefreshCw,
-  FolderSearch,
   CheckCircle2,
-  Image as ImageIcon,
-  FileWarning,
   FileClock,
   Link2,
   Check,
@@ -31,7 +28,6 @@ import {
 } from "lucide-react";
 import {
   DraftRecord,
-  OrphanedStorageFolder,
   SubmissionDeliveryState,
   SubmissionErrorRecord,
   SubmissionRecord,
@@ -47,12 +43,11 @@ import {
   getSubmissionAttentionReasons,
   ensureResumeLinkForSubmission,
   sortSubmissionsNewestFirst,
-  listOrphanedStorageFolders,
-  recoverOrphanedStorageFolder,
   recoverDraftAsSubmission,
 } from "../lib/submissions.ts";
 import { getAllAdminDrafts, deleteAdminDraft } from "../lib/drafts.ts";
 import { getSubmissionErrors } from "../lib/errorLogger.ts";
+import { buildResumeUrl, isPrivatePreviewOrigin } from "../lib/coupleSession.ts";
 import { exportToPdf, exportToDocx } from "../utils/exportBrief.ts";
 import { STUDIO_NAME, STUDIO_LOGO_URL } from "../constants.ts";
 
@@ -62,7 +57,7 @@ interface AdminDashboardProps {
   onSignOut: () => void;
 }
 
-type DashboardView = "submissions" | "unfinished" | "errors" | "recovery";
+type DashboardView = "submissions" | "unfinished";
 type ExtendedStatusFilter =
   | "all"
   | SubmissionStatus
@@ -131,21 +126,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [copyingResumeId, setCopyingResumeId] = useState<string | null>(null);
   const [copiedResumeId, setCopiedResumeId] = useState<string | null>(null);
 
-  // Error log ("Errors")
+  // Background error log records (used only to flag "Email not sent" on Needs attention badges)
   const [errorLogs, setErrorLogs] = useState<SubmissionErrorRecord[]>([]);
-  const [errorsLoading, setErrorsLoading] = useState<boolean>(false);
-  const [errorsFetchError, setErrorsFetchError] = useState<string | null>(null);
-
-  // Storage Recovery ("Orphaned Storage Folders")
-  const [orphanedFolders, setOrphanedFolders] = useState<OrphanedStorageFolder[] | null>(
-    null
-  );
-  const [scanningStorage, setScanningStorage] = useState<boolean>(false);
-  const [storageScanError, setStorageScanError] = useState<string | null>(null);
-  const [recoveringFolder, setRecoveringFolder] = useState<string | null>(null);
-  const [folderNameDrafts, setFolderNameDrafts] = useState<
-    Record<string, { partner1: string; partner2: string }>
-  >({});
   const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null);
 
   // Filters & Sorting
@@ -241,24 +223,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   }, []);
 
-  const loadErrorLogs = useCallback(async () => {
-    setErrorsLoading(true);
-    setErrorsFetchError(null);
-    try {
-      const list = await getSubmissionErrors(100);
-      setErrorLogs(list);
-    } catch (err: any) {
-      setErrorsFetchError(
-        err?.code === "permission-denied"
-          ? "Could not read error log. Publish the updated firestore.rules in Firebase Console first."
-          : err?.message || "Failed to load submission errors."
-      );
-    } finally {
-      setErrorsLoading(false);
-    }
-  }, []);
-
-  // Quietly pre-load draft & error counts in background after submissions finish
+  // Quietly pre-load draft & error records in background after submissions finish
   useEffect(() => {
     let active = true;
     const timer = window.setTimeout(() => {
@@ -283,14 +248,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     };
   }, []);
 
-  // Refresh secondary views when switched to
+  // Refresh drafts when switching to Missing or unfinished
   useEffect(() => {
     if (activeView === "unfinished") {
       void loadDrafts();
-    } else if (activeView === "errors") {
-      void loadErrorLogs();
     }
-  }, [activeView, loadDrafts, loadErrorLogs]);
+  }, [activeView, loadDrafts]);
 
   // Update status handler
   const handleStatusChange = async (id: string, newStatus: SubmissionStatus) => {
@@ -304,31 +267,39 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
-  // Admin-only: copy a working resume link for a couple so they can re-add missing photos
+  // Helper to copy text cleanly across desktop & mobile browsers
+  const copyTextToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+  };
+
+  // Admin-only: copy a working resume link for a submitted couple (works on any phone/browser, no login required)
   const handleCopyCoupleResumeLink = async (couple: SubmissionRecord) => {
     setCopyingResumeId(couple.id);
     try {
       const { token, url } = await ensureResumeLinkForSubmission(couple, allDrafts);
       setSubmissions((prev) =>
         prev.map((item) =>
-          item.id === couple.id ? { ...item, resumeToken: token } : item
+          item.id === couple.id ? { ...item, resumeToken: token, finalized: false } : item
         )
       );
-      try {
-        await navigator.clipboard.writeText(url);
-      } catch {
-        const ta = document.createElement("textarea");
-        ta.value = url;
-        ta.style.position = "fixed";
-        ta.style.opacity = "0";
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
-      }
+      await copyTextToClipboard(url);
       setCopiedResumeId(couple.id);
+      const isPrivatePreview = isPrivatePreviewOrigin(url);
       setRecoveryNotice(
-        `Copied resume link for ${couple.partner1} & ${couple.partner2}. You can paste and send it to them so they can add any missing photos.`
+        isPrivatePreview
+          ? `Copied link for ${couple.partner1} & ${couple.partner2}. Note: Open your live Vercel dashboard to copy a public link for clients (AI Studio preview URLs only open for your Google account).`
+          : `Copied resume link for ${couple.partner1} & ${couple.partner2} — any client can open it on any phone or browser with no email login needed.`
       );
       window.setTimeout(() => {
         setCopiedResumeId((cur) => (cur === couple.id ? null : cur));
@@ -338,6 +309,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     } finally {
       setCopyingResumeId(null);
     }
+  };
+
+  // Admin-only: copy a working resume link for an unfinished draft so the couple can finish on any device
+  const handleCopyDraftResumeLink = async (draft: DraftRecord) => {
+    const url = buildResumeUrl(draft.id);
+    await copyTextToClipboard(url);
+    setCopiedResumeId(draft.id);
+    const coupleTitle =
+      draft.partner1 || draft.partner2
+        ? `${draft.partner1 || "Partner 1"} & ${draft.partner2 || "Partner 2"}`
+        : "this couple";
+    const isPrivatePreview = isPrivatePreviewOrigin(url);
+    setRecoveryNotice(
+      isPrivatePreview
+        ? `Copied link for ${coupleTitle}. Note: Open your live Vercel dashboard to copy a public link for clients (AI Studio preview URLs only open for your Google account).`
+        : `Copied resume link for ${coupleTitle} — send it via WhatsApp or email so they can continue right where they left off on any phone.`
+    );
+    window.setTimeout(() => {
+      setCopiedResumeId((cur) => (cur === draft.id ? null : cur));
+    }, 2800);
   };
 
   // Permanently delete a submission after user confirmation
@@ -390,73 +381,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setDraftsError(err?.message || "Could not delete draft.");
     } finally {
       setDeletingDraftId(null);
-    }
-  };
-
-  // Scan Firebase Storage for folders with no matching Firestore submission
-  const handleScanOrphanedStorage = async () => {
-    setScanningStorage(true);
-    setStorageScanError(null);
-    setRecoveryNotice(null);
-    try {
-      const freshSubs = await getSubmissions(true);
-      setSubmissions(freshSubs);
-      const found = await listOrphanedStorageFolders(freshSubs);
-      setOrphanedFolders(found);
-      setFolderNameDrafts((prev) => {
-        const next = { ...prev };
-        for (const folder of found) {
-          if (!next[folder.folderName]) {
-            next[folder.folderName] = {
-              partner1: "Recovered Couple",
-              partner2: "(Photos Only)",
-            };
-          }
-        }
-        return next;
-      });
-    } catch (err: any) {
-      setStorageScanError(
-        err?.code === "storage/unauthorized"
-          ? "Storage denied folder listing. Publish the updated storage.rules in Firebase Console first."
-          : err?.message || "Could not scan Firebase Storage."
-      );
-    } finally {
-      setScanningStorage(false);
-    }
-  };
-
-  // Recover an orphaned Storage folder into a visible couple record
-  const handleRecoverStorageFolder = async (folder: OrphanedStorageFolder) => {
-    setRecoveringFolder(folder.folderName);
-    setStorageScanError(null);
-    setRecoveryNotice(null);
-    try {
-      const names = folderNameDrafts[folder.folderName] || {
-        partner1: "Recovered Couple",
-        partner2: "(Photos Only)",
-      };
-      const recovered = await recoverOrphanedStorageFolder(
-        folder,
-        names.partner1,
-        names.partner2
-      );
-      setSubmissions((prev) =>
-        sortSubmissionsNewestFirst([
-          recovered,
-          ...prev.filter((item) => item.id !== recovered.id),
-        ])
-      );
-      setOrphanedFolders((prev) =>
-        prev ? prev.filter((item) => item.folderName !== folder.folderName) : null
-      );
-      setRecoveryNotice(
-        `Created couple record "${recovered.partner1} & ${recovered.partner2}" with ${folder.photoPaths.length} photo(s).`
-      );
-    } catch (err: any) {
-      setStorageScanError(err?.message || "Could not recover this Storage folder.");
-    } finally {
-      setRecoveringFolder(null);
     }
   };
 
@@ -658,37 +582,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   {completedDraftsCount} ready
                 </span>
               )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveView("errors")}
-              className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap inline-flex items-center gap-1.5 ${
-                activeView === "errors"
-                  ? "bg-white text-[#1A1A1A] shadow-2xs"
-                  : "text-[#6A655D] hover:text-[#1A1A1A]"
-              }`}
-            >
-              <FileWarning className="w-3.5 h-3.5 text-[#8C7043]" />
-              <span>Errors</span>
-              {errorLogs.length > 0 && (
-                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-800 tabular-nums">
-                  {errorLogs.length}
-                </span>
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveView("recovery")}
-              className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap inline-flex items-center gap-1.5 ${
-                activeView === "recovery"
-                  ? "bg-white text-[#1A1A1A] shadow-2xs"
-                  : "text-[#6A655D] hover:text-[#1A1A1A]"
-              }`}
-            >
-              <FolderSearch className="w-3.5 h-3.5 text-[#8C7043]" />
-              <span>Storage Recovery</span>
             </button>
           </div>
         </div>
@@ -1252,7 +1145,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex flex-wrap items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => void handleCopyDraftResumeLink(draft)}
+                          className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium text-[#5C492A] bg-[#FAF7F2] hover:bg-[#F2ECE1] border border-[#E5DDD2] transition-colors cursor-pointer"
+                          title={`Copy resume link for ${coupleTitle}`}
+                        >
+                          {copiedResumeId === draft.id ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 text-emerald-600" />
+                              <span className="text-emerald-700">Link copied</span>
+                            </>
+                          ) : (
+                            <>
+                              <Link2 className="w-3.5 h-3.5 text-[#8C7043]" />
+                              <span>Copy resume link</span>
+                            </>
+                          )}
+                        </button>
                         <button
                           type="button"
                           onClick={() => handleRecoverDraft(draft)}
@@ -1274,234 +1185,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           title="Delete draft"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ==================== VIEW 3: ERRORS ==================== */}
-        {activeView === "errors" && (
-          <div className="space-y-4">
-            <div className="bg-white border border-[#E5DDD2] rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <h2 className="font-cormorant text-2xl font-semibold text-[#1A1A1A]">
-                  Submission Error Log
-                </h2>
-                <p className="text-xs text-[#6A655D] mt-0.5">
-                  Quiet technical diagnostics captured when a couple hits a save, photo upload, or network error. Never stores personal answers or resume links.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => void loadErrorLogs()}
-                disabled={errorsLoading}
-                className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold text-[#1A1A1A] bg-[#FAF8F5] hover:bg-[#F2ECE1] border border-[#E5DDD2] cursor-pointer shrink-0 disabled:opacity-60"
-              >
-                <RefreshCw
-                  className={`w-3.5 h-3.5 ${errorsLoading ? "animate-spin" : ""}`}
-                />
-                <span>Refresh</span>
-              </button>
-            </div>
-
-            {errorsFetchError && (
-              <div className="bg-red-50 border border-red-200 rounded-2xl p-4 text-xs text-red-800">
-                {errorsFetchError}
-              </div>
-            )}
-
-            {errorsLoading && errorLogs.length === 0 && (
-              <div className="bg-white border border-[#E5DDD2] rounded-2xl p-8 text-center text-xs text-[#7A756D]">
-                Loading error log…
-              </div>
-            )}
-
-            {!errorsLoading && !errorsFetchError && errorLogs.length === 0 && (
-              <div className="bg-white border border-[#E5DDD2] rounded-2xl p-10 text-center space-y-2">
-                <h3 className="font-cormorant text-2xl text-[#1A1A1A]">
-                  No errors recorded
-                </h3>
-                <p className="text-xs text-[#7A756D] max-w-sm mx-auto">
-                  Everything is running smoothly. Any future save or upload hiccups will appear here.
-                </p>
-              </div>
-            )}
-
-            {errorLogs.length > 0 && (
-              <div className="space-y-2.5">
-                {errorLogs.map((item) => (
-                  <div
-                    key={item.id}
-                    className="bg-white border border-[#E5DDD2] rounded-2xl p-4 space-y-2"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-mono text-[11px] font-bold px-2 py-0.5 rounded-md bg-red-50 text-red-800 border border-red-200">
-                          {item.errorCode}
-                        </span>
-                        <span className="text-xs font-semibold text-[#1A1A1A]">
-                          {item.step}
-                        </span>
-                        {item.submissionId && (
-                          <span className="font-mono text-[11px] text-[#8C7043] bg-[#FAF7F2] px-2 py-0.5 rounded border border-[#E8DFD3]">
-                            {item.submissionId}
-                          </span>
-                        )}
-                      </div>
-                      <span className="text-[11px] text-[#7A756D]">
-                        {formatDateTimeShort(item.timestamp)}
-                      </span>
-                    </div>
-                    <p className="text-xs text-[#4A4640] leading-relaxed break-words">
-                      {item.message}
-                    </p>
-                    <div className="text-[11px] text-[#7A756D] flex flex-wrap items-center gap-x-3 gap-y-1">
-                      <span>Device: {item.deviceBrowser}</span>
-                      {typeof item.photoCount === "number" && (
-                        <span>· Photos: {item.photoCount}</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ==================== VIEW 4: STORAGE RECOVERY ==================== */}
-        {activeView === "recovery" && (
-          <div className="space-y-4">
-            <div className="bg-white border border-[#E5DDD2] rounded-2xl p-5 space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <h2 className="font-cormorant text-2xl font-semibold text-[#1A1A1A]">
-                    Recover Missing Photo Folders
-                  </h2>
-                  <p className="text-xs text-[#6A655D] mt-0.5">
-                    Checks Firebase Storage for uploaded couple photo folders that do not have a matching couple record in Firestore (for example, if an older submission failed after photos uploaded).
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void handleScanOrphanedStorage()}
-                  disabled={scanningStorage}
-                  className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold text-white bg-[#1A1A1A] hover:bg-[#333333] transition-colors cursor-pointer shrink-0 disabled:opacity-60"
-                >
-                  <FolderSearch className="w-4 h-4 text-[#B08D57]" />
-                  <span>
-                    {scanningStorage
-                      ? "Scanning Storage…"
-                      : "Scan Storage for missing folders"}
-                  </span>
-                </button>
-              </div>
-
-              {storageScanError && (
-                <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-800">
-                  {storageScanError}
-                </div>
-              )}
-            </div>
-
-            {orphanedFolders && orphanedFolders.length === 0 && (
-              <div className="bg-white border border-[#E5DDD2] rounded-2xl p-10 text-center space-y-2">
-                <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto" />
-                <h3 className="font-cormorant text-2xl text-[#1A1A1A]">
-                  All Storage folders are matched
-                </h3>
-                <p className="text-xs text-[#7A756D] max-w-sm mx-auto">
-                  Every photo folder in Firebase Storage already belongs to a visible couple submission in your dashboard.
-                </p>
-              </div>
-            )}
-
-            {orphanedFolders && orphanedFolders.length > 0 && (
-              <div className="space-y-3">
-                {orphanedFolders.map((folder) => {
-                  const draftNames = folderNameDrafts[folder.folderName] || {
-                    partner1: "Recovered Couple",
-                    partner2: "(Photos Only)",
-                  };
-
-                  return (
-                    <div
-                      key={folder.folderName}
-                      className="bg-white border border-amber-200 rounded-2xl p-4 sm:p-5 space-y-3 shadow-2xs"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center gap-2.5">
-                          <span className="font-mono text-xs font-bold text-[#8C7043] bg-[#FAF7F2] px-2.5 py-1 rounded-lg border border-[#E8DFD3]">
-                            {folder.folderName}
-                          </span>
-                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-[#1A1A1A]">
-                            <ImageIcon className="w-3.5 h-3.5 text-[#8C7043]" />
-                            {folder.photoPaths.length} photo
-                            {folder.photoPaths.length === 1 ? "" : "s"}
-                          </span>
-                        </div>
-                        {folder.estimatedDate && (
-                          <span className="text-xs text-[#7A756D]">
-                            Uploaded around {formatDateTimeShort(folder.estimatedDate)}
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 items-end">
-                        <div>
-                          <label className="block text-[11px] font-medium text-[#6A655D] mb-1">
-                            Partner 1 Name
-                          </label>
-                          <input
-                            type="text"
-                            value={draftNames.partner1}
-                            onChange={(e) =>
-                              setFolderNameDrafts((prev) => ({
-                                ...prev,
-                                [folder.folderName]: {
-                                  ...draftNames,
-                                  partner1: e.target.value,
-                                },
-                              }))
-                            }
-                            className="w-full px-3 py-2 text-xs bg-[#FAF8F5] border border-[#E5DDD2] rounded-xl focus:outline-hidden focus:border-[#1A1A1A]"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[11px] font-medium text-[#6A655D] mb-1">
-                            Partner 2 Name
-                          </label>
-                          <input
-                            type="text"
-                            value={draftNames.partner2}
-                            onChange={(e) =>
-                              setFolderNameDrafts((prev) => ({
-                                ...prev,
-                                [folder.folderName]: {
-                                  ...draftNames,
-                                  partner2: e.target.value,
-                                },
-                              }))
-                            }
-                            className="w-full px-3 py-2 text-xs bg-[#FAF8F5] border border-[#E5DDD2] rounded-xl focus:outline-hidden focus:border-[#1A1A1A]"
-                          />
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleRecoverStorageFolder(folder)}
-                          disabled={recoveringFolder === folder.folderName}
-                          className="w-full inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-[#1A1A1A] hover:bg-[#333333] transition-colors cursor-pointer disabled:opacity-60"
-                        >
-                          <CheckCircle2 className="w-3.5 h-3.5 text-[#B08D57]" />
-                          <span>
-                            {recoveringFolder === folder.folderName
-                              ? "Recovering…"
-                              : "Recover into Submissions"}
-                          </span>
                         </button>
                       </div>
                     </div>

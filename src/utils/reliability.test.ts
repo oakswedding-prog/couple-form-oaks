@@ -6,6 +6,7 @@ import {
   generateStableSubmissionId,
   isValidResumeToken,
   buildResumeUrl,
+  isPrivatePreviewOrigin,
   computePersistedStep,
   redactResumeTokens,
   detectDeviceAndBrowser,
@@ -44,6 +45,7 @@ import {
   parseNotifyApiResponse,
   sortSubmissionsNewestFirst,
 } from "../lib/submissions.ts";
+import { buildNormalizedPhotoReport } from "./photoStatusSummary.ts";
 import notifyHandler from "../../api/notify.ts";
 
 function makeSampleAnswers(overrides: Partial<QuestionnaireAnswers> = {}): QuestionnaireAnswers {
@@ -519,8 +521,8 @@ describe("Bulletproof Couple Questionnaire Reliability Suite (11 Scenarios)", ()
     assert.deepEqual(okRes, { notified: true, coupleReceiptSent: true });
   });
 
-  // Scenario 13 (Fix 3): /api/notify sends studio alert + couple receipt with reply_to & "Photos: X of Y uploaded", and returns non-200 on error
-  it("13. Fix 3 (/api/notify): sets reply_to default, includes 'Photos: X of Y uploaded', and returns 500/502 on missing env or Resend failure", async () => {
+  // Scenario 13 (Fix 3 + Follow-up): /api/notify sends studio alert + couple receipt with reply_to & exact photo breakdown
+  it("13. Fix 3 (/api/notify): sets reply_to default, includes 'Photos: X uploaded, Y not added by couple, Z failed', and returns 500/502 on missing env or Resend failure", async () => {
     const originalFetch = globalThis.fetch;
     const savedEnv = {
       RESEND_API_KEY: process.env.RESEND_API_KEY,
@@ -559,7 +561,7 @@ describe("Bulletproof Couple Questionnaire Reliability Suite (11 Scenarios)", ()
       assert.equal(missingKeyRes.statusCode, 500);
       assert.equal(missingKeyRes.jsonBody.success, false);
 
-      // 2. Valid env sends both studio alert & couple receipt with default reply_to and photo count line
+      // 2. Valid env sends both studio alert & couple receipt with default reply_to and exact 3-part photo count line
       process.env.RESEND_API_KEY = "re_test_key";
       process.env.NOTIFY_EMAILS = "mywedding@oakswedding.com, team@oakswedding.com";
       process.env.RESEND_FROM_EMAIL = "OAKS Wedding <hello@mail.oakswedding.com>";
@@ -583,7 +585,9 @@ describe("Bulletproof Couple Questionnaire Reliability Suite (11 Scenarios)", ()
         phone: "+91 8590118094",
         email: "couple@example.com",
         uploadedPhotoCount: 7,
-        totalPhotoCount: 10,
+        notAddedPhotoSlotCount: 3,
+        failedPhotoCount: 0,
+        uploadingPhotoCount: 0,
       });
 
       assert.equal(ok.statusCode, 200);
@@ -594,8 +598,8 @@ describe("Bulletproof Couple Questionnaire Reliability Suite (11 Scenarios)", ()
       // Studio email checks
       assert.equal(sentPayloads[0].from, "OAKS Wedding <hello@mail.oakswedding.com>");
       assert.equal(sentPayloads[0].reply_to, "mywedding@oakswedding.com");
-      assert.ok(String(sentPayloads[0].html).includes("Photos: 7 of 10 uploaded"));
-      assert.ok(String(sentPayloads[0].text).includes("Photos: 7 of 10 uploaded"));
+      assert.ok(String(sentPayloads[0].html).includes("Photos: 7 uploaded, 3 not added by couple, 0 failed"));
+      assert.ok(String(sentPayloads[0].text).includes("Photos: 7 uploaded, 3 not added by couple, 0 failed"));
       // Couple receipt checks
       assert.deepEqual(sentPayloads[1].to, ["couple@example.com"]);
       assert.equal(sentPayloads[1].reply_to, "mywedding@oakswedding.com");
@@ -801,7 +805,7 @@ describe("Bulletproof Couple Questionnaire Reliability Suite (11 Scenarios)", ()
       localToken: pendingToken,
       targetStoragePath: "",
       previewUrl: "blob:pend2",
-      category: "decor",
+      category: "last_thing",
       status: "uploading",
       waitingForAuth: true,
       progress: 10,
@@ -843,7 +847,373 @@ describe("Bulletproof Couple Questionnaire Reliability Suite (11 Scenarios)", ()
     assert.equal(result.pendingPhotoCount, 1);
     assert.ok(notifyBody, "notifyStudioAndCouple must be called immediately after main save");
     assert.equal((notifyBody as any).uploadedPhotoCount, 1);
+    assert.equal((notifyBody as any).notAddedPhotoSlotCount, 7);
+    assert.equal((notifyBody as any).failedPhotoCount, 0);
+    assert.equal((notifyBody as any).uploadingPhotoCount, 1);
     assert.equal((notifyBody as any).totalPhotoCount, 2);
     assert.deepEqual(emailStatusUpdates, ["sent"]);
+  });
+
+  // Scenario 18: #022 Boss & Queen legacy photo/not-uploaded + duplicates MUST show clean Submitted & zero false failures
+  it("18. Legacy #022 Boss & Queen: treats photo/not-uploaded as Not added by couple, removes duplicates, and clears Needs attention", () => {
+    const bossAndQueen: SubmissionRecord = {
+      id: "sub_022_boss_queen",
+      sequenceNumber: 22,
+      displayId: "#022",
+      submittedAt: "2026-11-21T13:50:00.000Z",
+      status: "new",
+      partner1: "Boss",
+      partner2: "Queen",
+      weddingDate: "2026-11-21",
+      phone: "+918590118094",
+      email: "boss@example.com",
+      answers: makeSampleAnswers({
+        couplePhotoUrl: "submissions/sub_022/u1/couple.jpg",
+        q10_people: {
+          familyMembers: [],
+          treeNotes: "",
+          brideSide: {
+            photos: [{ id: "b1", url: "submissions/sub_022/u1/bride_vip.jpg" }],
+            notes: "",
+          },
+          groomSide: { photos: [], notes: "" },
+        },
+        q12_references: {
+          links: [],
+          images: ["submissions/sub_022/u1/ref.jpg"],
+          notes: "",
+        },
+        wardrobe: {
+          bride: { notes: "", links: [], photos: ["submissions/sub_022/u1/bride_outfit.jpg"] },
+          groom: {
+            notes: "",
+            links: [],
+            photos: [
+              "submissions/sub_022/u1/groom_outfit_1.jpg",
+              "submissions/sub_022/u1/groom_outfit_2.jpg",
+            ],
+          },
+        },
+        decorEvents: [
+          {
+            id: "wedding",
+            name: "Wedding",
+            links: [],
+            images: ["submissions/sub_022/u1/wedding_decor.jpg"],
+            notes: "",
+          },
+          {
+            id: "sangeet",
+            name: "Sangeet",
+            links: [],
+            images: [],
+            notes: "",
+          },
+        ],
+        q23_oneLastThing: { notes: "All done", images: [] },
+      }),
+      photoStatuses: {
+        up_couple: {
+          id: "up_couple",
+          category: "couple_photo",
+          label: "Couple Photo (Q1)",
+          status: "uploaded",
+          storagePath: "submissions/sub_022/u1/couple.jpg",
+          updatedAt: "2026-11-21T13:45:00.000Z",
+        },
+        up_bride_vip: {
+          id: "up_bride_vip",
+          category: "bride_vip",
+          label: "Bride's Side VIP Photo (Q10)",
+          status: "uploaded",
+          storagePath: "submissions/sub_022/u1/bride_vip.jpg",
+          updatedAt: "2026-11-21T13:45:01.000Z",
+        },
+        old_fail_ref: {
+          id: "old_fail_ref",
+          category: "reference",
+          label: "Visual Reference (Q12)",
+          status: "failed",
+          errorCode: "photo/not-uploaded",
+          updatedAt: "2026-11-21T13:40:00.000Z",
+        },
+        up_ref: {
+          id: "up_ref",
+          category: "reference",
+          label: "Visual Reference (Q12)",
+          status: "uploaded",
+          storagePath: "submissions/sub_022/u1/ref.jpg",
+          updatedAt: "2026-11-21T13:46:00.000Z",
+        },
+        up_bride_outfit: {
+          id: "up_bride_outfit",
+          category: "bride_outfit",
+          label: "Bride's Wardrobe Photo (Q13)",
+          status: "uploaded",
+          storagePath: "submissions/sub_022/u1/bride_outfit.jpg",
+          updatedAt: "2026-11-21T13:46:05.000Z",
+        },
+        up_groom_1: {
+          id: "up_groom_1",
+          category: "groom_outfit",
+          label: "Groom's Wardrobe Photo (Q13)",
+          status: "uploaded",
+          storagePath: "submissions/sub_022/u1/groom_outfit_1.jpg",
+          updatedAt: "2026-11-21T13:46:06.000Z",
+        },
+        up_groom_2: {
+          id: "up_groom_2",
+          category: "groom_outfit",
+          label: "Groom's Wardrobe Photo (Q13)",
+          status: "uploaded",
+          storagePath: "submissions/sub_022/u1/groom_outfit_2.jpg",
+          updatedAt: "2026-11-21T13:46:07.000Z",
+        },
+        old_fail_decor_legacy: {
+          id: "old_fail_decor_legacy",
+          category: "decor",
+          label: "Decor Mood Board Photo (Q14)",
+          status: "failed",
+          errorCode: "photo/not-uploaded",
+          updatedAt: "2026-11-21T13:41:00.000Z",
+        },
+        old_fail_wedding: {
+          id: "old_fail_wedding",
+          category: "decor_wedding",
+          label: "Wedding Decor Photo (Q14)",
+          status: "failed",
+          errorCode: "photo/not-uploaded",
+          updatedAt: "2026-11-21T13:42:00.000Z",
+        },
+        up_wedding: {
+          id: "up_wedding",
+          category: "decor_wedding",
+          label: "Wedding Decor Photo (Q14)",
+          status: "uploaded",
+          storagePath: "submissions/sub_022/u1/wedding_decor.jpg",
+          updatedAt: "2026-11-21T13:47:00.000Z",
+        },
+        old_fail_q27_a: {
+          id: "old_fail_q27_a",
+          category: "last_thing",
+          label: "One Last Thing Photo (Q27)",
+          status: "failed",
+          errorCode: "photo/not-uploaded",
+          updatedAt: "2026-11-21T13:43:00.000Z",
+        },
+        old_fail_q27_b: {
+          id: "old_fail_q27_b",
+          category: "last_thing",
+          label: "One Last Thing Photo (Q27)",
+          status: "failed",
+          errorCode: "photo/not-uploaded",
+          updatedAt: "2026-11-21T13:44:00.000Z",
+        },
+      },
+    };
+
+    const report = buildNormalizedPhotoReport(
+      bossAndQueen.answers,
+      bossAndQueen.photoStatuses
+    );
+
+    assert.equal(report.uploadedCount, 7);
+    assert.equal(report.notAddedCount, 3); // Groom's Side (Q10), Sangeet Decor (Q14), One Last Thing (Q27)
+    assert.equal(report.failedCount, 0);
+    assert.equal(report.uploadingCount, 0);
+    assert.equal(
+      report.summaryLine,
+      "Photos: 7 uploaded, 3 not added by couple, 0 failed, 0 uploading"
+    );
+    assert.equal(
+      report.emailSummaryLine,
+      "Photos: 7 uploaded, 3 not added by couple, 0 failed"
+    );
+
+    // Visual Reference (Q12) & Wedding Decor (Q14) appear ONLY as Uploaded (zero Failed duplicates)
+    const refItems = report.items.filter((i) => i.slotKey === "reference");
+    assert.equal(refItems.length, 1);
+    assert.equal(refItems[0].status, "uploaded");
+
+    const weddingItems = report.items.filter((i) => i.slotKey === "decor_wedding");
+    assert.equal(weddingItems.length, 1);
+    assert.equal(weddingItems[0].status, "uploaded");
+
+    // One Last Thing (Q27) appears ONCE as neutral "Not added by couple" (not twice as Failed)
+    const q27Items = report.items.filter((i) => i.slotKey === "last_thing");
+    assert.equal(q27Items.length, 1);
+    assert.equal(q27Items[0].status, "not_added");
+    assert.equal(q27Items[0].statusLabel, "Not added by couple");
+
+    // Dashboard badge clears back to "submitted" with zero attention reasons
+    assert.deepEqual(getSubmissionAttentionReasons(bossAndQueen), []);
+    assert.equal(getSubmissionDeliveryState(bossAndQueen), "submitted");
+  });
+
+  // Scenario 19: Resolved HTTPS Firebase Storage URLs in answers deduplicate cleanly with raw Storage paths in photoStatuses
+  it("19. Deduplication across resolved HTTPS download URLs & raw Storage paths prevents double-counting", () => {
+    const rawPath = "submissions/sub_025/uid_25/couple_1.jpg";
+    const resolvedHttps =
+      "https://firebasestorage.googleapis.com/v0/b/my-app.appspot.com/o/submissions%2Fsub_025%2Fuid_25%2Fcouple_1.jpg?alt=media&token=abc123";
+
+    const report = buildNormalizedPhotoReport(
+      makeSampleAnswers({ couplePhotoUrl: resolvedHttps }),
+      {
+        up_1: {
+          id: "up_1",
+          category: "couple_photo",
+          label: "Couple Photo (Q1)",
+          status: "uploaded",
+          storagePath: rawPath,
+          updatedAt: "2026-11-21T14:00:00.000Z",
+        },
+      }
+    );
+
+    const coupleItems = report.items.filter((i) => i.slotKey === "couple_photo");
+    assert.equal(coupleItems.length, 1, "Same photo must NEVER be counted twice after URL resolution");
+    assert.equal(coupleItems[0].status, "uploaded");
+    assert.equal(report.uploadedCount, 1);
+  });
+
+  // Scenario 20: Real upload failures show 'Upload failed' + trigger 'Needs attention', while empty slots NEVER trigger alerts
+  it("20. 4-state photo model: real failures trigger Needs attention, uploading triggers Photos pending, empty slots stay neutral", () => {
+    const recordWithAllFourStates: SubmissionRecord = {
+      id: "sub_026",
+      sequenceNumber: 26,
+      displayId: "#026",
+      submittedAt: "2026-11-21T14:10:00.000Z",
+      status: "new",
+      partner1: "Ananya",
+      partner2: "Kabir",
+      weddingDate: "2026-12-20",
+      phone: "",
+      email: "ananya@example.com",
+      answers: makeSampleAnswers({
+        couplePhotoUrl: "submissions/sub_026/u1/couple.jpg",
+      }),
+      photoStatuses: {
+        p_up: {
+          id: "p_up",
+          category: "couple_photo",
+          status: "uploaded",
+          storagePath: "submissions/sub_026/u1/couple.jpg",
+          updatedAt: "2026-11-21T14:09:00.000Z",
+        },
+        p_ing: {
+          id: "p_ing",
+          category: "bride_outfit",
+          status: "pending",
+          updatedAt: "2026-11-21T14:09:30.000Z",
+        },
+        p_fail: {
+          id: "p_fail",
+          category: "decor_wedding",
+          status: "failed",
+          errorCode: "storage/upload-timeout",
+          updatedAt: "2026-11-21T14:09:45.000Z",
+        },
+      },
+    };
+
+    const report = buildNormalizedPhotoReport(
+      recordWithAllFourStates.answers,
+      recordWithAllFourStates.photoStatuses
+    );
+    assert.equal(report.uploadedCount, 1);
+    assert.equal(report.uploadingCount, 1);
+    assert.equal(report.failedCount, 1);
+    assert.equal(report.notAddedCount, 6);
+    assert.equal(
+      report.summaryLine,
+      "Photos: 1 uploaded, 6 not added by couple, 1 failed, 1 uploading"
+    );
+
+    const failedRow = report.items.find((i) => i.status === "failed");
+    assert.equal(failedRow?.statusLabel, "Upload failed");
+    assert.equal(failedRow?.errorCode, "storage/upload-timeout");
+
+    const uploadingRow = report.items.find((i) => i.status === "uploading");
+    assert.equal(uploadingRow?.statusLabel, "Still uploading");
+
+    assert.deepEqual(getSubmissionAttentionReasons(recordWithAllFourStates), [
+      "1 photo failed to upload",
+    ]);
+    assert.equal(
+      getSubmissionDeliveryState(recordWithAllFourStates),
+      "needs_attention"
+    );
+
+    // Once the failed photo is superseded by an uploaded status for the same id, only 'Still uploading' remains -> Photos pending
+    const afterRetryFixed: SubmissionRecord = {
+      ...recordWithAllFourStates,
+      photoStatuses: {
+        ...recordWithAllFourStates.photoStatuses,
+        p_fail: {
+          id: "p_fail",
+          category: "decor_wedding",
+          status: "uploaded",
+          storagePath: "submissions/sub_026/u1/decor.jpg",
+          updatedAt: "2026-11-21T14:11:00.000Z",
+        },
+      },
+    };
+    assert.deepEqual(getSubmissionAttentionReasons(afterRetryFixed), []);
+    assert.equal(getSubmissionDeliveryState(afterRetryFixed), "photos_pending");
+  });
+
+  // Scenario 21 (Option 1): Cross-device resume links work for any client/phone with no email login required
+  it("21. Option 1 (Cross-device resume link): firestore.rules allows resumed token owners to update unlocked submissions, detects private preview URLs, and preserves existing displayId", async () => {
+    const rules = readFileSync("firestore.rules", "utf-8");
+    assert.ok(
+      rules.includes("function isResumedSubmissionOwner(submissionId, data)"),
+      "firestore.rules must define isResumedSubmissionOwner"
+    );
+    assert.ok(
+      rules.includes("isResumedSubmissionOwner(submissionId, resource.data)"),
+      "submissions get/update must allow resumed token owners on any device"
+    );
+    assert.ok(
+      rules.includes("allow list: if isAdmin();"),
+      "Listing drafts & submissions must remain strictly admin-only"
+    );
+
+    // Private preview origin detection vs public Vercel/custom domain
+    assert.equal(
+      isPrivatePreviewOrigin("https://ais-dev-abc123.asia-northeast1.run.app"),
+      true
+    );
+    assert.equal(
+      isPrivatePreviewOrigin("https://ais-pre-xyz789.asia-northeast1.run.app"),
+      true
+    );
+    assert.equal(isPrivatePreviewOrigin("http://localhost:3000"), true);
+    assert.equal(
+      isPrivatePreviewOrigin("https://coupleform-oaks.vercel.app"),
+      false
+    );
+    assert.equal(isPrivatePreviewOrigin("https://forms.oakswedding.com"), false);
+
+    // Re-submitting an existing numbered submission preserves its displayId in studio notification
+    let sentNotifyPayload: Record<string, unknown> | null = null;
+    await executeBulletproofSubmit(
+      {
+        submissionId: "sub_022_resumed",
+        resumeToken: generateResumeToken(),
+        ownerUid: "new_device_anon_uid",
+        answers: makeSampleAnswers(),
+        existingDisplayId: "#022",
+      },
+      {
+        writeSubmissionDoc: async () => {},
+        notifyStudioAndCouple: async (payload) => {
+          sentNotifyPayload = payload;
+        },
+        retryDelaysMs: [1],
+      }
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    assert.ok(sentNotifyPayload);
+    assert.equal((sentNotifyPayload as any).displayId, "#022");
   });
 });

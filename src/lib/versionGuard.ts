@@ -90,7 +90,9 @@ export async function flushAndSafeReload(reason: string): Promise<boolean> {
       window.location.pathname.startsWith("/admin");
 
     if (!isAdminRoute && session?.resumeToken) {
-      window.location.replace(buildResumeUrl(session.resumeToken));
+      window.location.replace(
+        buildResumeUrl(session.resumeToken, window.location.origin)
+      );
     } else if (typeof window !== "undefined") {
       window.location.reload();
     }

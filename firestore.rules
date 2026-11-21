@@ -7,6 +7,18 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // Helper: Checks if the signed-in couple is resuming this exact submission via its
+    // unguessable 192-bit resumeToken (verified against the matching drafts/{resumeToken} doc).
+    function isResumedSubmissionOwner(submissionId, data) {
+      return isSignedIn()
+        && ('resumeToken' in data)
+        && (data.resumeToken is string)
+        && data.resumeToken.size() >= 22
+        && exists(/databases/$(database)/documents/drafts/$(data.resumeToken))
+        && get(/databases/$(database)/documents/drafts/$(data.resumeToken)).data.submissionId == submissionId
+        && get(/databases/$(database)/documents/drafts/$(data.resumeToken)).data.ownerUid == request.auth.uid;
+    }
+
     // Helper: Checks if the user is an authenticated, NON-ANONYMOUS studio admin
     // authorized via verified team email or an active document in the 'admins' collection.
     function isAdmin() {
@@ -208,12 +220,15 @@ service cloud.firestore {
 
     // Submissions:
     // - Listing is strictly admin-only (blocks listing of any couple data by non-admins).
-    // - Couples can create and update ONLY their own record (ownerUid == auth.uid) BEFORE it is finalized.
+    // - Couples can create and update ONLY their own record (ownerUid == auth.uid) BEFORE it is finalized,
+    //   OR update it from any phone/browser after claiming the submission's unguessable 192-bit resumeToken
+    //   while finalized != true.
     // - Only verified studio admins keep full read/update/delete access, and locked checklist events stay immutable.
     match /submissions/{submissionId} {
       allow list: if isAdmin();
       allow get: if isAdmin()
-        || (isSignedIn() && resource.data.ownerUid == request.auth.uid);
+        || (isSignedIn() && resource.data.ownerUid == request.auth.uid)
+        || isResumedSubmissionOwner(submissionId, resource.data);
       allow create: if isSignedIn()
         && request.resource.data.ownerUid == request.auth.uid;
       allow update: if (
@@ -228,9 +243,18 @@ service cloud.firestore {
         )
         || (
           isSignedIn()
-          && resource.data.ownerUid == request.auth.uid
           && resource.data.get('finalized', false) != true
-          && request.resource.data.ownerUid == resource.data.ownerUid
+          && (
+            (
+              resource.data.ownerUid == request.auth.uid
+              && request.resource.data.ownerUid == resource.data.ownerUid
+            )
+            || (
+              isResumedSubmissionOwner(submissionId, resource.data)
+              && request.resource.data.ownerUid == request.auth.uid
+              && request.resource.data.resumeToken == resource.data.resumeToken
+            )
+          )
         );
       allow delete: if isAdmin();
 
