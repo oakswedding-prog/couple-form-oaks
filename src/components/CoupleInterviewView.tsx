@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
   Mic,
   Copy,
@@ -104,7 +104,10 @@ export const CoupleInterviewView: React.FC<CoupleInterviewViewProps> = ({
   const p1 = (answers.partner1 || "Partner 1").trim();
   const p2 = (answers.partner2 || "Partner 2").trim();
 
-  const doc = parseInterviewDocument(currentText, p1, p2);
+  const doc = useMemo(
+    () => parseInterviewDocument(currentText, p1, p2),
+    [currentText, p1, p2]
+  );
 
   const handleCopy = async () => {
     try {

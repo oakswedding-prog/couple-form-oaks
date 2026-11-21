@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   HeartHandshake,
   Copy,
@@ -54,10 +54,9 @@ export const CoupleLetterView: React.FC<CoupleLetterViewProps> = ({
   const p1 = (answers.partner1 || "Partner 1").trim();
   const p2 = (answers.partner2 || "Partner 2").trim();
 
-  const initialResult = upgradeCoupleLetterIfNeeded(
-    initialLetterProp,
-    answers,
-    STUDIO_NAME
+  const initialResult = useMemo(
+    () => upgradeCoupleLetterIfNeeded(initialLetterProp, answers, STUDIO_NAME),
+    [initialLetterProp, answers]
   );
 
   const [letterText, setLetterText] = useState<string>(initialResult.letter);
@@ -95,13 +94,20 @@ export const CoupleLetterView: React.FC<CoupleLetterViewProps> = ({
     }
   }, [initialLetterProp]);
 
-  const parsedDoc = parseCoupleLetterDocument(letterText, p1, p2);
+  const parsedDoc = useMemo(
+    () => parseCoupleLetterDocument(letterText, p1, p2),
+    [letterText, p1, p2]
+  );
 
   // Approximate word count
-  const wordCount = letterText
-    .replace(/[#*—\-]/g, "")
-    .split(/\s+/)
-    .filter(Boolean).length;
+  const wordCount = useMemo(
+    () =>
+      letterText
+        .replace(/[#*—\-]/g, "")
+        .split(/\s+/)
+        .filter(Boolean).length,
+    [letterText]
+  );
 
   const handleCopy = async () => {
     try {

@@ -24,6 +24,11 @@ import { OptionCard } from "./components/OptionCard.tsx";
 import { ImageUploader } from "./components/ImageUploader.tsx";
 import { useAdminAuth } from "./lib/auth.ts";
 import { Analytics } from "@vercel/analytics/react";
+import { sanitizeWardrobe } from "./utils/wardrobe.ts";
+import {
+  createDefaultDecorEvents,
+  sanitizeDecorEvents,
+} from "./utils/decorEvents.ts";
 import {
   Q11_MAX_SELECTIONS,
   Q11_REQUIRED_SELECTIONS,
@@ -35,6 +40,12 @@ import {
 
 const FamilyTreeBuilder = React.lazy(() =>
   import("./components/FamilyTreeBuilder.tsx").then((m) => ({ default: m.FamilyTreeBuilder }))
+);
+const WardrobeQuestion = React.lazy(() =>
+  import("./components/WardrobeQuestion.tsx").then((m) => ({ default: m.WardrobeQuestion }))
+);
+const DecorQuestion = React.lazy(() =>
+  import("./components/DecorQuestion.tsx").then((m) => ({ default: m.DecorQuestion }))
 );
 const ReviewScreen = React.lazy(() =>
   import("./components/ReviewScreen.tsx").then((m) => ({ default: m.ReviewScreen }))
@@ -82,10 +93,17 @@ const INITIAL_ANSWERS: QuestionnaireAnswers = {
     familyMembers: [],
     treePhotoUrl: undefined,
     treeNotes: "",
+    brideSide: { photos: [], notes: "" },
+    groomSide: { photos: [], notes: "" },
   },
   q11_filmFeel: { selected: [], other: "" },
   q12_references: { links: [], images: [], notes: "" },
+  wardrobe: {
+    bride: { notes: "", links: [], photos: [] },
+    groom: { notes: "", links: [], photos: [] },
+  },
   weddingOutfits: { links: [], images: [], notes: "" },
+  decorEvents: createDefaultDecorEvents(),
   decorMoodBoard: { links: [], images: [], notes: "" },
   q13_tone: { selected: [], other: "" },
   q14_moments: { selected: [], other: "" },
@@ -152,6 +170,22 @@ function sanitizeAnswers(raw: any): QuestionnaireAnswers {
       familyMembers: Array.isArray(raw.q10_people?.familyMembers) ? raw.q10_people.familyMembers : [],
       treePhotoUrl: raw.q10_people?.treePhotoUrl,
       treeNotes: typeof raw.q10_people?.treeNotes === "string" ? raw.q10_people.treeNotes : "",
+      brideSide: {
+        photos: Array.isArray(raw.q10_people?.brideSide?.photos)
+          ? raw.q10_people.brideSide.photos
+          : [],
+        notes: typeof raw.q10_people?.brideSide?.notes === "string"
+          ? raw.q10_people.brideSide.notes
+          : "",
+      },
+      groomSide: {
+        photos: Array.isArray(raw.q10_people?.groomSide?.photos)
+          ? raw.q10_people.groomSide.photos
+          : [],
+        notes: typeof raw.q10_people?.groomSide?.notes === "string"
+          ? raw.q10_people.groomSide.notes
+          : "",
+      },
     },
     q11_filmFeel: {
       selected: Array.isArray(raw.q11_filmFeel?.selected)
@@ -169,11 +203,13 @@ function sanitizeAnswers(raw: any): QuestionnaireAnswers {
       images: Array.isArray(raw.q12_references?.images) ? raw.q12_references.images : [],
       notes: typeof raw.q12_references?.notes === "string" ? raw.q12_references.notes : "",
     },
+    wardrobe: sanitizeWardrobe(raw.wardrobe),
     weddingOutfits: {
       links: Array.isArray(raw.weddingOutfits?.links) ? raw.weddingOutfits.links : [],
       images: Array.isArray(raw.weddingOutfits?.images) ? raw.weddingOutfits.images : [],
       notes: typeof raw.weddingOutfits?.notes === "string" ? raw.weddingOutfits.notes : "",
     },
+    decorEvents: sanitizeDecorEvents(raw.decorEvents, raw.decorMoodBoard),
     decorMoodBoard: {
       links: Array.isArray(raw.decorMoodBoard?.links) ? raw.decorMoodBoard.links : [],
       images: Array.isArray(raw.decorMoodBoard?.images) ? raw.decorMoodBoard.images : [],
@@ -325,10 +361,21 @@ export default function App() {
   // Admin Auth state
   const { user, isAdmin, isLoading: authLoading, signOut } = useAdminAuth();
 
-  // Link input state for Q12, Q13, and Q14
+  // Preload the active admin route chunk concurrently while auth settles
+  useEffect(() => {
+    if (!currentPath.startsWith("/admin")) return;
+    if (currentPath.startsWith("/admin/couple/")) {
+      void import("./pages/AdminCoupleDetail.tsx");
+    } else if (currentPath.startsWith("/admin/checklist")) {
+      void import("./pages/AdminWeddingChecklist.tsx");
+    } else {
+      void import("./pages/AdminDashboard.tsx");
+    }
+    void import("./pages/AdminLogin.tsx");
+  }, [currentPath]);
+
+  // Link input state for Q12
   const [newLinkInput, setNewLinkInput] = useState<string>("");
-  const [newOutfitLinkInput, setNewOutfitLinkInput] = useState<string>("");
-  const [newDecorLinkInput, setNewDecorLinkInput] = useState<string>("");
 
   // Auto-advance debounce ref and latest answers ref (for timer callbacks)
   const autoAdvanceTimerRef = useRef<any>(null);
@@ -689,8 +736,12 @@ export default function App() {
         }}
       />
 
-      {/* Main One-Question Container */}
-      <main className="flex-1 max-w-[640px] w-full mx-auto px-5 py-6 sm:py-10 flex flex-col justify-between animate-in fade-in duration-150 will-change-[opacity,transform]">
+      {/* Main One-Question Container (widened on Step 10 for side-by-side Bride & Groom cards) */}
+      <main
+        className={`flex-1 w-full mx-auto px-5 py-6 sm:py-10 flex flex-col justify-between animate-in fade-in duration-150 will-change-[opacity,transform] ${
+          currentStep === 10 ? "max-w-[980px]" : "max-w-[640px]"
+        }`}
+      >
         <div className="space-y-6">
           {/* QUESTION 1 */}
           {currentStep === 1 && (
@@ -770,6 +821,7 @@ export default function App() {
                     }))
                   }
                   maxImages={1}
+                  uploadCategory="couple_photo"
                   buttonLabel="Add a couple photo"
                 />
               </div>
@@ -1115,33 +1167,19 @@ export default function App() {
           {currentStep === 10 && (
             <div className="space-y-6">
               <QuestionHeader
-                title="Who are the most important people you want us to capture please give a family tree?"
-                helper="Add VIP family members, snap a photo of a tree sketch, or write it out."
+                title="Who are the most important people you want us to capture?"
+                helper="Add important people, upload family tree photos, or write notes separately for the Bride's Side and Groom's Side."
                 required
               />
               <React.Suspense fallback={<ScreenSkeleton />}>
                 <FamilyTreeBuilder
                   partner1={p1}
                   partner2={p2}
-                  members={answers.q10_people.familyMembers}
-                  onMembersChange={(m) =>
+                  value={answers.q10_people}
+                  onChange={(nextQ10) =>
                     setAnswers((prev) => ({
                       ...prev,
-                      q10_people: { ...prev.q10_people, familyMembers: m },
-                    }))
-                  }
-                  treePhotoUrl={answers.q10_people.treePhotoUrl}
-                  onTreePhotoChange={(url) =>
-                    setAnswers((prev) => ({
-                      ...prev,
-                      q10_people: { ...prev.q10_people, treePhotoUrl: url },
-                    }))
-                  }
-                  treeNotes={answers.q10_people.treeNotes}
-                  onTreeNotesChange={(n) =>
-                    setAnswers((prev) => ({
-                      ...prev,
-                      q10_people: { ...prev.q10_people, treeNotes: n },
+                      q10_people: nextQ10,
                     }))
                   }
                 />
@@ -1379,6 +1417,7 @@ export default function App() {
                     }))
                   }
                   maxImages={6}
+                  uploadCategory="reference"
                   buttonLabel="Add reference photos or screenshots"
                 />
               </div>
@@ -1408,161 +1447,35 @@ export default function App() {
 
           {/* QUESTION 13: WEDDING OUTFITS */}
           {currentStep === 13 && (
-            <div className="space-y-6">
+            <div className="space-y-4">
               <QuestionHeader
                 title="Have you finalised your wedding wardrobe?"
                 helper="Share your outfit plans, colour preferences, and styling ideas. Knowing these details helps us plan your photography and films more thoughtfully."
                 required
               />
 
-              {/* Wardrobe Notes */}
-              <div className="p-4 sm:p-5 bg-[#FAFAFA] border border-[#E8E8E8] rounded-2xl space-y-2">
-                <label className="block text-sm font-semibold text-[#1A1A1A]">
-                  Outfit details, colours, designers, or styling notes
-                </label>
-                <VoiceTextarea
-                  id="q13-wedding-outfits-notes"
-                  value={answers.weddingOutfits?.notes ?? ""}
-                  onChange={(val) =>
+              <React.Suspense fallback={<ScreenSkeleton />}>
+                <WardrobeQuestion
+                  wardrobe={answers.wardrobe}
+                  legacyWeddingOutfits={answers.weddingOutfits}
+                  onChange={(nextWardrobe) =>
                     setAnswers((prev) => ({
                       ...prev,
-                      weddingOutfits: {
-                        links: prev.weddingOutfits?.links ?? [],
-                        images: prev.weddingOutfits?.images ?? [],
-                        notes: val,
-                      },
+                      wardrobe: nextWardrobe,
                     }))
                   }
-                  placeholder="e.g. Ivory silk saree for the ceremony, custom embroidered lehenga for sangeet, classic black tuxedo..."
-                  rows={4}
-                />
-              </div>
-
-              {/* Reference Links */}
-              <div className="space-y-2 p-4 sm:p-5 bg-[#FAFAFA] border border-[#E8E8E8] rounded-2xl">
-                <label className="block text-sm font-semibold text-[#1A1A1A]">
-                  Designer, Pinterest, or wardrobe inspiration links (optional)
-                </label>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <input
-                    type="url"
-                    value={newOutfitLinkInput}
-                    onChange={(e) => setNewOutfitLinkInput(e.target.value)}
-                    placeholder="https://pinterest.com/..."
-                    className="w-full sm:flex-1 min-w-0 px-4 py-3 text-[18px] bg-white border border-[#E8E8E8] rounded-xl focus:outline-hidden focus:border-[#1A1A1A]"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && newOutfitLinkInput.trim()) {
-                        e.preventDefault();
-                        setAnswers((prev) => ({
-                          ...prev,
-                          weddingOutfits: {
-                            links: [
-                              ...(prev.weddingOutfits?.links ?? []),
-                              newOutfitLinkInput.trim(),
-                            ],
-                            images: prev.weddingOutfits?.images ?? [],
-                            notes: prev.weddingOutfits?.notes ?? "",
-                          },
-                        }));
-                        setNewOutfitLinkInput("");
-                      }
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (newOutfitLinkInput.trim()) {
-                        setAnswers((prev) => ({
-                          ...prev,
-                          weddingOutfits: {
-                            links: [
-                              ...(prev.weddingOutfits?.links ?? []),
-                              newOutfitLinkInput.trim(),
-                            ],
-                            images: prev.weddingOutfits?.images ?? [],
-                            notes: prev.weddingOutfits?.notes ?? "",
-                          },
-                        }));
-                        setNewOutfitLinkInput("");
-                      }
-                    }}
-                    className="w-full sm:w-auto px-5 py-3.5 sm:py-3 bg-[#1A1A1A] text-white rounded-xl text-base sm:text-sm font-medium hover:bg-[#333333] shrink-0 flex items-center justify-center min-h-[48px] sm:min-h-0 transition-colors"
-                  >
-                    + Add link
-                  </button>
-                </div>
-
-                <p
-                  className={`text-xs sm:text-[13px] leading-relaxed pt-0.5 transition-colors ${
-                    newOutfitLinkInput.trim()
-                      ? "text-[#8C7043] font-medium"
-                      : "text-[#6B655D]"
-                  }`}
-                >
-                  After pasting a link above, please click{" "}
-                  <span className="font-semibold text-[#1A1A1A]">+ Add link</span>{" "}
-                  to save it — simply entering it in the box will not add it to
-                  your response.
-                </p>
-
-                {(answers.weddingOutfits?.links?.length ?? 0) > 0 && (
-                  <div className="flex flex-wrap gap-2 pt-2">
-                    {answers.weddingOutfits!.links.map((link, idx) => (
-                      <span
-                        key={idx}
-                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-[#E8E8E8] text-xs text-[#1A1A1A] max-w-full truncate"
-                      >
-                        <LinkIcon className="w-3.5 h-3.5 text-[#B08D57] shrink-0" />
-                        <span className="truncate">{link}</span>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setAnswers((prev) => ({
-                              ...prev,
-                              weddingOutfits: {
-                                links: (prev.weddingOutfits?.links ?? []).filter(
-                                  (_, i) => i !== idx
-                                ),
-                                images: prev.weddingOutfits?.images ?? [],
-                                notes: prev.weddingOutfits?.notes ?? "",
-                              },
-                            }))
-                          }
-                          className="hover:text-red-500"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Outfit Photos */}
-              <div className="p-4 sm:p-5 bg-[#FAFAFA] border border-[#E8E8E8] rounded-2xl space-y-2">
-                <label className="block text-sm font-semibold text-[#1A1A1A]">
-                  Upload outfit photos, sketches, or styling references (optional)
-                </label>
-                <ImageUploader
-                  images={answers.weddingOutfits?.images ?? []}
-                  onChange={(imgs) =>
+                  onClearLegacy={() =>
                     setAnswers((prev) => ({
                       ...prev,
-                      weddingOutfits: {
-                        links: prev.weddingOutfits?.links ?? [],
-                        images: imgs,
-                        notes: prev.weddingOutfits?.notes ?? "",
-                      },
+                      weddingOutfits: { links: [], images: [], notes: "" },
                     }))
                   }
-                  maxImages={6}
-                  buttonLabel="Add outfit photos or references"
                 />
-              </div>
+              </React.Suspense>
             </div>
           )}
 
-          {/* QUESTION 14: WEDDING DECOR MOOD BOARD */}
+          {/* QUESTION 14: WEDDING DECOR MOOD BOARD (BY EVENT) */}
           {currentStep === 14 && (
             <div className="space-y-6">
               <QuestionHeader
@@ -1571,150 +1484,24 @@ export default function App() {
                 required
               />
 
-              {/* Decor Links */}
-              <div className="space-y-2 p-4 sm:p-5 bg-[#FAFAFA] border border-[#E8E8E8] rounded-2xl">
-                <label className="block text-sm font-semibold text-[#1A1A1A]">
-                  Pinterest boards or decor reference links (optional)
-                </label>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <input
-                    type="url"
-                    value={newDecorLinkInput}
-                    onChange={(e) => setNewDecorLinkInput(e.target.value)}
-                    placeholder="https://pinterest.com/..."
-                    className="w-full sm:flex-1 min-w-0 px-4 py-3 text-[18px] bg-white border border-[#E8E8E8] rounded-xl focus:outline-hidden focus:border-[#1A1A1A]"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && newDecorLinkInput.trim()) {
-                        e.preventDefault();
-                        setAnswers((prev) => ({
-                          ...prev,
-                          decorMoodBoard: {
-                            links: [
-                              ...(prev.decorMoodBoard?.links ?? []),
-                              newDecorLinkInput.trim(),
-                            ],
-                            images: prev.decorMoodBoard?.images ?? [],
-                            notes: prev.decorMoodBoard?.notes ?? "",
-                          },
-                        }));
-                        setNewDecorLinkInput("");
-                      }
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (newDecorLinkInput.trim()) {
-                        setAnswers((prev) => ({
-                          ...prev,
-                          decorMoodBoard: {
-                            links: [
-                              ...(prev.decorMoodBoard?.links ?? []),
-                              newDecorLinkInput.trim(),
-                            ],
-                            images: prev.decorMoodBoard?.images ?? [],
-                            notes: prev.decorMoodBoard?.notes ?? "",
-                          },
-                        }));
-                        setNewDecorLinkInput("");
-                      }
-                    }}
-                    className="w-full sm:w-auto px-5 py-3.5 sm:py-3 bg-[#1A1A1A] text-white rounded-xl text-base sm:text-sm font-medium hover:bg-[#333333] shrink-0 flex items-center justify-center min-h-[48px] sm:min-h-0 transition-colors"
-                  >
-                    + Add link
-                  </button>
-                </div>
-
-                <p
-                  className={`text-xs sm:text-[13px] leading-relaxed pt-0.5 transition-colors ${
-                    newDecorLinkInput.trim()
-                      ? "text-[#8C7043] font-medium"
-                      : "text-[#6B655D]"
-                  }`}
-                >
-                  After pasting a link above, please click{" "}
-                  <span className="font-semibold text-[#1A1A1A]">+ Add link</span>{" "}
-                  to save it — simply entering it in the box will not add it to
-                  your response.
-                </p>
-
-                {(answers.decorMoodBoard?.links?.length ?? 0) > 0 && (
-                  <div className="flex flex-wrap gap-2 pt-2">
-                    {answers.decorMoodBoard!.links.map((link, idx) => (
-                      <span
-                        key={idx}
-                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-[#E8E8E8] text-xs text-[#1A1A1A] max-w-full truncate"
-                      >
-                        <LinkIcon className="w-3.5 h-3.5 text-[#B08D57] shrink-0" />
-                        <span className="truncate">{link}</span>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setAnswers((prev) => ({
-                              ...prev,
-                              decorMoodBoard: {
-                                links: (prev.decorMoodBoard?.links ?? []).filter(
-                                  (_, i) => i !== idx
-                                ),
-                                images: prev.decorMoodBoard?.images ?? [],
-                                notes: prev.decorMoodBoard?.notes ?? "",
-                              },
-                            }))
-                          }
-                          className="hover:text-red-500"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Decor Images */}
-              <div className="p-4 sm:p-5 bg-[#FAFAFA] border border-[#E8E8E8] rounded-2xl space-y-2">
-                <label className="block text-sm font-semibold text-[#1A1A1A]">
-                  Upload decor mood board images or colour palettes (optional)
-                </label>
-                <ImageUploader
-                  images={answers.decorMoodBoard?.images ?? []}
-                  onChange={(imgs) =>
+              <React.Suspense fallback={<ScreenSkeleton />}>
+                <DecorQuestion
+                  decorEvents={answers.decorEvents}
+                  legacyDecorMoodBoard={answers.decorMoodBoard}
+                  onChange={(nextEvents) =>
                     setAnswers((prev) => ({
                       ...prev,
-                      decorMoodBoard: {
-                        links: prev.decorMoodBoard?.links ?? [],
-                        images: imgs,
-                        notes: prev.decorMoodBoard?.notes ?? "",
-                      },
+                      decorEvents: nextEvents,
                     }))
                   }
-                  maxImages={6}
-                  buttonLabel="Add decor mood photos"
-                />
-              </div>
-
-              {/* Decor Notes */}
-              <div className="p-4 sm:p-5 bg-[#FAFAFA] border border-[#E8E8E8] rounded-2xl space-y-2">
-                <label className="block text-sm font-semibold text-[#1A1A1A]">
-                  Colour palettes, florals, lighting, or decor notes (optional)
-                </label>
-                <VoiceTextarea
-                  id="q14-decor-mood-board-notes"
-                  value={answers.decorMoodBoard?.notes ?? ""}
-                  onChange={(val) =>
+                  onClearLegacy={() =>
                     setAnswers((prev) => ({
                       ...prev,
-                      decorMoodBoard: {
-                        links: prev.decorMoodBoard?.links ?? [],
-                        images: prev.decorMoodBoard?.images ?? [],
-                        notes: val,
-                      },
+                      decorMoodBoard: { links: [], images: [], notes: "" },
                     }))
                   }
-                  placeholder="e.g. Warm candlelit reception, muted terracotta and sage florals, open garden mandap..."
-                  rows={3}
                 />
-              </div>
+              </React.Suspense>
             </div>
           )}
 
@@ -2451,6 +2238,7 @@ export default function App() {
                     }))
                   }
                   maxImages={4}
+                  uploadCategory="last_thing"
                   label="Optional photos or mood references"
                   buttonLabel="Add photos"
                 />

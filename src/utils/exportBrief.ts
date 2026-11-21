@@ -22,6 +22,24 @@ import {
   loadImageAsDataUrl,
   loadImageAsUint8Array,
 } from "./imageLoader.ts";
+import { getGroupedQ10People } from "./familyPeople.ts";
+import { getGroupedWardrobe } from "./wardrobe.ts";
+import { getGroupedDecorEvents } from "./decorEvents.ts";
+import {
+  hasUnresolvedMediaPaths,
+  resolveSubmissionMedia,
+} from "../lib/submissions.ts";
+
+async function ensureExportMediaResolved(
+  submission: SubmissionRecord
+): Promise<SubmissionRecord> {
+  if (!hasUnresolvedMediaPaths(submission)) return submission;
+  try {
+    return await resolveSubmissionMedia(submission);
+  } catch {
+    return submission;
+  }
+}
 
 /**
  * Downloads a binary blob as a named file in the browser.
@@ -40,8 +58,11 @@ function downloadBlob(blob: Blob, filename: string) {
 /**
  * Export submission as branded PDF using jsPDF
  */
-export async function exportToPdf(submission: SubmissionRecord) {
-  const { jsPDF } = await import("jspdf");
+export async function exportToPdf(rawSubmission: SubmissionRecord) {
+  const [submission, { jsPDF }] = await Promise.all([
+    ensureExportMediaResolved(rawSubmission),
+    import("jspdf"),
+  ]);
   const doc = new jsPDF({
     orientation: "portrait",
     unit: "mm",
@@ -222,9 +243,11 @@ export async function exportToPdf(submission: SubmissionRecord) {
   doc.setFontSize(7.5);
   doc.setTextColor(40, 40, 40);
   let famY = rightY + 9.5;
-  cheatSheetDoc.importantPeople.slice(0, 4).forEach((p) => {
-    doc.text(`• ${p.name} — ${p.relationship}`, col2X + 3.5, famY);
-    famY += 4;
+  cheatSheetDoc.importantPeople.slice(0, 5).forEach((p) => {
+    const sidePrefix =
+      p.side === "bride" ? "[Bride] " : p.side === "groom" ? "[Groom] " : "";
+    doc.text(`• ${sidePrefix}${p.name} — ${p.relationship}`, col2X + 3.5, famY);
+    famY += 3.8;
   });
   doc.setFont("helvetica", "italic");
   doc.setFontSize(6.8);
@@ -526,9 +549,44 @@ export async function exportToPdf(submission: SubmissionRecord) {
 
   const ans = submission.answers;
   const threeWords = (ans.q5_threeWords || []).filter(Boolean).join(", ");
-  const allFamily = (ans.q10_people?.familyMembers || [])
-    .map((m) => `${m.name} (${m.relationship})`)
-    .join(", ");
+  const groupedPeople = getGroupedQ10People(ans.q10_people);
+  const formatPdfSideText = (
+    label: string,
+    sideData: typeof groupedPeople.bride
+  ): string | null => {
+    const parts: string[] = [];
+    if (sideData.photos.length > 0) {
+      const caps = sideData.photos
+        .map((ph) => ph.caption?.trim())
+        .filter((c): c is string => Boolean(c));
+      parts.push(
+        `${sideData.photos.length} ${sideData.photos.length === 1 ? "photo" : "photos"}${
+          caps.length > 0 ? ` (${caps.join(", ")})` : ""
+        }`
+      );
+    }
+    if (sideData.members.length > 0) {
+      parts.push(
+        sideData.members
+          .map((m) => `${m.name} (${m.relationship})${m.mustCapture ? " [Must capture]" : ""}`)
+          .join(", ")
+      );
+    }
+    if (sideData.notes.trim()) {
+      parts.push(`Notes: ${sideData.notes.trim()}`);
+    }
+    return parts.length > 0 ? `${label}: ${parts.join(" | ")}` : null;
+  };
+  const q10AnswerLines = [
+    formatPdfSideText("Bride's Side", groupedPeople.bride),
+    formatPdfSideText("Groom's Side", groupedPeople.groom),
+    groupedPeople.sharedMembers.length > 0
+      ? `Both Sides: ${groupedPeople.sharedMembers
+          .map((m) => `${m.name} (${m.relationship})`)
+          .join(", ")}`
+      : null,
+    groupedPeople.legacyTreeNotes ? `Notes: ${groupedPeople.legacyTreeNotes}` : null,
+  ].filter((x): x is string => Boolean(x));
   const filmFeelStr = Array.isArray((ans.q11_filmFeel as any)?.selected)
     ? [
         ...((ans.q11_filmFeel as any).selected || []),
@@ -546,6 +604,38 @@ export async function exportToPdf(submission: SubmissionRecord) {
     ? ans.q13_tone
     : "N/A";
 
+  const groupedWardrobe = getGroupedWardrobe(ans);
+  const formatWardrobePdfSideText = (
+    heading: string,
+    side: typeof groupedWardrobe.bride
+  ): string | null => {
+    const parts: string[] = [];
+    if (side.notes.trim()) parts.push(`Notes: ${side.notes.trim()}`);
+    if (side.links.length > 0) parts.push(`Links: ${side.links.join(", ")}`);
+    if (side.photos.length > 0) parts.push(`Photos: ${side.photos.length}`);
+    return parts.length > 0 ? `${heading}:\n${parts.join("\n")}` : null;
+  };
+  const q13PdfAnswerText = groupedWardrobe.legacyShared
+    ? `Notes: ${groupedWardrobe.legacyShared.notes || "None"}\nLinks: ${groupedWardrobe.legacyShared.links.join(", ") || "None"}`
+    : [
+        formatWardrobePdfSideText("Bride's wardrobe", groupedWardrobe.bride) || "Bride's wardrobe: None",
+        formatWardrobePdfSideText("Groom's wardrobe", groupedWardrobe.groom) || "Groom's wardrobe: None",
+      ].join("\n\n");
+
+  const groupedDecor = getGroupedDecorEvents(ans);
+  const q14PdfAnswerText =
+    groupedDecor.populatedEvents.length > 0
+      ? groupedDecor.populatedEvents
+          .map((ev) => {
+            const parts: string[] = [];
+            if (ev.links.length > 0) parts.push(`Links: ${ev.links.join(", ")}`);
+            if (ev.notes.trim()) parts.push(`Notes: ${ev.notes.trim()}`);
+            if (ev.images.length > 0) parts.push(`Images: ${ev.images.length}`);
+            return `${ev.name}:\n${parts.join("\n")}`;
+          })
+          .join("\n\n")
+      : "Not answered";
+
   const fullQuestions = [
     {
       q: "Q1. What do you call each other?",
@@ -559,11 +649,11 @@ export async function exportToPdf(submission: SubmissionRecord) {
     { q: "Q7. What do you love most about each other?", a: `${p1}: ${ans.q7_loveMost?.partnerA || "N/A"}\n${p2}: ${ans.q7_loveMost?.partnerB || "N/A"}` },
     { q: "Q8. Funny story / inside joke?", a: ans.q8_funnyStory || "Not answered" },
     { q: "Q9. How did the proposal happen?", a: ans.q9_proposal?.story || "Not answered" },
-    { q: "Q10. Family members & tree", a: `${allFamily || "None"} ${ans.q10_people?.treeNotes ? `\nNotes: ${ans.q10_people.treeNotes}` : ""}` },
+    { q: "Q10. Family members & tree (Bride & Groom sides)", a: q10AnswerLines.join("\n") || "None" },
     { q: "Q11. Film & photo feel?", a: filmFeelStr || "Not answered" },
     { q: "Q12. References & Links", a: `Links: ${(ans.q12_references?.links || []).join(", ") || "None"}\nNotes: ${ans.q12_references?.notes || "None"}` },
-    { q: "Q13. Have you finalised your wedding wardrobe? Share your outfit plans, colour preferences, and styling ideas. Knowing these details helps us plan your photography and films more thoughtfully.", a: `Notes: ${ans.weddingOutfits?.notes || "None"}\nLinks: ${(ans.weddingOutfits?.links || []).join(", ") || "None"}` },
-    { q: "Q14. Wedding Decor Mood Board & References", a: `Links: ${(ans.decorMoodBoard?.links || []).join(", ") || "None"}\nNotes: ${ans.decorMoodBoard?.notes || "None"}` },
+    { q: "Q13. Have you finalised your wedding wardrobe? Share your outfit plans, colour preferences, and styling ideas. Knowing these details helps us plan your photography and films more thoughtfully.", a: q13PdfAnswerText },
+    { q: "Q14. Wedding Decor Mood Board & References", a: q14PdfAnswerText },
     { q: "Q15. Wedding day tone?", a: toneStr || "Not answered" },
     { q: "Q16. Moments looking forward to?", a: `${(ans.q14_moments?.selected || []).join(", ")} ${ans.q14_moments?.other || ""}` },
     { q: "Q17. Definitely capture / avoid?", a: `Capture: ${ans.q15_captureAvoid?.definitelyCapture || "N/A"}\nAvoid: ${ans.q15_captureAvoid?.pleaseAvoid || "N/A"}` },
@@ -636,11 +726,75 @@ export async function exportToPdf(submission: SubmissionRecord) {
       }
     }
 
-    // Embed Q10 Images (Family Tree sketch & VIP photos)
+    // Embed Q10 Images (Bride's Side & Groom's Side photos + legacy fallbacks)
     if (item.q.startsWith("Q10.")) {
-      // 1. Family tree sketch
-      if (ans.q10_people?.treePhotoUrl) {
-        const treeData = await loadImageAsDataUrl(ans.q10_people.treePhotoUrl);
+      const renderPdfSidePhotos = async (
+        sideHeading: string,
+        photos: { url: string; label?: string }[]
+      ) => {
+        if (photos.length === 0) return;
+        if (y > 222) {
+          doc.addPage();
+          y = 20;
+        }
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.setTextColor(176, 141, 87);
+        doc.text(`${sideHeading} (${photos.length}):`, left, y);
+        y += 4;
+
+        let mx = left;
+        for (const pItem of photos.slice(0, 12)) {
+          const mData = await loadImageAsDataUrl(pItem.url);
+          if (mData) {
+            if (mx + 32 > left + contentWidth) {
+              mx = left;
+              y += 30;
+              if (y > 250) {
+                doc.addPage();
+                y = 20;
+              }
+            }
+            try {
+              doc.addImage(mData, "JPEG", mx, y, 28, 21);
+              if (pItem.label) {
+                doc.setFont("helvetica", "normal");
+                doc.setFontSize(6.5);
+                doc.setTextColor(40, 40, 40);
+                doc.text(pItem.label.slice(0, 18), mx, y + 24.5);
+              }
+              mx += 32;
+            } catch {
+              // ignore
+            }
+          }
+        }
+        y += 30;
+      };
+
+      await renderPdfSidePhotos("Bride's Side Family & VIP Photos", [
+        ...groupedPeople.bride.photos.map((ph, idx) => ({
+          url: ph.url,
+          label: ph.caption?.trim() || `Photo ${idx + 1}`,
+        })),
+        ...groupedPeople.bride.members
+          .filter((m) => Boolean(m.photoUrl))
+          .map((m) => ({ url: m.photoUrl!, label: m.name })),
+      ]);
+
+      await renderPdfSidePhotos("Groom's Side Family & VIP Photos", [
+        ...groupedPeople.groom.photos.map((ph, idx) => ({
+          url: ph.url,
+          label: ph.caption?.trim() || `Photo ${idx + 1}`,
+        })),
+        ...groupedPeople.groom.members
+          .filter((m) => Boolean(m.photoUrl))
+          .map((m) => ({ url: m.photoUrl!, label: m.name })),
+      ]);
+
+      // Legacy tree photo fallback
+      if (groupedPeople.legacyTreePhotoUrl) {
+        const treeData = await loadImageAsDataUrl(groupedPeople.legacyTreePhotoUrl);
         if (treeData) {
           if (y > 215) {
             doc.addPage();
@@ -660,44 +814,15 @@ export async function exportToPdf(submission: SubmissionRecord) {
         }
       }
 
-      // 2. VIP Member Photos
-      const membersWithPhotos = (ans.q10_people?.familyMembers || []).filter((m) => Boolean(m.photoUrl));
-      if (membersWithPhotos.length > 0) {
-        if (y > 225) {
-          doc.addPage();
-          y = 20;
-        }
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(8);
-        doc.setTextColor(176, 141, 87);
-        doc.text(`VIP Member Photos (${membersWithPhotos.length}):`, left, y);
-        y += 4;
-
-        let mx = left;
-        for (const m of membersWithPhotos.slice(0, 6)) {
-          const mData = await loadImageAsDataUrl(m.photoUrl);
-          if (mData) {
-            if (mx + 28 > left + contentWidth) {
-              mx = left;
-              y += 28;
-              if (y > 255) {
-                doc.addPage();
-                y = 20;
-              }
-            }
-            try {
-              doc.addImage(mData, "JPEG", mx, y, 22, 22);
-              doc.setFont("helvetica", "normal");
-              doc.setFontSize(6.5);
-              doc.setTextColor(40, 40, 40);
-              doc.text(m.name.slice(0, 14), mx, y + 25);
-              mx += 28;
-            } catch {
-              // ignore
-            }
-          }
-        }
-        y += 30;
+      // Legacy shared member photos fallback
+      const sharedWithPhotos = groupedPeople.sharedMembers.filter((m) =>
+        Boolean(m.photoUrl)
+      );
+      if (sharedWithPhotos.length > 0) {
+        await renderPdfSidePhotos(
+          "Mutual / Shared VIP Photos",
+          sharedWithPhotos.map((m) => ({ url: m.photoUrl!, label: m.name }))
+        );
       }
     }
 
@@ -739,10 +864,13 @@ export async function exportToPdf(submission: SubmissionRecord) {
       }
     }
 
-    // Embed Q13 Images (Wedding Outfit References)
+    // Embed Q13 Images (Bride's wardrobe, Groom's wardrobe, and legacy fallback)
     if (item.q.startsWith("Q13.")) {
-      const outfitImages = ans.weddingOutfits?.images || [];
-      if (outfitImages.length > 0) {
+      const renderPdfWardrobePhotos = async (
+        headingLabel: string,
+        imagesList: string[]
+      ) => {
+        if (imagesList.length === 0) return;
         if (y > 225) {
           doc.addPage();
           y = 20;
@@ -750,11 +878,11 @@ export async function exportToPdf(submission: SubmissionRecord) {
         doc.setFont("helvetica", "bold");
         doc.setFontSize(8);
         doc.setTextColor(176, 141, 87);
-        doc.text(`Wedding Outfit Photos (${outfitImages.length}):`, left, y);
+        doc.text(`${headingLabel} (${imagesList.length}):`, left, y);
         y += 4;
 
         let ox = left;
-        for (const img of outfitImages.slice(0, 6)) {
+        for (const img of imagesList.slice(0, 12)) {
           const oData = await loadImageAsDataUrl(img);
           if (oData) {
             if (ox + 42 > left + contentWidth) {
@@ -774,13 +902,29 @@ export async function exportToPdf(submission: SubmissionRecord) {
           }
         }
         y += 32;
+      };
+
+      if (groupedWardrobe.legacyShared) {
+        await renderPdfWardrobePhotos(
+          "Wedding Outfit Photos",
+          groupedWardrobe.legacyShared.photos
+        );
+      } else {
+        await renderPdfWardrobePhotos(
+          "Bride's wardrobe — Outfit Photos",
+          groupedWardrobe.bride.photos
+        );
+        await renderPdfWardrobePhotos(
+          "Groom's wardrobe — Outfit Photos",
+          groupedWardrobe.groom.photos
+        );
       }
     }
 
-    // Embed Q14 Images (Decor Mood Board Photos)
+    // Embed Q14 Images (Per-event Decor Mood Board Photos in couple's order)
     if (item.q.startsWith("Q14.")) {
-      const decorImages = ans.decorMoodBoard?.images || [];
-      if (decorImages.length > 0) {
+      for (const ev of groupedDecor.populatedEvents) {
+        if (ev.images.length === 0) continue;
         if (y > 225) {
           doc.addPage();
           y = 20;
@@ -788,11 +932,11 @@ export async function exportToPdf(submission: SubmissionRecord) {
         doc.setFont("helvetica", "bold");
         doc.setFontSize(8);
         doc.setTextColor(176, 141, 87);
-        doc.text(`Decor Mood Board Photos (${decorImages.length}):`, left, y);
+        doc.text(`${ev.name} — Decor Mood Board Photos (${ev.images.length}):`, left, y);
         y += 4;
 
         let dx = left;
-        for (const img of decorImages.slice(0, 6)) {
+        for (const img of ev.images.slice(0, 12)) {
           const dData = await loadImageAsDataUrl(img);
           if (dData) {
             if (dx + 42 > left + contentWidth) {
@@ -862,7 +1006,8 @@ export async function exportToPdf(submission: SubmissionRecord) {
 /**
  * Export submission as Word (.docx) document
  */
-export async function exportToDocx(submission: SubmissionRecord) {
+export async function exportToDocx(rawSubmission: SubmissionRecord) {
+  const submission = await ensureExportMediaResolved(rawSubmission);
   const p1 = submission.partner1 || "Partner 1";
   const p2 = submission.partner2 || "Partner 2";
   const ans = submission.answers;
@@ -912,10 +1057,43 @@ export async function exportToDocx(submission: SubmissionRecord) {
   const { Document, Packer, Paragraph, TextRun, HeadingLevel, ImageRun } = await import("docx");
 
   // Pre-load image bytes asynchronously for embedding
+  const groupedDocxPeople = getGroupedQ10People(ans.q10_people);
   const couplePhotoBytes = await loadImageAsUint8Array(ans.couplePhotoUrl);
-  const treePhotoBytes = await loadImageAsUint8Array(ans.q10_people?.treePhotoUrl);
-  const vipPhotoBytes = await Promise.all(
-    (ans.q10_people?.familyMembers || [])
+  const treePhotoBytes = await loadImageAsUint8Array(groupedDocxPeople.legacyTreePhotoUrl);
+  const brideSidePhotoBytes = await Promise.all(
+    [
+      ...groupedDocxPeople.bride.photos.map((ph, idx) => ({
+        name: ph.caption?.trim() || `Bride's Side Photo ${idx + 1}`,
+        url: ph.url,
+      })),
+      ...groupedDocxPeople.bride.members
+        .filter((m) => Boolean(m.photoUrl))
+        .map((m) => ({ name: m.name, url: m.photoUrl! })),
+    ]
+      .slice(0, 12)
+      .map(async (item) => ({
+        name: item.name,
+        bytes: await loadImageAsUint8Array(item.url),
+      }))
+  );
+  const groomSidePhotoBytes = await Promise.all(
+    [
+      ...groupedDocxPeople.groom.photos.map((ph, idx) => ({
+        name: ph.caption?.trim() || `Groom's Side Photo ${idx + 1}`,
+        url: ph.url,
+      })),
+      ...groupedDocxPeople.groom.members
+        .filter((m) => Boolean(m.photoUrl))
+        .map((m) => ({ name: m.name, url: m.photoUrl! })),
+    ]
+      .slice(0, 12)
+      .map(async (item) => ({
+        name: item.name,
+        bytes: await loadImageAsUint8Array(item.url),
+      }))
+  );
+  const sharedVipPhotoBytes = await Promise.all(
+    groupedDocxPeople.sharedMembers
       .filter((m) => Boolean(m.photoUrl))
       .slice(0, 6)
       .map(async (m) => ({
@@ -928,15 +1106,32 @@ export async function exportToDocx(submission: SubmissionRecord) {
       .slice(0, 6)
       .map(async (img) => await loadImageAsUint8Array(img))
   );
+  const groupedDocxWardrobe = getGroupedWardrobe(ans);
   const outfitPhotoBytes = await Promise.all(
-    (ans.weddingOutfits?.images || [])
-      .slice(0, 6)
+    (groupedDocxWardrobe.legacyShared?.photos || [])
+      .slice(0, 12)
       .map(async (img) => await loadImageAsUint8Array(img))
   );
-  const decorPhotoBytes = await Promise.all(
-    (ans.decorMoodBoard?.images || [])
-      .slice(0, 6)
+  const brideOutfitPhotoBytes = await Promise.all(
+    groupedDocxWardrobe.bride.photos
+      .slice(0, 12)
       .map(async (img) => await loadImageAsUint8Array(img))
+  );
+  const groomOutfitPhotoBytes = await Promise.all(
+    groupedDocxWardrobe.groom.photos
+      .slice(0, 12)
+      .map(async (img) => await loadImageAsUint8Array(img))
+  );
+  const groupedDocxDecor = getGroupedDecorEvents(ans);
+  const decorEventDocxEntries = await Promise.all(
+    groupedDocxDecor.populatedEvents.map(async (ev) => ({
+      event: ev,
+      photoBytes: await Promise.all(
+        ev.images
+          .slice(0, 12)
+          .map(async (img) => await loadImageAsUint8Array(img))
+      ),
+    }))
   );
   const lastPhotoBytes = await Promise.all(
     (ans.q23_oneLastThing?.images || [])
@@ -1239,14 +1434,86 @@ export async function exportToDocx(submission: SubmissionRecord) {
           new Paragraph({ text: "" }),
 
           // Q10
-          new Paragraph({ children: [new TextRun({ text: "10. Family & People", bold: true })] }),
+          new Paragraph({ children: [new TextRun({ text: "10. Family & People (Bride & Groom Sides)", bold: true })] }),
           new Paragraph({
-            text: (ans.q10_people?.familyMembers || [])
-              .map((m) => `${m.name} (${m.relationship})${m.mustCapture ? " [MUST CAPTURE]" : ""}`)
-              .join("; ") || "None",
+            children: [new TextRun({ text: "Bride's Side:", bold: true })],
           }),
-          ...(ans.q10_people?.treeNotes
-            ? [new Paragraph({ text: `Notes: ${ans.q10_people.treeNotes}` })]
+          new Paragraph({
+            text:
+              [
+                groupedDocxPeople.bride.photos.length > 0
+                  ? `${groupedDocxPeople.bride.photos.length} photos uploaded`
+                  : null,
+                ...groupedDocxPeople.bride.members.map(
+                  (m) => `${m.name} (${m.relationship})${m.mustCapture ? " [MUST CAPTURE]" : ""}`
+                ),
+                groupedDocxPeople.bride.notes.trim()
+                  ? `Notes: ${groupedDocxPeople.bride.notes.trim()}`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" | ") || "None",
+          }),
+          ...brideSidePhotoBytes
+            .filter((vp) => vp.bytes !== null)
+            .map(
+              (vp) =>
+                new Paragraph({
+                  children: [
+                    new TextRun({ text: `• ${vp.name}: `, bold: true }),
+                    new ImageRun({
+                      data: vp.bytes!,
+                      transformation: { width: 120, height: 90 },
+                      type: "jpg",
+                    }),
+                  ],
+                })
+            ),
+          new Paragraph({
+            children: [new TextRun({ text: "Groom's Side:", bold: true })],
+          }),
+          new Paragraph({
+            text:
+              [
+                groupedDocxPeople.groom.photos.length > 0
+                  ? `${groupedDocxPeople.groom.photos.length} photos uploaded`
+                  : null,
+                ...groupedDocxPeople.groom.members.map(
+                  (m) => `${m.name} (${m.relationship})${m.mustCapture ? " [MUST CAPTURE]" : ""}`
+                ),
+                groupedDocxPeople.groom.notes.trim()
+                  ? `Notes: ${groupedDocxPeople.groom.notes.trim()}`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" | ") || "None",
+          }),
+          ...groomSidePhotoBytes
+            .filter((vp) => vp.bytes !== null)
+            .map(
+              (vp) =>
+                new Paragraph({
+                  children: [
+                    new TextRun({ text: `• ${vp.name}: `, bold: true }),
+                    new ImageRun({
+                      data: vp.bytes!,
+                      transformation: { width: 120, height: 90 },
+                      type: "jpg",
+                    }),
+                  ],
+                })
+            ),
+          ...(groupedDocxPeople.sharedMembers.length > 0
+            ? [
+                new Paragraph({
+                  text: `Mutual / Both: ${groupedDocxPeople.sharedMembers
+                    .map((m) => `${m.name} (${m.relationship})${m.mustCapture ? " [MUST CAPTURE]" : ""}`)
+                    .join("; ")}`,
+                }),
+              ]
+            : []),
+          ...(groupedDocxPeople.legacyTreeNotes
+            ? [new Paragraph({ text: `Notes: ${groupedDocxPeople.legacyTreeNotes}` })]
             : []),
           ...(treePhotoBytes
             ? [
@@ -1264,20 +1531,21 @@ export async function exportToDocx(submission: SubmissionRecord) {
                 }),
               ]
             : []),
-          ...vipPhotoBytes
+          ...sharedVipPhotoBytes
             .filter((vp) => vp.bytes !== null)
-            .flatMap((vp) => [
-              new Paragraph({
-                children: [
-                  new TextRun({ text: `• ${vp.name}: `, bold: true }),
-                  new ImageRun({
-                    data: vp.bytes!,
-                    transformation: { width: 75, height: 75 },
-                    type: "jpg",
-                  }),
-                ],
-              }),
-            ]),
+            .map(
+              (vp) =>
+                new Paragraph({
+                  children: [
+                    new TextRun({ text: `• ${vp.name}: `, bold: true }),
+                    new ImageRun({
+                      data: vp.bytes!,
+                      transformation: { width: 75, height: 75 },
+                      type: "jpg",
+                    }),
+                  ],
+                })
+            ),
           new Paragraph({ text: "" }),
 
           // Q11
@@ -1313,40 +1581,104 @@ export async function exportToDocx(submission: SubmissionRecord) {
               }),
             ],
           }),
-          new Paragraph({ text: `Notes: ${ans.weddingOutfits?.notes || "None"} | Links: ${(ans.weddingOutfits?.links || []).join(", ") || "None"}` }),
-          ...outfitPhotoBytes
-            .filter((b): b is Uint8Array => b !== null)
-            .map(
-              (b) =>
+          ...(groupedDocxWardrobe.legacyShared
+            ? [
                 new Paragraph({
-                  children: [
-                    new ImageRun({
-                      data: b,
-                      transformation: { width: 180, height: 130 },
-                      type: "jpg",
-                    }),
-                  ],
-                })
-            ),
+                  text: `Notes: ${groupedDocxWardrobe.legacyShared.notes || "None"} | Links: ${
+                    groupedDocxWardrobe.legacyShared.links.join(", ") || "None"
+                  }`,
+                }),
+                ...outfitPhotoBytes
+                  .filter((b): b is Uint8Array => b !== null)
+                  .map(
+                    (b) =>
+                      new Paragraph({
+                        children: [
+                          new ImageRun({
+                            data: b,
+                            transformation: { width: 180, height: 130 },
+                            type: "jpg",
+                          }),
+                        ],
+                      })
+                  ),
+              ]
+            : [
+                new Paragraph({
+                  children: [new TextRun({ text: "Bride's wardrobe", bold: true })],
+                }),
+                new Paragraph({
+                  text: `Notes: ${groupedDocxWardrobe.bride.notes || "None"} | Links: ${
+                    groupedDocxWardrobe.bride.links.join(", ") || "None"
+                  }`,
+                }),
+                ...brideOutfitPhotoBytes
+                  .filter((b): b is Uint8Array => b !== null)
+                  .map(
+                    (b) =>
+                      new Paragraph({
+                        children: [
+                          new ImageRun({
+                            data: b,
+                            transformation: { width: 180, height: 130 },
+                            type: "jpg",
+                          }),
+                        ],
+                      })
+                  ),
+                new Paragraph({
+                  children: [new TextRun({ text: "Groom's wardrobe", bold: true })],
+                }),
+                new Paragraph({
+                  text: `Notes: ${groupedDocxWardrobe.groom.notes || "None"} | Links: ${
+                    groupedDocxWardrobe.groom.links.join(", ") || "None"
+                  }`,
+                }),
+                ...groomOutfitPhotoBytes
+                  .filter((b): b is Uint8Array => b !== null)
+                  .map(
+                    (b) =>
+                      new Paragraph({
+                        children: [
+                          new ImageRun({
+                            data: b,
+                            transformation: { width: 180, height: 130 },
+                            type: "jpg",
+                          }),
+                        ],
+                      })
+                  ),
+              ]),
           new Paragraph({ text: "" }),
 
           // Q14
           new Paragraph({ children: [new TextRun({ text: "14. Wedding Decor Mood Board & References", bold: true })] }),
-          new Paragraph({ text: `Links: ${(ans.decorMoodBoard?.links || []).join(", ") || "None"} | Notes: ${ans.decorMoodBoard?.notes || "None"}` }),
-          ...decorPhotoBytes
-            .filter((b): b is Uint8Array => b !== null)
-            .map(
-              (b) =>
+          ...(decorEventDocxEntries.length === 0
+            ? [new Paragraph({ text: "Not answered" })]
+            : decorEventDocxEntries.flatMap(({ event: ev, photoBytes }) => [
                 new Paragraph({
-                  children: [
-                    new ImageRun({
-                      data: b,
-                      transformation: { width: 180, height: 130 },
-                      type: "jpg",
-                    }),
-                  ],
-                })
-            ),
+                  children: [new TextRun({ text: ev.name, bold: true })],
+                }),
+                new Paragraph({
+                  text: `Links: ${ev.links.join(", ") || "None"} | Notes: ${
+                    ev.notes.trim() || "None"
+                  }`,
+                }),
+                ...photoBytes
+                  .filter((b): b is Uint8Array => b !== null)
+                  .map(
+                    (b) =>
+                      new Paragraph({
+                        children: [
+                          new ImageRun({
+                            data: b,
+                            transformation: { width: 180, height: 130 },
+                            type: "jpg",
+                          }),
+                        ],
+                      })
+                  ),
+              ])),
           new Paragraph({ text: "" }),
 
           // Q15 (previously Q13)
@@ -1563,8 +1895,11 @@ export async function exportCoupleLetterPdf(
 /**
  * Export ONLY the Shoot Day Cheat Sheet as a 1-page A4 reference PDF
  */
-export async function exportCheatSheetPdf(submission: SubmissionRecord) {
-  const { jsPDF } = await import("jspdf");
+export async function exportCheatSheetPdf(rawSubmission: SubmissionRecord) {
+  const [submission, { jsPDF }] = await Promise.all([
+    ensureExportMediaResolved(rawSubmission),
+    import("jspdf"),
+  ]);
   const doc = new jsPDF({
     orientation: "portrait",
     unit: "mm",

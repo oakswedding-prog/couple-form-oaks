@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   Copy,
   Check,
@@ -12,9 +12,7 @@ import {
   RefreshCw,
   Edit2,
   CheckCircle2,
-  Sparkles,
   AlertTriangle,
-  Heart,
   Camera,
   Users,
   EyeOff,
@@ -30,6 +28,57 @@ import {
 } from "../utils/cheatSheetGenerator.ts";
 import { exportCheatSheetPdf } from "../utils/exportBrief.ts";
 import { LightboxModal, LightboxImage } from "./MediaGallery.tsx";
+import { getGroupedQ10People, normalizeFamilySide } from "../utils/familyPeople.ts";
+import { getCachedResolvedMediaUrl, resolveMediaUrl } from "../lib/submissions.ts";
+
+const CheatSheetPhoto: React.FC<{
+  src: string;
+  alt: string;
+  className?: string;
+  title?: string;
+  onClick?: () => void;
+}> = ({ src, alt, className, title, onClick }) => {
+  const isDirect =
+    src.startsWith("http://") ||
+    src.startsWith("https://") ||
+    src.startsWith("data:image/") ||
+    src.startsWith("blob:");
+  const [resolved, setResolved] = useState<string>(
+    () => getCachedResolvedMediaUrl(src) ?? (isDirect ? src : "")
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const immediate = getCachedResolvedMediaUrl(src) ?? (isDirect ? src : "");
+    if (immediate) {
+      setResolved(immediate);
+      return;
+    }
+    setResolved("");
+    resolveMediaUrl(src).then((url) => {
+      if (!cancelled && url) setResolved(url);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [src, isDirect]);
+
+  if (!resolved) {
+    return <div className={`${className || ""} bg-[#F2ECE1] animate-pulse`} />;
+  }
+
+  return (
+    <img
+      src={resolved}
+      alt={alt}
+      loading="lazy"
+      decoding="async"
+      onClick={onClick}
+      title={title}
+      className={className}
+    />
+  );
+};
 
 interface ShootDayCheatSheetProps {
   submission: SubmissionRecord;
@@ -97,13 +146,25 @@ export const ShootDayCheatSheet: React.FC<ShootDayCheatSheetProps> = ({
     }
   }, [rawSavedText, isLegacy]);
 
-  const doc = parseCheatSheetDocument(currentText, p1, p2);
+  const doc = useMemo(
+    () => parseCheatSheetDocument(currentText, p1, p2),
+    [currentText, p1, p2]
+  );
+
+  const groupedQ10 = useMemo(
+    () => getGroupedQ10People(answers.q10_people),
+    [answers.q10_people]
+  );
 
   // Approximate word count
-  const wordCount = currentText
-    .replace(/[#*—\-]/g, "")
-    .split(/\s+/)
-    .filter(Boolean).length;
+  const wordCount = useMemo(
+    () =>
+      currentText
+        .replace(/[#*—\-]/g, "")
+        .split(/\s+/)
+        .filter(Boolean).length,
+    [currentText]
+  );
 
   const handleCopy = async () => {
     try {
@@ -460,101 +521,250 @@ export const ShootDayCheatSheet: React.FC<ShootDayCheatSheetProps> = ({
                     04 — Important People
                   </h2>
                 </div>
-                <span className="text-[10px] text-[#7A756D]">VIP Family &amp; Friends</span>
+                <span className="text-[10px] text-[#7A756D]">Bride &amp; Groom Sides</span>
               </div>
 
-              <div className="space-y-2.5">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-2 gap-y-2">
-                  {doc.importantPeople.map((p, idx) => {
-                    const matchedMember = (answers.q10_people?.familyMembers || []).find(
-                      (m) =>
-                        m.name.toLowerCase().trim() === p.name.toLowerCase().trim() ||
-                        p.name.toLowerCase().includes(m.name.toLowerCase().trim()) ||
-                        m.name.toLowerCase().includes(p.name.toLowerCase().trim())
-                    );
-                    const photoUrl = matchedMember?.photoUrl;
+              {(() => {
+                const findPhotoForPerson = (
+                  name: string,
+                  targetSide?: "bride" | "groom"
+                ): string | undefined => {
+                  const low = name.toLowerCase().trim();
+                  const pool =
+                    targetSide === "bride"
+                      ? groupedQ10.bride.members
+                      : targetSide === "groom"
+                      ? groupedQ10.groom.members
+                      : answers.q10_people?.familyMembers || [];
+                  const memberMatch = pool.find(
+                    (m) =>
+                      m.name.toLowerCase().trim() === low ||
+                      low.includes(m.name.toLowerCase().trim()) ||
+                      m.name.toLowerCase().includes(low)
+                  );
+                  if (memberMatch?.photoUrl) return memberMatch.photoUrl;
 
-                    return (
-                      <div
-                        key={idx}
-                        className="bg-white/90 p-1.5 rounded-lg border border-[#E8DFD3]/80 text-[11px] flex items-center gap-2 print:bg-white print:border-gray-300"
-                      >
-                        {photoUrl ? (
-                          <img
-                            src={photoUrl}
-                            alt={p.name}
-                            onClick={() =>
-                              openLightbox([
-                                {
-                                  url: photoUrl,
-                                  title: p.name,
-                                  subtitle: `${p.relationship} · VIP Family Member`,
-                                },
-                              ])
-                            }
-                            className="w-8 h-8 rounded-md object-cover border border-[#E8DFD3] shrink-0 cursor-pointer hover:opacity-90 transition-opacity"
-                            title="Click to view photo"
-                          />
-                        ) : (
-                          <div className="w-8 h-8 rounded-md bg-[#FAF7F2] border border-[#E8DFD3] flex items-center justify-center font-cormorant font-semibold text-xs text-[#8C7043] shrink-0">
-                            {p.name.charAt(0).toUpperCase()}
-                          </div>
-                        )}
-                        <div className="min-w-0 flex-1">
-                          <div className="font-semibold text-[#1A1A1A] truncate">
-                            {p.name}
-                          </div>
-                          <div className="text-[#8C7043] font-medium text-[10px] shrink-0 truncate print:text-black">
-                            {p.relationship}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                  const photoPool =
+                    targetSide === "bride"
+                      ? groupedQ10.bride.photos
+                      : targetSide === "groom"
+                      ? groupedQ10.groom.photos
+                      : [...groupedQ10.bride.photos, ...groupedQ10.groom.photos];
+                  const captionMatch = photoPool.find(
+                    (ph) =>
+                      ph.caption &&
+                      (ph.caption.toLowerCase().trim() === low ||
+                        low.includes(ph.caption.toLowerCase().trim()) ||
+                        ph.caption.toLowerCase().includes(low))
+                  );
+                  return captionMatch?.url;
+                };
 
-                {/* Uploaded Family Tree Preview */}
-                {answers.q10_people?.treePhotoUrl && (
-                  <div className="pt-2 border-t border-[#E8DFD3]/70">
+                const inferSideForItem = (p: {
+                  name: string;
+                  relationship: string;
+                  side?: "bride" | "groom";
+                }): "bride" | "groom" | "shared" => {
+                  if (p.side === "bride" || p.side === "groom") return p.side;
+                  const low = p.name.toLowerCase().trim();
+                  if (
+                    groupedQ10.bride.members.some((m) => m.name.toLowerCase().trim() === low) ||
+                    groupedQ10.bride.photos.some(
+                      (ph) => ph.caption?.toLowerCase().trim() === low
+                    )
+                  ) {
+                    return "bride";
+                  }
+                  if (
+                    groupedQ10.groom.members.some((m) => m.name.toLowerCase().trim() === low) ||
+                    groupedQ10.groom.photos.some(
+                      (ph) => ph.caption?.toLowerCase().trim() === low
+                    )
+                  ) {
+                    return "groom";
+                  }
+                  const matched = (answers.q10_people?.familyMembers || []).find(
+                    (m) => m.name.toLowerCase().trim() === low
+                  );
+                  if (matched) return normalizeFamilySide(matched.side);
+                  return "shared";
+                };
+
+                const brideList = doc.importantPeople.filter(
+                  (p) => inferSideForItem(p) === "bride"
+                );
+                const groomList = doc.importantPeople.filter(
+                  (p) => inferSideForItem(p) === "groom"
+                );
+                const generalList = doc.importantPeople.filter(
+                  (p) => inferSideForItem(p) === "shared"
+                );
+
+                const renderPersonRow = (
+                  p: { name: string; relationship: string; side?: "bride" | "groom" },
+                  idx: number,
+                  targetSide?: "bride" | "groom"
+                ) => {
+                  const photoUrl = findPhotoForPerson(p.name, targetSide);
+                  return (
                     <div
-                      onClick={() =>
-                        openLightbox([
-                          {
-                            url: answers.q10_people!.treePhotoUrl!,
-                            title: "Family Tree Sketch",
-                            subtitle: `Uploaded by ${p1} & ${p2}`,
-                          },
-                        ])
-                      }
-                      className="bg-white/95 p-2 rounded-lg border border-[#E8DFD3] flex items-center gap-2.5 cursor-pointer hover:border-[#B08D57] transition-all group"
-                      title="Click to view full family tree sketch"
+                      key={`${p.name}_${idx}`}
+                      className="bg-white/90 p-1.5 rounded-lg border border-[#E8DFD3]/80 text-[11px] flex items-center gap-2 print:bg-white print:border-gray-300"
                     >
-                      <img
-                        src={answers.q10_people.treePhotoUrl}
-                        alt="Family Tree Sketch"
-                        className="w-10 h-10 rounded-md object-cover border border-[#E8DFD3] shrink-0 group-hover:scale-105 transition-transform"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[10px] font-bold text-[#8C7043] uppercase tracking-wider flex items-center justify-between">
-                          <span>Family Tree Sketch</span>
-                          <span className="text-[9px] font-normal text-[#7A756D] underline">
-                            View Sketch →
-                          </span>
+                      {photoUrl ? (
+                        <CheatSheetPhoto
+                          src={photoUrl}
+                          alt={p.name}
+                          onClick={() =>
+                            openLightbox([
+                              {
+                                url: photoUrl,
+                                title: p.name,
+                                subtitle: `${p.relationship}${
+                                  targetSide === "bride"
+                                    ? " · Bride's Side"
+                                    : targetSide === "groom"
+                                    ? " · Groom's Side"
+                                    : ""
+                                }`,
+                              },
+                            ])
+                          }
+                          className="w-8 h-8 rounded-md object-cover border border-[#E8DFD3] shrink-0 cursor-pointer hover:opacity-90 transition-opacity"
+                          title="Click to view photo"
+                        />
+                      ) : (
+                        <div className="w-8 h-8 rounded-md bg-[#FAF7F2] border border-[#E8DFD3] flex items-center justify-center font-cormorant font-semibold text-xs text-[#8C7043] shrink-0">
+                          {p.name.charAt(0).toUpperCase()}
                         </div>
-                        <div className="text-[10px] text-[#4A453E] truncate">
-                          Visual family tree diagram attached
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="font-semibold text-[#1A1A1A] truncate">{p.name}</div>
+                        <div className="text-[#8C7043] font-medium text-[10px] shrink-0 truncate print:text-black">
+                          {p.relationship}
                         </div>
                       </div>
                     </div>
-                  </div>
-                )}
+                  );
+                };
 
-                {doc.importantPeopleNote && (
-                  <p className="text-[11px] text-[#4A453E] italic pt-1 border-t border-[#E8DFD3]/60 print:border-gray-200">
-                    {doc.importantPeopleNote}
-                  </p>
-                )}
-              </div>
+                const renderSidePhotoStrip = (
+                  sideLabel: string,
+                  photos: typeof groupedQ10.bride.photos
+                ) => {
+                  if (photos.length === 0) return null;
+                  const galleryItems: LightboxImage[] = photos.map((ph, idx) => ({
+                    url: ph.url,
+                    title: ph.caption?.trim() || `${sideLabel} — Photo ${idx + 1}`,
+                    subtitle: sideLabel,
+                  }));
+                  return (
+                    <div className="pt-1.5 flex flex-wrap gap-1.5">
+                      {photos.map((ph, idx) => (
+                        <button
+                          key={ph.id || idx}
+                          type="button"
+                          onClick={() => openLightbox(galleryItems, idx)}
+                          className="group relative w-11 h-11 rounded-lg overflow-hidden border border-[#E8DFD3] bg-white cursor-pointer hover:border-[#B08D57]"
+                          title={ph.caption?.trim() || `${sideLabel} photo ${idx + 1}`}
+                        >
+                          <CheatSheetPhoto
+                            src={ph.url}
+                            alt={ph.caption?.trim() || `${sideLabel} photo ${idx + 1}`}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  );
+                };
+
+                return (
+                  <div className="space-y-3">
+                    {(brideList.length > 0 || groupedQ10.bride.photos.length > 0) && (
+                      <div className="space-y-1.5">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-[#8C7043]">
+                          Bride&apos;s Side
+                        </div>
+                        {brideList.length > 0 && (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                            {brideList.map((p, idx) => renderPersonRow(p, idx, "bride"))}
+                          </div>
+                        )}
+                        {renderSidePhotoStrip("Bride's Side", groupedQ10.bride.photos)}
+                      </div>
+                    )}
+
+                    {(groomList.length > 0 || groupedQ10.groom.photos.length > 0) && (
+                      <div className="space-y-1.5 pt-2 border-t border-[#E8DFD3]/70">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-[#8C7043]">
+                          Groom&apos;s Side
+                        </div>
+                        {groomList.length > 0 && (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                            {groomList.map((p, idx) => renderPersonRow(p, idx, "groom"))}
+                          </div>
+                        )}
+                        {renderSidePhotoStrip("Groom's Side", groupedQ10.groom.photos)}
+                      </div>
+                    )}
+
+                    {generalList.length > 0 && (
+                      <div
+                        className={`grid grid-cols-1 sm:grid-cols-2 gap-1.5 ${
+                          brideList.length > 0 || groomList.length > 0
+                            ? "pt-2 border-t border-[#E8DFD3]/70"
+                            : ""
+                        }`}
+                      >
+                        {generalList.map((p, idx) => renderPersonRow(p, idx))}
+                      </div>
+                    )}
+
+                    {/* Legacy Uploaded Family Tree Preview */}
+                    {groupedQ10.legacyTreePhotoUrl && (
+                      <div className="pt-2 border-t border-[#E8DFD3]/70">
+                        <div
+                          onClick={() =>
+                            openLightbox([
+                              {
+                                url: groupedQ10.legacyTreePhotoUrl!,
+                                title: "Family Tree Sketch",
+                                subtitle: `Uploaded by ${p1} & ${p2}`,
+                              },
+                            ])
+                          }
+                          className="bg-white/95 p-2 rounded-lg border border-[#E8DFD3] flex items-center gap-2.5 cursor-pointer hover:border-[#B08D57] transition-all group"
+                          title="Click to view full family tree sketch"
+                        >
+                          <CheatSheetPhoto
+                            src={groupedQ10.legacyTreePhotoUrl}
+                            alt="Family Tree Sketch"
+                            className="w-10 h-10 rounded-md object-cover border border-[#E8DFD3] shrink-0 group-hover:scale-105 transition-transform"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[10px] font-bold text-[#8C7043] uppercase tracking-wider flex items-center justify-between">
+                              <span>Family Tree Sketch</span>
+                              <span className="text-[9px] font-normal text-[#7A756D] underline">
+                                View Sketch →
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-[#4A453E] truncate">
+                              Visual family tree diagram attached
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {doc.importantPeopleNote && (
+                      <p className="text-[11px] text-[#4A453E] italic pt-1 border-t border-[#E8DFD3]/60 print:border-gray-200">
+                        {doc.importantPeopleNote}
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* SECTION 05: PLEASE AVOID */}

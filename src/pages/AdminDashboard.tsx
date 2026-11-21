@@ -23,7 +23,9 @@ import {
 } from "lucide-react";
 import { SubmissionRecord, SubmissionStatus } from "../types/questionnaire.ts";
 import {
+  getCachedSubmissions,
   getSubmissions,
+  prefetchSubmissionMedia,
   updateSubmissionStatus,
   deleteSubmission,
 } from "../lib/submissions.ts";
@@ -41,8 +43,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onOpenChecklist,
   onSignOut,
 }) => {
-  const [submissions, setSubmissions] = useState<SubmissionRecord[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const initialCached = useMemo(() => getCachedSubmissions(), []);
+  const [submissions, setSubmissions] = useState<SubmissionRecord[]>(
+    () => initialCached ?? []
+  );
+  const [isLoading, setIsLoading] = useState<boolean>(() => !initialCached);
   const [error, setError] = useState<string | null>(null);
 
   // Filters & Sorting
@@ -63,14 +68,38 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // Fetch submissions on mount
+  // Warm lazy chunks for AdminCoupleDetail and AdminWeddingChecklist during browser idle
+  useEffect(() => {
+    const warmChunks = () => {
+      void import("./AdminCoupleDetail.tsx");
+      void import("./AdminWeddingChecklist.tsx");
+    };
+    const w = window as typeof window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    if (typeof w.requestIdleCallback === "function") {
+      const idleId = w.requestIdleCallback(warmChunks, { timeout: 1500 });
+      return () => w.cancelIdleCallback?.(idleId);
+    }
+    const timer = window.setTimeout(warmChunks, 350);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  // Fetch submissions on mount (0ms from cache + SWR background refresh)
   useEffect(() => {
     let isMounted = true;
     async function loadData() {
-      setIsLoading(true);
+      if (!getCachedSubmissions()) {
+        setIsLoading(true);
+      }
       setError(null);
       try {
-        const records = await getSubmissions();
+        const records = await getSubmissions(false, (fresh) => {
+          if (isMounted) {
+            setSubmissions(fresh);
+          }
+        });
         if (isMounted) {
           setSubmissions(records);
         }
@@ -156,11 +185,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
-  // Summary counts
-  const totalCount = submissions.length;
-  const newCount = submissions.filter((s) => s.status === "new").length;
-  const reviewedCount = submissions.filter((s) => s.status === "reviewed").length;
-  const sharedCount = submissions.filter((s) => s.status === "shared").length;
+  // Memoized summary counts
+  const { totalCount, newCount, reviewedCount, sharedCount } = useMemo(() => {
+    let nextNew = 0;
+    let nextReviewed = 0;
+    let nextShared = 0;
+    for (const s of submissions) {
+      if (s.status === "new") nextNew++;
+      else if (s.status === "reviewed") nextReviewed++;
+      else if (s.status === "shared") nextShared++;
+    }
+    return {
+      totalCount: submissions.length,
+      newCount: nextNew,
+      reviewedCount: nextReviewed,
+      sharedCount: nextShared,
+    };
+  }, [submissions]);
 
   // Filtered & Sorted submissions
   const filteredSubmissions = useMemo(() => {
@@ -223,6 +264,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <button
               type="button"
               onClick={onOpenChecklist}
+              onMouseEnter={() => {
+                void import("./AdminWeddingChecklist.tsx");
+              }}
+              onFocus={() => {
+                void import("./AdminWeddingChecklist.tsx");
+              }}
               className="flex-1 sm:flex-initial min-h-[40px] sm:min-h-[36px] inline-flex items-center justify-center gap-1.5 px-3.5 py-2 sm:py-1.5 rounded-xl sm:rounded-full text-xs font-medium text-[#1A1A1A] bg-[#FAF7F2] hover:bg-[#F2ECE1] border border-[#E5DDD2] transition-colors cursor-pointer whitespace-nowrap shrink-0"
             >
               <ClipboardList className="w-3.5 h-3.5 text-[#8C7043] shrink-0" />
@@ -479,6 +526,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     <button
                       type="button"
                       onClick={() => onSelectCouple(couple.id)}
+                      onMouseEnter={() => {
+                        void import("./AdminCoupleDetail.tsx");
+                        void prefetchSubmissionMedia(couple);
+                      }}
+                      onFocus={() => {
+                        void import("./AdminCoupleDetail.tsx");
+                        void prefetchSubmissionMedia(couple);
+                      }}
                       className="flex-1 md:flex-initial inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold text-[#1A1A1A] bg-[#FAF8F5] hover:bg-[#1A1A1A] hover:text-white border border-[#E5DDD2] transition-colors cursor-pointer"
                     >
                       <Eye className="w-3.5 h-3.5" />

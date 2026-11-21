@@ -4,6 +4,9 @@
  */
 
 import type { QuestionnaireAnswers } from "../types/questionnaire.ts";
+import { getGroupedQ10People } from "./familyPeople.ts";
+import { getGroupedWardrobe } from "./wardrobe.ts";
+import { getGroupedDecorEvents } from "./decorEvents.ts";
 
 export const MANDATORY_QUESTION_STEPS: readonly number[] = [
   1, 2, 3, 6, 7, 10, 11, 12, 13, 14, 15, 16, 18, 20, 21, 22, 25, 26,
@@ -125,16 +128,23 @@ export function validateQuestionStep(
       };
     }
     case 10: {
-      const ok =
-        (answers.q10_people?.familyMembers?.length || 0) > 0 ||
-        Boolean(answers.q10_people?.treePhotoUrl?.trim()) ||
-        Boolean(answers.q10_people?.treeNotes?.trim());
+      const grouped = getGroupedQ10People(answers.q10_people);
+      const ok = grouped.hasBrideEntry && grouped.hasGroomEntry;
+      let missingMessage: string | null = null;
+      if (!grouped.hasBrideEntry && !grouped.hasGroomEntry) {
+        missingMessage =
+          "Add at least one photo, VIP person, or note for both Bride's Side and Groom's Side to continue";
+      } else if (!grouped.hasBrideEntry) {
+        missingMessage =
+          "Add at least one photo, VIP person, or note for Bride's Side to continue";
+      } else if (!grouped.hasGroomEntry) {
+        missingMessage =
+          "Add at least one photo, VIP person, or note for Groom's Side to continue";
+      }
       return {
         isMandatory: true,
         isComplete: ok,
-        missingMessage: ok
-          ? null
-          : "Add a VIP person, tree photo, or note to continue",
+        missingMessage,
       };
     }
     case 11: {
@@ -166,29 +176,25 @@ export function validateQuestionStep(
       };
     }
     case 13: {
-      const ok =
-        Boolean(answers.weddingOutfits?.notes?.trim()) ||
-        (answers.weddingOutfits?.links?.length || 0) > 0 ||
-        (answers.weddingOutfits?.images?.length || 0) > 0;
+      const groupedWardrobe = getGroupedWardrobe(answers);
+      const ok = groupedWardrobe.hasAnyNotes;
       return {
         isMandatory: true,
         isComplete: ok,
         missingMessage: ok
           ? null
-          : "Share wardrobe details, links, or photos to continue",
+          : "Add outfit notes for Bride or Groom to continue",
       };
     }
     case 14: {
-      const ok =
-        (answers.decorMoodBoard?.links?.length || 0) > 0 ||
-        (answers.decorMoodBoard?.images?.length || 0) > 0 ||
-        Boolean(answers.decorMoodBoard?.notes?.trim());
+      const groupedDecor = getGroupedDecorEvents(answers);
+      const ok = groupedDecor.hasAnyContent;
       return {
         isMandatory: true,
         isComplete: ok,
         missingMessage: ok
           ? null
-          : "Add a decor link, photo, or note to continue",
+          : "Add a decor link, photo, or note to any event to continue",
       };
     }
     case 15: {

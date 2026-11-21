@@ -4,6 +4,7 @@
  */
 
 import type { QuestionnaireAnswers } from "../types/questionnaire.ts";
+import { getGroupedQ10People } from "./familyPeople.ts";
 
 /**
  * Master system prompt for the Couple Letter Generator — Version 2.0.
@@ -839,18 +840,39 @@ export function synthesizeCoupleLetter(
   }
 
   // SECTION 3: IMPORTANT PEOPLE & MOMENTS
-  const familyList = answers.q10_people?.familyMembers || [];
-  const mustCaptureFamily = familyList.filter((m) => m.mustCapture || m.name);
+  const groupedPeople = getGroupedQ10People(answers.q10_people);
+  const brideMentionNames = [
+    ...groupedPeople.bride.members
+      .filter((m) => m.mustCapture || m.name)
+      .map((m) => (m.relationship ? `${m.name} (${m.relationship})` : m.name)),
+    ...groupedPeople.bride.photos
+      .filter((ph) => Boolean(ph.caption?.trim()))
+      .map((ph) => ph.caption!.trim()),
+  ];
+  const groomMentionNames = [
+    ...groupedPeople.groom.members
+      .filter((m) => m.mustCapture || m.name)
+      .map((m) => (m.relationship ? `${m.name} (${m.relationship})` : m.name)),
+    ...groupedPeople.groom.photos
+      .filter((ph) => Boolean(ph.caption?.trim()))
+      .map((ph) => ph.caption!.trim()),
+  ];
+  const sharedMentionNames = groupedPeople.sharedMembers
+    .filter((m) => m.mustCapture || m.name)
+    .map((m) => (m.relationship ? `${m.name} (${m.relationship})` : m.name));
+  const combinedFamilyNames = Array.from(
+    new Set([...brideMentionNames, ...groomMentionNames, ...sharedMentionNames])
+  ).filter(Boolean);
   const moments = answers.q14_moments?.selected || [];
 
-  if (mustCaptureFamily.length > 0 || moments.length > 0) {
+  if (combinedFamilyNames.length > 0 || moments.length > 0) {
     lines.push("IMPORTANT PEOPLE & MOMENTS");
     lines.push("");
 
-    if (mustCaptureFamily.length > 0) {
-      const familyNames = mustCaptureFamily.slice(0, 5).map((m) => m.relationship ? `${m.name} (${m.relationship})` : m.name).join(", ");
+    if (combinedFamilyNames.length > 0) {
+      const familyNames = combinedFamilyNames.slice(0, 6).join(", ");
       lines.push(
-        `Weddings are as much about the people around you as the two of you at the altar. We've noted the important family members and loved ones who matter deeply to you — including ${familyNames}. Our team will ensure they are warmly and thoughtfully captured throughout the key ceremonies.`
+        `Weddings are as much about the people around you as the two of you at the altar. We've noted the important family members and loved ones from both the bride's and groom's sides who matter deeply to you — including ${familyNames}. Our team will ensure they are warmly and thoughtfully captured throughout the key ceremonies.`
       );
       lines.push("");
     }

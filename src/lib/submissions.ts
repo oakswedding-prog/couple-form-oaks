@@ -40,11 +40,66 @@ import {
   synthesizeCoupleLetter,
   upgradeCoupleLetterIfNeeded,
 } from "../utils/coupleLetterGenerator.ts";
+import {
+  ensureStoragePathUploaded,
+  resetDraftUploadFolder,
+} from "./photoUploadManager.ts";
+import { assertNoBase64Images } from "../utils/submissionSizeGuard.ts";
 
 /**
- * In-memory cache for resolved Firebase Storage URLs
+ * In-memory + sessionStorage cache for resolved Firebase Storage download URLs
+ * and deduplicated in-flight promises so identical paths never hit Storage twice.
  */
+const MEDIA_URL_CACHE_KEY = "oaks_media_urls_v1";
 const resolvedUrlCache = new Map<string, string>();
+const inFlightUrlPromises = new Map<string, Promise<string>>();
+let hasHydratedUrlCache = false;
+
+function hydrateResolvedUrlCache() {
+  if (hasHydratedUrlCache) return;
+  hasHydratedUrlCache = true;
+  try {
+    const raw = sessionStorage.getItem(MEDIA_URL_CACHE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as Record<string, string>;
+    if (parsed && typeof parsed === "object") {
+      for (const [k, v] of Object.entries(parsed)) {
+        if (typeof v === "string" && v.startsWith("https://")) {
+          resolvedUrlCache.set(k, v);
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function persistResolvedUrlCache() {
+  try {
+    const entries = Array.from(resolvedUrlCache.entries()).slice(-400);
+    sessionStorage.setItem(MEDIA_URL_CACHE_KEY, JSON.stringify(Object.fromEntries(entries)));
+  } catch {
+    // ignore sessionStorage quota errors
+  }
+}
+
+export function getCachedResolvedMediaUrl(
+  pathOrUrl: string | undefined | null
+): string | undefined {
+  if (!pathOrUrl) return undefined;
+  const trimmed = pathOrUrl.trim();
+  if (!trimmed) return undefined;
+  if (
+    trimmed.startsWith("http://") ||
+    trimmed.startsWith("https://") ||
+    trimmed.startsWith("data:image/") ||
+    trimmed.startsWith("blob:")
+  ) {
+    return trimmed;
+  }
+  hydrateResolvedUrlCache();
+  return resolvedUrlCache.get(trimmed);
+}
 
 /**
  * Resolves a storage path ("submissions/...") or URI to an accessible signed download URL.
@@ -55,7 +110,6 @@ export async function resolveMediaUrl(pathOrUrl: string | undefined | null): Pro
   const trimmed = pathOrUrl.trim();
   if (!trimmed) return "";
 
-  // Already a full web URL, data URI, or blob URL
   if (
     trimmed.startsWith("http://") ||
     trimmed.startsWith("https://") ||
@@ -65,31 +119,76 @@ export async function resolveMediaUrl(pathOrUrl: string | undefined | null): Pro
     return trimmed;
   }
 
-  // In-memory cache hit
+  hydrateResolvedUrlCache();
+
   if (resolvedUrlCache.has(trimmed)) {
     return resolvedUrlCache.get(trimmed)!;
   }
 
-  // Handle Firebase Storage path (e.g. "submissions/sub_.../tree.jpg" or "gs://...")
-  try {
-    let cleanPath = trimmed;
-    if (cleanPath.startsWith("gs://")) {
-      const parts = cleanPath.split("/").slice(3);
-      cleanPath = parts.join("/");
-    }
-    const storageRef = ref(storage, cleanPath);
-    const url = await getDownloadURL(storageRef);
-    resolvedUrlCache.set(trimmed, url);
-    return url;
-  } catch (err) {
-    console.warn(`Could not resolve storage path "${trimmed}":`, err);
-    return "";
+  const existing = inFlightUrlPromises.get(trimmed);
+  if (existing) {
+    return existing;
   }
+
+  const promise = (async () => {
+    try {
+      let cleanPath = trimmed;
+      if (cleanPath.startsWith("gs://")) {
+        const parts = cleanPath.split("/").slice(3);
+        cleanPath = parts.join("/");
+      }
+      const storageRef = ref(storage, cleanPath);
+      const url = await getDownloadURL(storageRef);
+      resolvedUrlCache.set(trimmed, url);
+      persistResolvedUrlCache();
+      return url;
+    } catch (err) {
+      console.warn(`Could not resolve storage path "${trimmed}":`, err);
+      return "";
+    } finally {
+      inFlightUrlPromises.delete(trimmed);
+    }
+  })();
+
+  inFlightUrlPromises.set(trimmed, promise);
+  return promise;
 }
 
 /**
- * Resolves all image paths (Q10 tree/members, Q12 references, Q23 photos) in a SubmissionRecord.
- * Ensures the admin UI and export utilities receive ready-to-display https download URLs.
+ * Collects all unique Storage paths referenced in a SubmissionRecord and resolves them
+ * concurrently in one parallel batch (`Promise.all`), instead of sequentially one-by-one.
+ */
+export function hasUnresolvedMediaPaths(record: SubmissionRecord | null | undefined): boolean {
+  if (!record?.answers) return false;
+  hydrateResolvedUrlCache();
+  const ans = record.answers;
+  const isPending = (v?: string) =>
+    Boolean(v && (v.startsWith("submissions/") || v.startsWith("gs://")) && !resolvedUrlCache.has(v.trim()));
+
+  if (isPending(ans.couplePhotoUrl)) return true;
+  if (isPending(ans.q10_people?.treePhotoUrl)) return true;
+  if (ans.q10_people?.familyMembers?.some((m) => isPending(m.photoUrl))) return true;
+  if (ans.q10_people?.brideSide?.photos?.some((p) => isPending(p.url))) return true;
+  if (ans.q10_people?.groomSide?.photos?.some((p) => isPending(p.url))) return true;
+  if (ans.q12_references?.images?.some((img) => isPending(img))) return true;
+  if (ans.wardrobe?.bride?.photos?.some((img) => isPending(img))) return true;
+  if (ans.wardrobe?.groom?.photos?.some((img) => isPending(img))) return true;
+  if (ans.weddingOutfits?.images?.some((img) => isPending(img))) return true;
+  if (ans.decorEvents?.some((ev) => ev?.images?.some((img) => isPending(img)))) return true;
+  if (ans.decorMoodBoard?.images?.some((img) => isPending(img))) return true;
+  if (ans.q23_oneLastThing?.images?.some((img) => isPending(img))) return true;
+  return false;
+}
+
+async function resolveMediaListParallel(list: string[]): Promise<string[]> {
+  if (!Array.isArray(list) || list.length === 0) return [];
+  const resolved = await Promise.all(list.map((item) => resolveMediaUrl(item)));
+  return resolved.filter(Boolean);
+}
+
+/**
+ * Resolves all image paths in a SubmissionRecord IN PARALLEL and auto-upgrades legacy
+ * couple letters without blocking the main thread on sequential network requests.
  */
 export async function resolveSubmissionMedia(record: SubmissionRecord): Promise<SubmissionRecord> {
   if (!record || !record.answers) return record;
@@ -97,64 +196,78 @@ export async function resolveSubmissionMedia(record: SubmissionRecord): Promise<
   const cloned: SubmissionRecord = JSON.parse(JSON.stringify(record));
   const ans = cloned.answers;
 
-  // Resolve Q1 couple photo
-  if (ans.couplePhotoUrl) {
-    ans.couplePhotoUrl = await resolveMediaUrl(ans.couplePhotoUrl);
-  }
-
-  // Resolve Q10 tree photo
-  if (ans.q10_people?.treePhotoUrl) {
-    ans.q10_people.treePhotoUrl = await resolveMediaUrl(ans.q10_people.treePhotoUrl);
-  }
-
-  // Resolve Q10 family members
-  if (Array.isArray(ans.q10_people?.familyMembers)) {
-    for (const m of ans.q10_people.familyMembers) {
-      if (m.photoUrl) {
-        m.photoUrl = await resolveMediaUrl(m.photoUrl);
-      }
-    }
-  }
-
-  // Resolve Q12 reference images
-  if (Array.isArray(ans.q12_references?.images)) {
-    const resolved: string[] = [];
-    for (const img of ans.q12_references.images) {
-      const url = await resolveMediaUrl(img);
-      if (url) resolved.push(url);
-    }
-    ans.q12_references.images = resolved;
-  }
-
-  // Resolve Q13 wedding outfit images
-  if (Array.isArray(ans.weddingOutfits?.images)) {
-    const resolved: string[] = [];
-    for (const img of ans.weddingOutfits.images) {
-      const url = await resolveMediaUrl(img);
-      if (url) resolved.push(url);
-    }
-    ans.weddingOutfits.images = resolved;
-  }
-
-  // Resolve Q14 decor mood board images
-  if (Array.isArray(ans.decorMoodBoard?.images)) {
-    const resolved: string[] = [];
-    for (const img of ans.decorMoodBoard.images) {
-      const url = await resolveMediaUrl(img);
-      if (url) resolved.push(url);
-    }
-    ans.decorMoodBoard.images = resolved;
-  }
-
-  // Resolve Q23 one last thing images
-  if (Array.isArray(ans.q23_oneLastThing?.images)) {
-    const resolved: string[] = [];
-    for (const img of ans.q23_oneLastThing.images) {
-      const url = await resolveMediaUrl(img);
-      if (url) resolved.push(url);
-    }
-    ans.q23_oneLastThing.images = resolved;
-  }
+  await Promise.all([
+    ans.couplePhotoUrl
+      ? resolveMediaUrl(ans.couplePhotoUrl).then((url) => {
+          ans.couplePhotoUrl = url;
+        })
+      : Promise.resolve(),
+    ans.q10_people?.treePhotoUrl
+      ? resolveMediaUrl(ans.q10_people.treePhotoUrl).then((url) => {
+          ans.q10_people.treePhotoUrl = url;
+        })
+      : Promise.resolve(),
+    Array.isArray(ans.q10_people?.familyMembers)
+      ? Promise.all(
+          ans.q10_people.familyMembers.map(async (m) => {
+            if (m.photoUrl) m.photoUrl = await resolveMediaUrl(m.photoUrl);
+          })
+        )
+      : Promise.resolve(),
+    Array.isArray(ans.q10_people?.brideSide?.photos)
+      ? Promise.all(
+          ans.q10_people.brideSide!.photos.map(async (p) => {
+            if (p.url) p.url = await resolveMediaUrl(p.url);
+          })
+        )
+      : Promise.resolve(),
+    Array.isArray(ans.q10_people?.groomSide?.photos)
+      ? Promise.all(
+          ans.q10_people.groomSide!.photos.map(async (p) => {
+            if (p.url) p.url = await resolveMediaUrl(p.url);
+          })
+        )
+      : Promise.resolve(),
+    Array.isArray(ans.q12_references?.images)
+      ? resolveMediaListParallel(ans.q12_references.images).then((res) => {
+          ans.q12_references.images = res;
+        })
+      : Promise.resolve(),
+    Array.isArray(ans.wardrobe?.bride?.photos)
+      ? resolveMediaListParallel(ans.wardrobe!.bride.photos).then((res) => {
+          ans.wardrobe!.bride.photos = res;
+        })
+      : Promise.resolve(),
+    Array.isArray(ans.wardrobe?.groom?.photos)
+      ? resolveMediaListParallel(ans.wardrobe!.groom.photos).then((res) => {
+          ans.wardrobe!.groom.photos = res;
+        })
+      : Promise.resolve(),
+    Array.isArray(ans.weddingOutfits?.images)
+      ? resolveMediaListParallel(ans.weddingOutfits!.images).then((res) => {
+          ans.weddingOutfits!.images = res;
+        })
+      : Promise.resolve(),
+    Array.isArray(ans.decorEvents)
+      ? Promise.all(
+          ans.decorEvents.map(async (ev) => {
+            if (Array.isArray(ev?.images)) {
+              ev.images = await resolveMediaListParallel(ev.images);
+            }
+          })
+        )
+      : Promise.resolve(),
+    Array.isArray(ans.decorMoodBoard?.images)
+      ? resolveMediaListParallel(ans.decorMoodBoard!.images).then((res) => {
+          ans.decorMoodBoard!.images = res;
+        })
+      : Promise.resolve(),
+    Array.isArray(ans.q23_oneLastThing?.images)
+      ? resolveMediaListParallel(ans.q23_oneLastThing.images).then((res) => {
+          ans.q23_oneLastThing.images = res;
+        })
+      : Promise.resolve(),
+  ]);
 
   // Auto-synthesize or upgrade legacy couple letter on open
   if (cloned.answers) {
@@ -177,6 +290,21 @@ export async function resolveSubmissionMedia(record: SubmissionRecord): Promise<
   }
 
   return cloned;
+}
+
+/**
+ * Prefetches Storage download URLs in parallel when hovering a couple row.
+ */
+export async function prefetchSubmissionMedia(record: SubmissionRecord): Promise<void> {
+  if (!record || !hasUnresolvedMediaPaths(record)) return;
+  try {
+    const resolved = await resolveSubmissionMedia(record);
+    if (resolved?.id) {
+      updateLocalCacheRecord(resolved.id, () => resolved);
+    }
+  } catch {
+    // non-blocking prefetch
+  }
 }
 
 /**
@@ -229,8 +357,50 @@ async function uploadMediaFile(
   }
 }
 
+async function finalizePhotoValue(
+  value: string | undefined,
+  submissionFolder: string,
+  fileName: string
+): Promise<string> {
+  if (!value) return "";
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+
+  if (trimmed.startsWith("submissions/")) {
+    return await ensureStoragePathUploaded(trimmed);
+  }
+  if (trimmed.startsWith("data:image/")) {
+    return await uploadMediaFile(submissionFolder, fileName, trimmed);
+  }
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    return trimmed;
+  }
+  if (trimmed.startsWith("blob:")) {
+    return "";
+  }
+  return trimmed;
+}
+
+async function finalizePhotoArray(
+  values: string[],
+  submissionFolder: string,
+  prefix: string
+): Promise<string[]> {
+  const results: string[] = [];
+  for (let i = 0; i < values.length; i++) {
+    const finalized = await finalizePhotoValue(
+      values[i],
+      submissionFolder,
+      `${prefix}_${i + 1}`
+    );
+    if (finalized) results.push(finalized);
+  }
+  return results;
+}
+
 /**
- * Processes all image fields in questionnaire answers and uploads to storage.
+ * Ensures every uploaded photo across all sections is finalized in Firebase Storage
+ * and guarantees Firestore stores only lightweight Storage paths or HTTPS URLs (never base64).
  */
 async function processAllImages(
   answers: QuestionnaireAnswers,
@@ -239,32 +409,60 @@ async function processAllImages(
   const updatedAnswers: QuestionnaireAnswers = JSON.parse(JSON.stringify(answers));
 
   // Process Q1 couple photo if present
-  if (updatedAnswers.couplePhotoUrl?.startsWith("data:image/")) {
-    updatedAnswers.couplePhotoUrl = await uploadMediaFile(
+  if (updatedAnswers.couplePhotoUrl) {
+    updatedAnswers.couplePhotoUrl = await finalizePhotoValue(
+      updatedAnswers.couplePhotoUrl,
       submissionFolder,
-      "couple_photo",
-      updatedAnswers.couplePhotoUrl
+      "couple_photo"
     );
   }
 
-  // Process family tree photo if present
-  if (updatedAnswers.q10_people?.treePhotoUrl?.startsWith("data:image/")) {
-    updatedAnswers.q10_people.treePhotoUrl = await uploadMediaFile(
+  // Process legacy family tree photo if present
+  if (updatedAnswers.q10_people?.treePhotoUrl) {
+    updatedAnswers.q10_people.treePhotoUrl = await finalizePhotoValue(
+      updatedAnswers.q10_people.treePhotoUrl,
       submissionFolder,
-      "family_tree",
-      updatedAnswers.q10_people.treePhotoUrl
+      "family_tree"
     );
   }
 
-  // Process family member photos
+  // Process family member VIP reference photos
   if (Array.isArray(updatedAnswers.q10_people?.familyMembers)) {
     for (let i = 0; i < updatedAnswers.q10_people.familyMembers.length; i++) {
       const member = updatedAnswers.q10_people.familyMembers[i];
-      if (member.photoUrl?.startsWith("data:image/")) {
-        member.photoUrl = await uploadMediaFile(
+      if (member.photoUrl) {
+        member.photoUrl = await finalizePhotoValue(
+          member.photoUrl,
           submissionFolder,
-          `family_member_${i + 1}`,
-          member.photoUrl
+          `family_member_${i + 1}`
+        );
+      }
+    }
+  }
+
+  // Process Q10 Bride's Side photos
+  if (Array.isArray(updatedAnswers.q10_people?.brideSide?.photos)) {
+    for (let i = 0; i < updatedAnswers.q10_people.brideSide.photos.length; i++) {
+      const photo = updatedAnswers.q10_people.brideSide.photos[i];
+      if (photo.url) {
+        photo.url = await finalizePhotoValue(
+          photo.url,
+          submissionFolder,
+          `bride_family_${i + 1}`
+        );
+      }
+    }
+  }
+
+  // Process Q10 Groom's Side photos
+  if (Array.isArray(updatedAnswers.q10_people?.groomSide?.photos)) {
+    for (let i = 0; i < updatedAnswers.q10_people.groomSide.photos.length; i++) {
+      const photo = updatedAnswers.q10_people.groomSide.photos[i];
+      if (photo.url) {
+        photo.url = await finalizePhotoValue(
+          photo.url,
+          submissionFolder,
+          `groom_family_${i + 1}`
         );
       }
     }
@@ -272,58 +470,73 @@ async function processAllImages(
 
   // Process Q12 reference mood images
   if (Array.isArray(updatedAnswers.q12_references?.images)) {
-    for (let i = 0; i < updatedAnswers.q12_references.images.length; i++) {
-      const img = updatedAnswers.q12_references.images[i];
-      if (img?.startsWith("data:image/")) {
-        updatedAnswers.q12_references.images[i] = await uploadMediaFile(
-          submissionFolder,
-          `reference_${i + 1}`,
-          img
-        );
-      }
-    }
+    updatedAnswers.q12_references.images = await finalizePhotoArray(
+      updatedAnswers.q12_references.images,
+      submissionFolder,
+      "reference"
+    );
   }
 
-  // Process Q13 wedding outfit images
+  // Process Q13 bride & groom wardrobe photos separately
+  if (Array.isArray(updatedAnswers.wardrobe?.bride?.photos)) {
+    updatedAnswers.wardrobe.bride.photos = await finalizePhotoArray(
+      updatedAnswers.wardrobe.bride.photos,
+      submissionFolder,
+      "bride_outfit"
+    );
+  }
+
+  if (Array.isArray(updatedAnswers.wardrobe?.groom?.photos)) {
+    updatedAnswers.wardrobe.groom.photos = await finalizePhotoArray(
+      updatedAnswers.wardrobe.groom.photos,
+      submissionFolder,
+      "groom_outfit"
+    );
+  }
+
+  // Process legacy Q13 wedding outfit images
   if (Array.isArray(updatedAnswers.weddingOutfits?.images)) {
-    for (let i = 0; i < updatedAnswers.weddingOutfits.images.length; i++) {
-      const img = updatedAnswers.weddingOutfits.images[i];
-      if (img?.startsWith("data:image/")) {
-        updatedAnswers.weddingOutfits.images[i] = await uploadMediaFile(
-          submissionFolder,
-          `outfit_${i + 1}`,
-          img
-        );
-      }
+    updatedAnswers.weddingOutfits.images = await finalizePhotoArray(
+      updatedAnswers.weddingOutfits.images,
+      submissionFolder,
+      "outfit"
+    );
+  }
+
+  // Process Q14 per-event decor mood board images
+  if (Array.isArray(updatedAnswers.decorEvents)) {
+    for (let evIdx = 0; evIdx < updatedAnswers.decorEvents.length; evIdx++) {
+      const ev = updatedAnswers.decorEvents[evIdx];
+      if (!Array.isArray(ev?.images)) continue;
+      const safeEventSlug =
+        (ev.id || ev.name || `event_${evIdx + 1}`)
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "_")
+          .replace(/^_+|_+$/g, "") || `event_${evIdx + 1}`;
+      ev.images = await finalizePhotoArray(
+        ev.images,
+        submissionFolder,
+        `decor_${safeEventSlug}`
+      );
     }
   }
 
-  // Process Q14 decor mood board images
+  // Process legacy Q14 decor mood board images
   if (Array.isArray(updatedAnswers.decorMoodBoard?.images)) {
-    for (let i = 0; i < updatedAnswers.decorMoodBoard.images.length; i++) {
-      const img = updatedAnswers.decorMoodBoard.images[i];
-      if (img?.startsWith("data:image/")) {
-        updatedAnswers.decorMoodBoard.images[i] = await uploadMediaFile(
-          submissionFolder,
-          `decor_${i + 1}`,
-          img
-        );
-      }
-    }
+    updatedAnswers.decorMoodBoard.images = await finalizePhotoArray(
+      updatedAnswers.decorMoodBoard.images,
+      submissionFolder,
+      "decor"
+    );
   }
 
-  // Process Q23 one last thing images
+  // Process Q27 one last thing images
   if (Array.isArray(updatedAnswers.q23_oneLastThing?.images)) {
-    for (let i = 0; i < updatedAnswers.q23_oneLastThing.images.length; i++) {
-      const img = updatedAnswers.q23_oneLastThing.images[i];
-      if (img?.startsWith("data:image/")) {
-        updatedAnswers.q23_oneLastThing.images[i] = await uploadMediaFile(
-          submissionFolder,
-          `last_thing_${i + 1}`,
-          img
-        );
-      }
-    }
+    updatedAnswers.q23_oneLastThing.images = await finalizePhotoArray(
+      updatedAnswers.q23_oneLastThing.images,
+      submissionFolder,
+      "last_thing"
+    );
   }
 
   return updatedAnswers;
@@ -365,8 +578,9 @@ export async function createSubmission(
       const displayId = `#${String(nextSeq).padStart(3, "0")}`;
       const submissionId = `sub_${String(nextSeq).padStart(3, "0")}_${Date.now()}`;
 
-      // 2. Upload any base64 images
+      // 2. Finalize any in-flight background uploads or base64 images to Storage
       const processedAnswers = await processAllImages(answers, submissionId);
+      assertNoBase64Images(processedAnswers);
 
       // Generate editorial brief, 11 interview questions, shoot day cheat sheet & couple letter
       const editorialBrief = synthesizeEditorialBrief(processedAnswers);
@@ -398,6 +612,8 @@ export async function createSubmission(
         ...submissionData,
         createdAt: serverTimestamp(),
       });
+
+      resetDraftUploadFolder();
 
       // 3. Fire-and-forget notification to Vercel API
       try {
@@ -491,18 +707,51 @@ async function fetchSubmissionsFromServer(): Promise<SubmissionRecord[]> {
 }
 
 /**
+ * Synchronous cache getter so AdminDashboard & AdminWeddingChecklist can render at 0ms
+ * with zero skeleton flash when navigating between admin routes.
+ */
+export function getCachedSubmissions(): SubmissionRecord[] | null {
+  if (memorySubmissionsCache && memorySubmissionsCache.length > 0) {
+    return memorySubmissionsCache;
+  }
+  const sessionData = loadFromSessionCache();
+  if (sessionData && sessionData.length > 0) {
+    memorySubmissionsCache = sessionData;
+    return sessionData;
+  }
+  return null;
+}
+
+/**
+ * Synchronous single-couple cache lookup so AdminCoupleDetail opens at 0ms from Dashboard.
+ */
+export function getCachedSubmissionById(id: string): SubmissionRecord | null {
+  if (!id) return null;
+  const cachedList = getCachedSubmissions();
+  if (cachedList) {
+    return cachedList.find((r) => r.id === id) ?? null;
+  }
+  return null;
+}
+
+/**
  * Admin: Fetch all submissions ordered by newest sequence number first.
  * Employs SWR (Stale-While-Revalidate) with in-memory & sessionStorage caching
  * so repeat visits and back navigation appear in 0ms without blank screens.
  */
-export async function getSubmissions(forceRefresh = false): Promise<SubmissionRecord[]> {
+export async function getSubmissions(
+  forceRefresh = false,
+  onRevalidated?: (fresh: SubmissionRecord[]) => void
+): Promise<SubmissionRecord[]> {
   // 1. In-memory cache hit (fastest, 0ms)
   if (!forceRefresh && memorySubmissionsCache && memorySubmissionsCache.length > 0) {
-    // Background revalidation
-    fetchSubmissionsFromServer().then((fresh) => {
-      memorySubmissionsCache = fresh;
-      saveToSessionCache(fresh);
-    }).catch(() => {});
+    fetchSubmissionsFromServer()
+      .then((fresh) => {
+        memorySubmissionsCache = fresh;
+        saveToSessionCache(fresh);
+        onRevalidated?.(fresh);
+      })
+      .catch(() => {});
     return memorySubmissionsCache;
   }
 
@@ -511,11 +760,13 @@ export async function getSubmissions(forceRefresh = false): Promise<SubmissionRe
     const sessionData = loadFromSessionCache();
     if (sessionData && sessionData.length > 0) {
       memorySubmissionsCache = sessionData;
-      // Background revalidation
-      fetchSubmissionsFromServer().then((fresh) => {
-        memorySubmissionsCache = fresh;
-        saveToSessionCache(fresh);
-      }).catch(() => {});
+      fetchSubmissionsFromServer()
+        .then((fresh) => {
+          memorySubmissionsCache = fresh;
+          saveToSessionCache(fresh);
+          onRevalidated?.(fresh);
+        })
+        .catch(() => {});
       return sessionData;
     }
   }
@@ -528,44 +779,36 @@ export async function getSubmissions(forceRefresh = false): Promise<SubmissionRe
 }
 
 /**
- * Admin: Fetch a single couple submission by ID.
- * Returns immediately from cache when available.
+ * Fast single-couple loader: returns cached or Firestore record immediately WITHOUT
+ * blocking on Firebase Storage getDownloadURL requests.
  */
-export async function getSubmissionById(id: string): Promise<SubmissionRecord | null> {
-  // Check memory cache
-  if (memorySubmissionsCache) {
-    const found = memorySubmissionsCache.find((r) => r.id === id);
-    if (found) {
-      const resolved = await resolveSubmissionMedia(found);
-      return resolved;
-    }
-  }
-  // Check session storage
-  const sessionData = loadFromSessionCache();
-  if (sessionData) {
-    const found = sessionData.find((r) => r.id === id);
-    if (found) {
-      const resolved = await resolveSubmissionMedia(found);
-      return resolved;
-    }
-  }
+export async function getSubmissionRecordFast(id: string): Promise<SubmissionRecord | null> {
+  const cached = getCachedSubmissionById(id);
+  if (cached) return cached;
 
   const submissionRef = doc(db, "submissions", id);
   const snapshot = await getDoc(submissionRef);
   if (!snapshot.exists()) return null;
-  const rawRecord = { ...(snapshot.data() as SubmissionRecord), id: snapshot.id };
-  const record = await resolveSubmissionMedia(rawRecord);
 
+  const record = { ...(snapshot.data() as SubmissionRecord), id: snapshot.id };
   if (memorySubmissionsCache) {
     const idx = memorySubmissionsCache.findIndex((r) => r.id === id);
-    if (idx >= 0) {
-      memorySubmissionsCache[idx] = record;
-    } else {
-      memorySubmissionsCache.push(record);
-    }
+    if (idx >= 0) memorySubmissionsCache[idx] = record;
+    else memorySubmissionsCache.push(record);
     saveToSessionCache(memorySubmissionsCache);
   }
   return record;
+}
+
+/**
+ * Admin: Fetch a single couple submission by ID with parallel media resolution.
+ */
+export async function getSubmissionById(id: string): Promise<SubmissionRecord | null> {
+  const raw = await getSubmissionRecordFast(id);
+  if (!raw) return null;
+  const resolved = await resolveSubmissionMedia(raw);
+  updateLocalCacheRecord(id, () => resolved);
+  return resolved;
 }
 
 /**

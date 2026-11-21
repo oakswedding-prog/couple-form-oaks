@@ -3,13 +3,42 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+export type FamilySide = "bride" | "groom" | "sideA" | "sideB" | "both";
+
+export interface SideFamilyPhoto {
+  id: string;
+  url: string;
+  caption?: string;
+  mustCapture?: boolean;
+}
+
+export interface FamilySideData {
+  photos: SideFamilyPhoto[];
+  notes: string;
+}
+
 export interface FamilyMember {
   id: string;
   name: string;
   relationship: string;
-  side: "sideA" | "sideB" | "both";
+  side: FamilySide;
   mustCapture: boolean;
   photoUrl?: string;
+}
+
+export interface WardrobeSideData {
+  notes: string;
+  links: string[];
+  photos: string[];
+}
+
+export interface DecorEventBoard {
+  id: string;
+  name: string;
+  isLocked?: boolean;
+  links: string[];
+  images: string[];
+  notes: string;
 }
 
 export interface QuestionnaireAnswers {
@@ -32,6 +61,8 @@ export interface QuestionnaireAnswers {
     familyMembers: FamilyMember[];
     treePhotoUrl?: string;
     treeNotes: string;
+    brideSide?: FamilySideData;
+    groomSide?: FamilySideData;
   };
   q11_filmFeel: { selected: string[]; other: string };
   q12_references: {
@@ -40,11 +71,16 @@ export interface QuestionnaireAnswers {
     images: string[];
     notes: string;
   };
+  wardrobe?: {
+    bride: WardrobeSideData;
+    groom: WardrobeSideData;
+  };
   weddingOutfits?: {
     links: string[];
     images: string[];
     notes: string;
   };
+  decorEvents?: DecorEventBoard[];
   decorMoodBoard?: {
     links: string[];
     images: string[];

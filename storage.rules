@@ -20,11 +20,11 @@ service firebase.storage {
     }
 
     // Media for questionnaire submissions (family photos, tree photo, mood references):
-    // - Couples can create/upload images only (image/* mime-type and maximum 10MB)
-    // - Only authorized studio team members can read or delete uploaded images
+    // - Couples can create/upload images only (image/* mime-type and maximum 15MB)
+    // - Only authorized studio team members can read, update, or delete uploaded images
     match /submissions/{allPaths=**} {
       allow create: if request.resource.contentType.matches('image/.*')
-                    && request.resource.size < 10 * 1024 * 1024;
+                    && request.resource.size <= 15 * 1024 * 1024;
       allow read, update, delete: if isAdmin();
     }
   }

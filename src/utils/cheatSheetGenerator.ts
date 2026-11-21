@@ -5,6 +5,7 @@
 
 import type { QuestionnaireAnswers } from "../types/questionnaire.ts";
 import { cleanSentenceText as cleanUserText } from "./textCleaner.ts";
+import { getGroupedQ10People } from "./familyPeople.ts";
 
 /**
  * Master system prompt for the Shoot Day Cheat Sheet Generator.
@@ -177,7 +178,7 @@ export interface ParsedCheatSheet {
   vibeDescription: string;
   topPriorities: string[];
   mustCaptureMoments: string[];
-  importantPeople: { name: string; relationship: string }[];
+  importantPeople: { name: string; relationship: string; side?: "bride" | "groom" }[];
   importantPeopleNote: string;
   pleaseAvoid: string[];
   workingWithCouple: { label: string; value: string }[];
@@ -274,27 +275,84 @@ export function synthesizeCheatSheet(
     mustCapture.push("Family portraits and candid interactions.");
   }
 
-  // 4. Important People
-  const familyList = answers.q10_people?.familyMembers || [];
+  // 4. Important People (grouped into Bride's Side and Groom's Side)
+  const groupedPeople = getGroupedQ10People(answers.q10_people);
   const peopleLines: string[] = [];
   let hasGrandparents = false;
 
-  familyList.forEach((m) => {
-    const name = cleanUserText(m.name);
-    const rel = cleanUserText(m.relationship);
-    if (!name && !rel) return;
-    if (rel.toLowerCase().includes("grandparent") || rel.toLowerCase().includes("grandma") || rel.toLowerCase().includes("grandpa")) {
+  const checkGrandparentMention = (text: string) => {
+    const low = text.toLowerCase();
+    if (low.includes("grandparent") || low.includes("grandma") || low.includes("grandpa")) {
       hasGrandparents = true;
     }
-    const displayName = name || "Family Member";
-    const displayRel = rel || "Family";
-    peopleLines.push(`* ${displayName} — ${displayRel}`);
-  });
+  };
 
-  const rawTreeNotes = cleanUserText(answers.q10_people?.treeNotes || "");
-  if (rawTreeNotes.toLowerCase().includes("grandparent") || rawTreeNotes.toLowerCase().includes("grandma") || rawTreeNotes.toLowerCase().includes("grandpa")) {
-    hasGrandparents = true;
+  const buildSideBullets = (sideData: typeof groupedPeople.bride): string[] => {
+    const bullets: string[] = [];
+    sideData.members.forEach((m) => {
+      const name = cleanUserText(m.name);
+      const rel = cleanUserText(m.relationship);
+      if (!name && !rel) return;
+      checkGrandparentMention(`${name} ${rel}`);
+      bullets.push(`* ${name || "Family Member"} — ${rel || "Family"}`);
+    });
+    sideData.photos.forEach((ph) => {
+      const caption = cleanUserText(ph.caption || "");
+      if (!caption) return;
+      checkGrandparentMention(caption);
+      const alreadyListed = sideData.members.some(
+        (m) => m.name.toLowerCase().trim() === caption.toLowerCase().trim()
+      );
+      if (!alreadyListed) {
+        bullets.push(`* ${caption} — ${ph.mustCapture ? "Must capture" : "Photo reference"}`);
+      }
+    });
+    checkGrandparentMention(sideData.notes);
+    return bullets;
+  };
+
+  const brideBullets = buildSideBullets(groupedPeople.bride);
+  const groomBullets = buildSideBullets(groupedPeople.groom);
+  const sharedBullets = groupedPeople.sharedMembers
+    .map((m) => {
+      const name = cleanUserText(m.name);
+      const rel = cleanUserText(m.relationship);
+      if (!name && !rel) return null;
+      checkGrandparentMention(`${name} ${rel}`);
+      return `* ${name || "Family Member"} — ${rel || "Family"}`;
+    })
+    .filter((b): b is string => Boolean(b));
+
+  if (brideBullets.length > 0) {
+    peopleLines.push("Bride's Side:");
+    peopleLines.push(...brideBullets);
+  } else if (groupedPeople.bride.photos.length > 0) {
+    peopleLines.push("Bride's Side:");
+    peopleLines.push(
+      `* ${groupedPeople.bride.photos.length} family/friend ${
+        groupedPeople.bride.photos.length === 1 ? "photo" : "photos"
+      } — Visual reference`
+    );
   }
+
+  if (groomBullets.length > 0) {
+    peopleLines.push("Groom's Side:");
+    peopleLines.push(...groomBullets);
+  } else if (groupedPeople.groom.photos.length > 0) {
+    peopleLines.push("Groom's Side:");
+    peopleLines.push(
+      `* ${groupedPeople.groom.photos.length} family/friend ${
+        groupedPeople.groom.photos.length === 1 ? "photo" : "photos"
+      } — Visual reference`
+    );
+  }
+
+  if (sharedBullets.length > 0) {
+    peopleLines.push(...sharedBullets);
+  }
+
+  const rawTreeNotes = cleanUserText(groupedPeople.legacyTreeNotes || "");
+  checkGrandparentMention(rawTreeNotes);
 
   if (hasGrandparents || !peopleLines.some((p) => p.toLowerCase().includes("grandparent"))) {
     peopleLines.push("* Grandparents — Special priority");
@@ -386,7 +444,13 @@ export function synthesizeCheatSheet(
 
   sections.push("04 — IMPORTANT PEOPLE");
   sections.push("");
-  peopleLines.forEach((p) => sections.push(p.startsWith("* ") ? p : `* ${p}`));
+  peopleLines.forEach((p) => {
+    if (p === "Bride's Side:" || p === "Groom's Side:" || p.startsWith("* ")) {
+      sections.push(p);
+    } else {
+      sections.push(`* ${p}`);
+    }
+  });
   sections.push("");
   sections.push("Capture individual portraits, group photographs, blessings, hugs and candid interactions with them.");
   sections.push("");
@@ -442,11 +506,12 @@ export function parseCheatSheetDocument(
   let vibeDescription = "";
   const topPriorities: string[] = [];
   const mustCaptureMoments: string[] = [];
-  const importantPeople: { name: string; relationship: string }[] = [];
+  const importantPeople: { name: string; relationship: string; side?: "bride" | "groom" }[] = [];
   let importantPeopleNote = "Capture individual portraits, group photographs, blessings, hugs and candid interactions with them.";
   const pleaseAvoid: string[] = [];
   const workingWithCouple: { label: string; value: string }[] = [];
   let technicalNonNegotiable = "";
+  let currentPeopleSide: "bride" | "groom" | undefined = undefined;
 
   type SectionKey =
     | "none"
@@ -529,18 +594,28 @@ export function parseCheatSheetDocument(
         break;
       }
       case "people": {
-        if (line.startsWith("*") || line.startsWith("-") || line.startsWith("•")) {
+        if (/^bride's side:?$/i.test(line)) {
+          currentPeopleSide = "bride";
+        } else if (/^groom's side:?$/i.test(line)) {
+          currentPeopleSide = "groom";
+        } else if (line.startsWith("*") || line.startsWith("-") || line.startsWith("•")) {
           const raw = line.replace(/^[*•\-]\s*/, "");
           const parts = raw.split(/[—–-]/);
+          const inferredSide =
+            raw.toLowerCase().includes("grandparent") && parts[0].trim().toLowerCase() === "grandparents"
+              ? undefined
+              : currentPeopleSide;
           if (parts.length >= 2) {
             importantPeople.push({
               name: parts[0].trim(),
               relationship: parts.slice(1).join("—").trim(),
+              ...(inferredSide ? { side: inferredSide } : {}),
             });
           } else {
             importantPeople.push({
               name: raw.trim(),
               relationship: "Special priority",
+              ...(inferredSide ? { side: inferredSide } : {}),
             });
           }
         } else if (line.toLowerCase().includes("capture") || line.toLowerCase().includes("portraits")) {

@@ -5,6 +5,9 @@
 
 import { QuestionnaireAnswers } from "../types/questionnaire.ts";
 import { cleanSentenceText } from "./textCleaner.ts";
+import { getGroupedQ10People } from "./familyPeople.ts";
+import { getGroupedWardrobe } from "./wardrobe.ts";
+import { getGroupedDecorEvents } from "./decorEvents.ts";
 
 export const OAKS_BRIEF_SYSTEM_PROMPT = `
 # OAKS WEDDING — EDITORIAL CREATIVE BRIEF GENERATOR
@@ -435,27 +438,58 @@ export function synthesizeEditorialBrief(answers: QuestionnaireAnswers): string 
   lines.push("");
 
   const q10Bullets: string[] = [];
-  const members = answers.q10_people?.familyMembers || [];
-  const sortedMembers = [...members].sort(
-    (a, b) => Number(Boolean(b.mustCapture)) - Number(Boolean(a.mustCapture))
-  );
-  for (const m of sortedMembers.slice(0, 12)) {
-    const sideLabel =
-      m.side === "sideA" ? `${p1}'s side` : m.side === "sideB" ? `${p2}'s side` : "Both sides";
+  const groupedPeople = getGroupedQ10People(answers.q10_people);
+
+  const appendSideBullets = (
+    sideTitle: string,
+    sideData: typeof groupedPeople.bride
+  ) => {
+    const sortedSideMembers = [...sideData.members].sort(
+      (a, b) => Number(Boolean(b.mustCapture)) - Number(Boolean(a.mustCapture))
+    );
+    for (const m of sortedSideMembers.slice(0, 8)) {
+      const mustFlag = m.mustCapture ? " · Must capture" : "";
+      q10Bullets.push(`${sideTitle}: ${m.name} — ${m.relationship}${mustFlag}`);
+    }
+    if (sideData.photos.length > 0) {
+      const captioned = sideData.photos
+        .map((ph) => ph.caption?.trim())
+        .filter((c): c is string => Boolean(c));
+      if (captioned.length > 0) {
+        q10Bullets.push(
+          `${sideTitle} photos (${sideData.photos.length}): ${captioned.slice(0, 5).join(", ")}`
+        );
+      } else {
+        q10Bullets.push(
+          `${sideTitle}: ${sideData.photos.length} family tree / VIP ${sideData.photos.length === 1 ? "photo" : "photos"} uploaded`
+        );
+      }
+    }
+    const sideNotes = summarizeToPoints(sideData.notes, {
+      maxBullets: 2,
+      maxWordsPerBullet: 24,
+    });
+    for (const note of sideNotes) {
+      q10Bullets.push(`${sideTitle} note: ${note}`);
+    }
+  };
+
+  appendSideBullets("Bride's Side", groupedPeople.bride);
+  appendSideBullets("Groom's Side", groupedPeople.groom);
+
+  for (const m of groupedPeople.sharedMembers.slice(0, 6)) {
     const mustFlag = m.mustCapture ? " · Must capture" : "";
-    q10Bullets.push(`${m.name} — ${m.relationship} (${sideLabel})${mustFlag}`);
+    q10Bullets.push(`Both sides: ${m.name} — ${m.relationship}${mustFlag}`);
   }
-  if (sortedMembers.length > 12) {
-    q10Bullets.push(`+ ${sortedMembers.length - 12} additional family members listed in directory`);
-  }
-  const treeNotes = summarizeToPoints(answers.q10_people?.treeNotes, {
+
+  const treeNotes = summarizeToPoints(groupedPeople.legacyTreeNotes, {
     maxBullets: 2,
     maxWordsPerBullet: 24,
   });
   for (const note of treeNotes) {
     q10Bullets.push(`Family note: ${note}`);
   }
-  if (answers.q10_people?.treePhotoUrl) {
+  if (groupedPeople.legacyTreePhotoUrl) {
     q10Bullets.push("Family tree reference photo uploaded");
   }
   pushQuestion(
@@ -488,19 +522,66 @@ export function synthesizeEditorialBrief(answers: QuestionnaireAnswers): string 
   );
 
   // Q13
+  const groupedWardrobe = getGroupedWardrobe(answers);
+  const q13Bullets: string[] = [];
+  const appendWardrobeBullets = (
+    heading: string,
+    side: typeof groupedWardrobe.bride
+  ) => {
+    const notePts = summarizeToPoints(side.notes, {
+      maxBullets: 3,
+      maxWordsPerBullet: 24,
+    });
+    for (const pt of notePts) {
+      q13Bullets.push(`${heading}: ${pt}`);
+    }
+    if (side.links.length > 0) {
+      q13Bullets.push(`${heading} links: ${side.links.slice(0, 3).join(", ")}`);
+    }
+    if (side.photos.length > 0) {
+      q13Bullets.push(
+        `${heading}: ${side.photos.length} reference ${side.photos.length === 1 ? "photo" : "photos"} uploaded`
+      );
+    }
+  };
+  if (groupedWardrobe.legacyShared) {
+    q13Bullets.push(...summarizeMediaAndNotes(answers.weddingOutfits, "Outfit"));
+  } else {
+    appendWardrobeBullets("Bride's wardrobe", groupedWardrobe.bride);
+    appendWardrobeBullets("Groom's wardrobe", groupedWardrobe.groom);
+  }
   pushQuestion(
     lines,
     "Q13",
     "Have you finalised your wedding wardrobe? Share your outfit plans, colour preferences, and styling ideas. Knowing these details helps us plan your photography and films more thoughtfully.",
-    summarizeMediaAndNotes(answers.weddingOutfits, "Outfit")
+    q13Bullets
   );
 
   // Q14
+  const groupedDecor = getGroupedDecorEvents(answers);
+  const q14Bullets: string[] = [];
+  for (const ev of groupedDecor.populatedEvents) {
+    if (ev.links.length > 0) {
+      q14Bullets.push(`${ev.name} links: ${ev.links.slice(0, 3).join(", ")}`);
+    }
+    if (ev.images.length > 0) {
+      q14Bullets.push(
+        `${ev.name}: ${ev.images.length} mood board ${ev.images.length === 1 ? "image" : "images"} uploaded`
+      );
+    }
+    const notePts = summarizeToPoints(ev.notes, {
+      maxBullets: 3,
+      maxWordsPerBullet: 24,
+    });
+    for (const pt of notePts) {
+      q14Bullets.push(`${ev.name}: ${pt}`);
+    }
+  }
   pushQuestion(
     lines,
     "Q14",
     "Do you have a wedding decor mood board or visual references?",
-    summarizeMediaAndNotes(answers.decorMoodBoard, "Decor")
+    q14Bullets
   );
 
   // Q15

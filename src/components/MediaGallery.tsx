@@ -11,11 +11,20 @@ import {
   ZoomIn,
   Image as ImageIcon,
   ExternalLink,
-  Star,
-  Users,
   AlertCircle,
-  FileText,
 } from "lucide-react";
+import { getCachedResolvedMediaUrl, resolveMediaUrl } from "../lib/submissions.ts";
+
+function isDirectRenderableUrl(value: string | undefined | null): boolean {
+  if (!value) return false;
+  const trimmed = value.trim();
+  return (
+    trimmed.startsWith("http://") ||
+    trimmed.startsWith("https://") ||
+    trimmed.startsWith("data:image/") ||
+    trimmed.startsWith("blob:")
+  );
+}
 
 export interface LightboxImage {
   url: string;
@@ -42,6 +51,8 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   onClose,
   onNavigate,
 }) => {
+  const [resolvedMap, setResolvedMap] = useState<Record<string, string>>({});
+
   useEffect(() => {
     if (!isOpen) return;
 
@@ -58,9 +69,48 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, currentIndex, images.length, onClose, onNavigate]);
 
+  // Resolve any unhydrated Firebase Storage paths visible in the lightbox
+  useEffect(() => {
+    if (!isOpen || images.length === 0) return;
+    let cancelled = false;
+
+    const pending = images.filter(
+      (img) =>
+        img.url &&
+        !isDirectRenderableUrl(img.url) &&
+        !getCachedResolvedMediaUrl(img.url) &&
+        !resolvedMap[img.url]
+    );
+
+    if (pending.length === 0) return;
+
+    Promise.all(
+      pending.map(async (img) => {
+        const url = await resolveMediaUrl(img.url);
+        return [img.url, url] as const;
+      })
+    ).then((pairs) => {
+      if (cancelled) return;
+      setResolvedMap((prev) => {
+        const next = { ...prev };
+        for (const [k, v] of pairs) {
+          if (v) next[k] = v;
+        }
+        return next;
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, images]);
+
   if (!isOpen || images.length === 0) return null;
 
   const current = images[currentIndex] || images[0];
+  const getDisplayUrl = (rawUrl: string) =>
+    getCachedResolvedMediaUrl(rawUrl) || resolvedMap[rawUrl] || (isDirectRenderableUrl(rawUrl) ? rawUrl : "");
+  const currentUrl = getDisplayUrl(current.url);
 
   return (
     <div
@@ -115,11 +165,18 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
           </button>
         )}
 
-        <img
-          src={current.url}
-          alt={current.title}
-          className="max-h-[82vh] max-w-[90vw] object-contain rounded-xl shadow-2xl transition-all"
-        />
+        {currentUrl ? (
+          <img
+            src={currentUrl}
+            alt={current.title}
+            decoding="async"
+            className="max-h-[82vh] max-w-[90vw] object-contain rounded-xl shadow-2xl transition-all"
+          />
+        ) : (
+          <div className="w-64 h-64 rounded-xl bg-white/10 animate-pulse flex items-center justify-center text-white/70 text-xs">
+            Loading photo...
+          </div>
+        )}
 
         {/* Next Button */}
         {images.length > 1 && (
@@ -140,24 +197,33 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
           className="flex items-center justify-center gap-2 overflow-x-auto py-2 z-10 max-w-2xl mx-auto"
           onClick={(e) => e.stopPropagation()}
         >
-          {images.map((img, idx) => (
-            <button
-              key={idx}
-              type="button"
-              onClick={() => onNavigate(idx)}
-              className={`relative w-12 h-12 rounded-lg overflow-hidden border-2 transition-all cursor-pointer shrink-0 ${
-                idx === currentIndex
-                  ? "border-[#D4AF37] scale-105 opacity-100 ring-2 ring-[#D4AF37]/50"
-                  : "border-white/20 opacity-60 hover:opacity-90"
-              }`}
-            >
-              <img
-                src={img.url}
-                alt={img.title}
-                className="w-full h-full object-cover"
-              />
-            </button>
-          ))}
+          {images.map((img, idx) => {
+            const thumbUrl = getDisplayUrl(img.url);
+            return (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => onNavigate(idx)}
+                className={`relative w-12 h-12 rounded-lg overflow-hidden border-2 transition-all cursor-pointer shrink-0 ${
+                  idx === currentIndex
+                    ? "border-[#D4AF37] scale-105 opacity-100 ring-2 ring-[#D4AF37]/50"
+                    : "border-white/20 opacity-60 hover:opacity-90"
+                }`}
+              >
+                {thumbUrl ? (
+                  <img
+                    src={thumbUrl}
+                    alt={img.title}
+                    loading="lazy"
+                    decoding="async"
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="w-full h-full bg-white/10 animate-pulse" />
+                )}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
@@ -172,7 +238,8 @@ interface SafeImageThumbnailProps {
 }
 
 /**
- * Image thumbnail with loading shimmer and graceful fallback if image fails to load.
+ * Image thumbnail with Storage path resolution, loading shimmer, lazy decoding,
+ * and graceful fallback if image fails to load.
  */
 export const SafeImageThumbnail: React.FC<SafeImageThumbnailProps> = ({
   src,
@@ -180,8 +247,45 @@ export const SafeImageThumbnail: React.FC<SafeImageThumbnailProps> = ({
   onClick,
   className = "w-28 h-28",
 }) => {
+  const initialResolved =
+    getCachedResolvedMediaUrl(src) ?? (isDirectRenderableUrl(src) ? src : "");
+  const [resolvedSrc, setResolvedSrc] = useState<string>(initialResolved);
   const [hasError, setHasError] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setHasError(false);
+    setIsLoading(true);
+
+    const immediate =
+      getCachedResolvedMediaUrl(src) ?? (isDirectRenderableUrl(src) ? src : "");
+    if (immediate) {
+      setResolvedSrc(immediate);
+      return;
+    }
+
+    setResolvedSrc("");
+    if (!src) {
+      setHasError(true);
+      setIsLoading(false);
+      return;
+    }
+
+    resolveMediaUrl(src).then((url) => {
+      if (cancelled) return;
+      if (url) {
+        setResolvedSrc(url);
+      } else {
+        setHasError(true);
+        setIsLoading(false);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [src]);
 
   if (hasError) {
     return (
@@ -199,21 +303,25 @@ export const SafeImageThumbnail: React.FC<SafeImageThumbnailProps> = ({
       onClick={onClick}
       className={`group relative ${className} rounded-xl overflow-hidden border border-[#E8DFD3] bg-[#FAF7F2] cursor-pointer shadow-2xs hover:shadow-md transition-all`}
     >
-      {isLoading && (
+      {(!resolvedSrc || isLoading) && (
         <div className="absolute inset-0 bg-[#F2ECE1] animate-pulse" />
       )}
-      <img
-        src={src}
-        alt={alt}
-        onLoad={() => setIsLoading(false)}
-        onError={() => {
-          setIsLoading(false);
-          setHasError(true);
-        }}
-        className={`w-full h-full object-cover transition-transform duration-200 group-hover:scale-105 ${
-          isLoading ? "opacity-0" : "opacity-100"
-        }`}
-      />
+      {resolvedSrc && (
+        <img
+          src={resolvedSrc}
+          alt={alt}
+          loading="lazy"
+          decoding="async"
+          onLoad={() => setIsLoading(false)}
+          onError={() => {
+            setIsLoading(false);
+            setHasError(true);
+          }}
+          className={`w-full h-full object-cover transition-transform duration-200 group-hover:scale-105 ${
+            isLoading ? "opacity-0" : "opacity-100"
+          }`}
+        />
+      )}
       {/* Zoom overlay on hover */}
       <div className="absolute inset-0 bg-black/35 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
         <ZoomIn className="w-5 h-5 drop-shadow-md" />

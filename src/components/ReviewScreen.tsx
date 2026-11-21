@@ -4,11 +4,19 @@
  */
 
 import React, { useState } from "react";
-import { ArrowLeft, Send, Edit3, Loader2, AlertCircle } from "lucide-react";
+import { ArrowLeft, Send, Edit3, Loader2, AlertCircle, CloudCheck, RotateCcw, User } from "lucide-react";
 import { QuestionnaireAnswers } from "../types/questionnaire.ts";
 import { STUDIO_NAME, ACCENT_COLOR, STORAGE_KEY } from "../constants.ts";
 import { createSubmission } from "../lib/submissions.ts";
 import { getMissingMandatoryQuestions } from "../utils/questionnaireValidation.ts";
+import { getGroupedQ10People } from "../utils/familyPeople.ts";
+import { getGroupedWardrobe } from "../utils/wardrobe.ts";
+import { getGroupedDecorEvents } from "../utils/decorEvents.ts";
+import {
+  getPhotoPreviewSrc,
+  retryBackgroundPhotoUpload,
+  usePhotoUploadStatus,
+} from "../lib/photoUploadManager.ts";
 
 interface ReviewScreenProps {
   answers: QuestionnaireAnswers;
@@ -118,10 +126,10 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
               </p>
               {answers.couplePhotoUrl && (
                 <div className="flex items-center gap-2.5">
-                  <img
+                  <ReviewAvatar
                     src={answers.couplePhotoUrl}
                     alt={`${p1} & ${p2}`}
-                    className="w-12 h-12 rounded-lg object-cover border border-[#E8DFD3] shrink-0"
+                    sizeClass="w-12 h-12 rounded-lg"
                   />
                   <span className="text-sm text-[#B08D57] font-medium">
                     ✓ Couple photo attached
@@ -200,42 +208,125 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
         <ChapterHeader title="Chapter 2: Your People" />
         <ReviewItem
           num={10}
-          question="Who are the most important people you want us to capture please give a family tree?"
-          answer={
-            <div>
-              {answers.q10_people.familyMembers?.length > 0 && (
-                <div className="space-y-1 mb-2">
-                  <div className="font-medium text-[#1A1A1A]">
-                    {answers.q10_people.familyMembers.length} VIP family/friends
-                    listed:
+          question="Who are the most important people you want us to capture?"
+          answer={(() => {
+            const grouped = getGroupedQ10People(answers.q10_people);
+            const hasAny =
+              grouped.hasBrideEntry ||
+              grouped.hasGroomEntry ||
+              grouped.sharedMembers.length > 0 ||
+              Boolean(grouped.legacyTreePhotoUrl) ||
+              Boolean(grouped.legacyTreeNotes);
+
+            if (!hasAny) {
+              return <span className="text-[#5F5F5F]">Skipped</span>;
+            }
+
+            const renderSideSummary = (
+              label: string,
+              sideData: typeof grouped.bride
+            ) => {
+              const hasSide =
+                sideData.photos.length > 0 ||
+                sideData.members.length > 0 ||
+                Boolean(sideData.notes.trim());
+              if (!hasSide) {
+                return (
+                  <div className="p-3 rounded-xl border border-[#E8E8E8] bg-[#FAF8F5]">
+                    <div className="text-xs font-semibold text-[#8C7043] mb-1">
+                      {label}
+                    </div>
+                    <p className="text-xs text-[#7A756D]">No entries added yet</p>
                   </div>
-                  <ul className="list-disc list-inside text-sm text-[#5F5F5F] space-y-0.5">
-                    {answers.q10_people.familyMembers.map((m) => (
-                      <li key={m.id}>
-                        {m.name} ({m.relationship})
-                        {m.mustCapture && " — [MUST CAPTURE]"}
-                      </li>
-                    ))}
-                  </ul>
+                );
+              }
+              return (
+                <div className="p-3.5 rounded-xl border border-[#E8E8E8] bg-[#FAF8F5] space-y-2.5">
+                  <div className="text-xs font-semibold text-[#1A1A1A]">
+                    {label}
+                    {sideData.photos.length > 0 && (
+                      <span className="font-normal text-[#7A756D] ml-1.5">
+                        · {sideData.photos.length}{" "}
+                        {sideData.photos.length === 1 ? "photo" : "photos"}
+                      </span>
+                    )}
+                  </div>
+
+                  {sideData.photos.length > 0 && (
+                    <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                      {sideData.photos.map((photo, idx) => (
+                        <div key={photo.id} className="space-y-1">
+                          <ReviewThumb
+                            src={photo.url}
+                            alt={photo.caption || `${label} photo ${idx + 1}`}
+                          />
+                          {photo.caption && (
+                            <p className="text-[11px] text-[#4A453E] truncate">
+                              {photo.caption}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {sideData.members.length > 0 && (
+                    <ul className="space-y-1.5 text-xs sm:text-sm text-[#5F5F5F]">
+                      {sideData.members.map((m) => (
+                        <li key={m.id} className="flex items-center gap-2">
+                          {m.photoUrl && (
+                            <ReviewAvatar
+                              src={m.photoUrl}
+                              alt={m.name}
+                              sizeClass="w-6 h-6 rounded-full"
+                            />
+                          )}
+                          <span>
+                            {m.name} ({m.relationship})
+                            {m.mustCapture && " — Must capture"}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  {sideData.notes.trim() && (
+                    <p className="text-xs text-[#5F5F5F]">
+                      Notes: {sideData.notes}
+                    </p>
+                  )}
                 </div>
-              )}
-              {answers.q10_people.treePhotoUrl && (
-                <p className="text-sm text-[#B08D57] font-medium">
-                  ✓ Family tree photo reference attached
-                </p>
-              )}
-              {answers.q10_people.treeNotes && (
-                <p className="text-sm text-[#5F5F5F] mt-1">
-                  Notes: {answers.q10_people.treeNotes}
-                </p>
-              )}
-              {answers.q10_people.familyMembers?.length === 0 &&
-                !answers.q10_people.treePhotoUrl &&
-                !answers.q10_people.treeNotes && (
-                  <span className="text-[#5F5F5F]">Skipped</span>
+              );
+            };
+
+            return (
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {renderSideSummary("Bride's Side", grouped.bride)}
+                  {renderSideSummary("Groom's Side", grouped.groom)}
+                </div>
+
+                {grouped.sharedMembers.length > 0 && (
+                  <p className="text-xs text-[#5F5F5F]">
+                    Mutual / Both:{" "}
+                    {grouped.sharedMembers
+                      .map((m) => `${m.name} (${m.relationship})`)
+                      .join(", ")}
+                  </p>
                 )}
-            </div>
-          }
+                {grouped.legacyTreePhotoUrl && (
+                  <p className="text-xs text-[#B08D57] font-medium">
+                    Family tree photo reference attached
+                  </p>
+                )}
+                {grouped.legacyTreeNotes && (
+                  <p className="text-xs text-[#5F5F5F]">
+                    Notes: {grouped.legacyTreeNotes}
+                  </p>
+                )}
+              </div>
+            );
+          })()}
           onEdit={() => onEditQuestion(10)}
         />
       </section>
@@ -279,8 +370,19 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
                 </div>
               )}
               {answers.q12_references.images?.length > 0 && (
-                <div className="text-sm text-[#B08D57] font-medium mb-1">
-                  ✓ {answers.q12_references.images.length} reference photos attached
+                <div className="space-y-1.5 mb-1.5">
+                  <div className="text-sm text-[#B08D57] font-medium">
+                    ✓ {answers.q12_references.images.length} reference photos attached
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {answers.q12_references.images.slice(0, 6).map((img, i) => (
+                      <ReviewThumb
+                        key={`${img}_${i}`}
+                        src={img}
+                        alt={`Visual reference ${i + 1}`}
+                      />
+                    ))}
+                  </div>
                 </div>
               )}
               {answers.q12_references.notes && (
@@ -298,55 +400,134 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
         <ReviewItem
           num={13}
           question="Have you finalised your wedding wardrobe? Share your outfit plans, colour preferences, and styling ideas. Knowing these details helps us plan your photography and films more thoughtfully."
-          answer={
-            <div>
-              {answers.weddingOutfits?.links && answers.weddingOutfits.links.length > 0 && (
-                <div className="text-sm text-[#1A1A1A] mb-1">
-                  Links: {answers.weddingOutfits.links.join(", ")}
+          answer={(() => {
+            const groupedWardrobe = getGroupedWardrobe(answers);
+            const hasAny =
+              groupedWardrobe.hasBrideContent ||
+              groupedWardrobe.hasGroomContent ||
+              Boolean(groupedWardrobe.legacyShared);
+
+            if (!hasAny) {
+              return <span>Skipped</span>;
+            }
+
+            const renderSide = (
+              label: string,
+              side: typeof groupedWardrobe.bride
+            ) => {
+              const hasSide =
+                Boolean(side.notes.trim()) ||
+                side.links.length > 0 ||
+                side.photos.length > 0;
+              if (!hasSide) {
+                return (
+                  <div className="p-3 rounded-xl border border-[#E8E8E8] bg-[#FAF8F5]">
+                    <div className="text-xs font-semibold text-[#8C7043] mb-0.5">
+                      {label}
+                    </div>
+                    <p className="text-xs text-[#7A756D]">Not added yet</p>
+                  </div>
+                );
+              }
+              return (
+                <div className="p-3 rounded-xl border border-[#E8E8E8] bg-[#FAF8F5] space-y-1.5">
+                  <div className="text-xs font-semibold text-[#1A1A1A]">
+                    {label}
+                  </div>
+                  {side.notes.trim() && (
+                    <p className="text-sm text-[#5F5F5F] whitespace-pre-wrap">
+                      {side.notes}
+                    </p>
+                  )}
+                  {side.links.length > 0 && (
+                    <div className="text-xs text-[#1A1A1A] break-all">
+                      Links: {side.links.join(", ")}
+                    </div>
+                  )}
+                  {side.photos.length > 0 && (
+                    <div className="space-y-1.5 pt-0.5">
+                      <div className="text-xs text-[#B08D57] font-medium">
+                        ✓ {side.photos.length}{" "}
+                        {side.photos.length === 1 ? "photo" : "photos"} attached
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        {side.photos.map((imgUrl, idx) => (
+                          <ReviewThumb
+                            key={`${imgUrl}_${idx}`}
+                            src={imgUrl}
+                            alt={`${label} reference ${idx + 1}`}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
-              {answers.weddingOutfits?.images && answers.weddingOutfits.images.length > 0 && (
-                <div className="text-sm text-[#B08D57] font-medium mb-1">
-                  ✓ {answers.weddingOutfits.images.length} outfit reference photos attached
-                </div>
-              )}
-              {answers.weddingOutfits?.notes && (
-                <div className="text-sm text-[#5F5F5F]">
-                  {answers.weddingOutfits.notes}
-                </div>
-              )}
-              {!answers.weddingOutfits?.links?.length &&
-                !answers.weddingOutfits?.images?.length &&
-                !answers.weddingOutfits?.notes && <span>Skipped</span>}
-            </div>
-          }
+              );
+            };
+
+            if (groupedWardrobe.legacyShared) {
+              return renderSide("Outfit Details", groupedWardrobe.legacyShared);
+            }
+
+            return (
+              <div className="space-y-2.5">
+                {renderSide("Bride's wardrobe", groupedWardrobe.bride)}
+                {renderSide("Groom's wardrobe", groupedWardrobe.groom)}
+              </div>
+            );
+          })()}
           onEdit={() => onEditQuestion(13)}
         />
         <ReviewItem
           num={14}
           question="Do you have a wedding decor mood board or any visual references for your celebration?"
-          answer={
-            <div>
-              {answers.decorMoodBoard?.links && answers.decorMoodBoard.links.length > 0 && (
-                <div className="text-sm text-[#1A1A1A] mb-1">
-                  Links: {answers.decorMoodBoard.links.join(", ")}
-                </div>
-              )}
-              {answers.decorMoodBoard?.images && answers.decorMoodBoard.images.length > 0 && (
-                <div className="text-sm text-[#B08D57] font-medium mb-1">
-                  ✓ {answers.decorMoodBoard.images.length} decor mood board images attached
-                </div>
-              )}
-              {answers.decorMoodBoard?.notes && (
-                <div className="text-sm text-[#5F5F5F]">
-                  {answers.decorMoodBoard.notes}
-                </div>
-              )}
-              {!answers.decorMoodBoard?.links?.length &&
-                !answers.decorMoodBoard?.images?.length &&
-                !answers.decorMoodBoard?.notes && <span>Skipped</span>}
-            </div>
-          }
+          answer={(() => {
+            const groupedDecor = getGroupedDecorEvents(answers);
+            if (!groupedDecor.hasAnyContent) {
+              return <span>Skipped</span>;
+            }
+            return (
+              <div className="space-y-3">
+                {groupedDecor.populatedEvents.map((ev) => (
+                  <div
+                    key={ev.id}
+                    className="p-3 rounded-xl bg-white border border-[#EFECE6] space-y-1.5"
+                  >
+                    <p className="text-xs font-semibold text-[#8C7043]">
+                      {ev.name}
+                    </p>
+                    {ev.links.length > 0 && (
+                      <div className="text-sm text-[#1A1A1A] break-all">
+                        Links: {ev.links.join(", ")}
+                      </div>
+                    )}
+                    {ev.images.length > 0 && (
+                      <div className="space-y-1.5 pt-0.5">
+                        <div className="text-xs text-[#B08D57] font-medium">
+                          ✓ {ev.images.length}{" "}
+                          {ev.images.length === 1 ? "image" : "images"} attached
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          {ev.images.slice(0, 6).map((img, i) => (
+                            <ReviewThumb
+                              key={`${img}_${i}`}
+                              src={img}
+                              alt={`${ev.name} decor reference ${i + 1}`}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {ev.notes && (
+                      <div className="text-sm text-[#5F5F5F] whitespace-pre-wrap">
+                        {ev.notes}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
           onEdit={() => onEditQuestion(14)}
         />
         <ReviewItem
@@ -506,9 +687,20 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
             <div>
               <p>{answers.q23_oneLastThing.notes || "Skipped"}</p>
               {answers.q23_oneLastThing.images?.length > 0 && (
-                <p className="text-sm text-[#B08D57] font-medium mt-1">
-                  ✓ {answers.q23_oneLastThing.images.length} photos attached
-                </p>
+                <div className="space-y-1.5 mt-1.5">
+                  <p className="text-sm text-[#B08D57] font-medium">
+                    ✓ {answers.q23_oneLastThing.images.length} photos attached
+                  </p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {answers.q23_oneLastThing.images.slice(0, 6).map((img, i) => (
+                      <ReviewThumb
+                        key={`${img}_${i}`}
+                        src={img}
+                        alt={`Additional photo ${i + 1}`}
+                      />
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
           }
@@ -634,6 +826,81 @@ const ReviewItem: React.FC<ReviewItemProps> = ({
         <Edit3 className="w-3.5 h-3.5 text-[#B08D57]" />
         <span>Edit</span>
       </button>
+    </div>
+  );
+};
+
+function isRenderablePhotoSrc(src: string | undefined | null): src is string {
+  return Boolean(
+    src &&
+      (src.startsWith("blob:") ||
+        src.startsWith("http://") ||
+        src.startsWith("https://") ||
+        src.startsWith("data:image/"))
+  );
+}
+
+const ReviewThumb: React.FC<{ src: string; alt: string }> = ({ src, alt }) => {
+  const uploadEntry = usePhotoUploadStatus(src);
+  const previewSrc = getPhotoPreviewSrc(src);
+
+  return (
+    <div className="relative w-full aspect-4/3 rounded-lg overflow-hidden border border-[#E8E8E8] bg-[#FAF8F5]">
+      {isRenderablePhotoSrc(previewSrc) ? (
+        <img src={previewSrc} alt={alt} className="w-full h-full object-cover" />
+      ) : (
+        <div className="w-full h-full flex flex-col items-center justify-center gap-0.5 text-[#7A756D] px-1">
+          <CloudCheck className="w-4 h-4 text-[#B08D57]" />
+          <span className="text-[10px] font-medium">Saved</span>
+        </div>
+      )}
+
+      {uploadEntry?.status === "uploading" && (
+        <div className="absolute inset-x-0 bottom-0 bg-[#1A1A1A]/75 text-white px-1.5 py-0.5 flex items-center justify-between text-[10px] tabular-nums">
+          <Loader2 className="w-2.5 h-2.5 animate-spin text-[#E5C687]" />
+          <span>{uploadEntry.progress}%</span>
+        </div>
+      )}
+
+      {uploadEntry?.status === "error" && (
+        <button
+          type="button"
+          onClick={() => {
+            void retryBackgroundPhotoUpload(src).catch(() => {});
+          }}
+          className="absolute inset-0 bg-[#1A1A1A]/70 text-white flex flex-col items-center justify-center gap-1 text-[10px] font-semibold cursor-pointer"
+        >
+          <RotateCcw className="w-3 h-3" />
+          <span>Retry</span>
+        </button>
+      )}
+    </div>
+  );
+};
+
+const ReviewAvatar: React.FC<{
+  src: string;
+  alt: string;
+  sizeClass?: string;
+}> = ({ src, alt, sizeClass = "w-8 h-8 rounded-full" }) => {
+  const previewSrc = getPhotoPreviewSrc(src);
+
+  if (isRenderablePhotoSrc(previewSrc)) {
+    return (
+      <img
+        src={previewSrc}
+        alt={alt}
+        className={`${sizeClass} object-cover border border-[#E8E8E8] shrink-0`}
+      />
+    );
+  }
+
+  return (
+    <div
+      className={`${sizeClass} bg-[#FAF8F5] border border-[#E8E8E8] flex items-center justify-center text-[#B08D57] shrink-0`}
+      title="Saved photo"
+    >
+      <User className="w-3.5 h-3.5" />
     </div>
   );
 };

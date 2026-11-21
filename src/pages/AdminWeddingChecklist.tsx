@@ -58,6 +58,7 @@ import {
 import {
   createCustomProductionEvent,
   deleteCustomProductionEvent,
+  getCachedSubmissions,
   getSubmissions,
   subscribeCustomProductionEvents,
   subscribeEventSubmissions,
@@ -68,6 +69,18 @@ import {
   updateSubmissionChecklist,
 } from "../lib/submissions.ts";
 import { STUDIO_LOGO_URL, STUDIO_NAME } from "../constants.ts";
+
+function pickInitialCoupleId(records: SubmissionRecord[] | null): string {
+  if (!records || records.length === 0) return "";
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const requestedId = params.get("coupleId");
+    const matching = requestedId ? records.find((r) => r.id === requestedId) : undefined;
+    return matching ? matching.id : records[0].id;
+  } catch {
+    return records[0].id;
+  }
+}
 
 interface AdminWeddingChecklistProps {
   onBack: () => void;
@@ -94,9 +107,14 @@ export const AdminWeddingChecklist: React.FC<AdminWeddingChecklistProps> = ({
   userEmail,
   userName,
 }) => {
-  const [submissions, setSubmissions] = useState<SubmissionRecord[]>([]);
-  const [selectedCoupleId, setSelectedCoupleId] = useState<string>("");
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const initialCached = useMemo(() => getCachedSubmissions(), []);
+  const [submissions, setSubmissions] = useState<SubmissionRecord[]>(
+    () => initialCached ?? []
+  );
+  const [selectedCoupleId, setSelectedCoupleId] = useState<string>(
+    () => pickInitialCoupleId(initialCached)
+  );
+  const [isLoading, setIsLoading] = useState<boolean>(() => !initialCached);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -148,24 +166,31 @@ export const AdminWeddingChecklist: React.FC<AdminWeddingChecklistProps> = ({
   const [fileDriveName, setFileDriveName] = useState<string>("");
   const [fileFormError, setFileFormError] = useState<string | null>(null);
 
-  // Load couples for the selector
+  // Load couples for the selector (0ms from cache + background SWR refresh)
   useEffect(() => {
     let isMounted = true;
     async function load() {
-      setIsLoading(true);
+      if (!getCachedSubmissions()) {
+        setIsLoading(true);
+      }
       setLoadError(null);
       try {
-        const records = await getSubmissions();
+        const records = await getSubmissions(false, (fresh) => {
+          if (!isMounted) return;
+          setSubmissions(fresh);
+          setSelectedCoupleId((prev) =>
+            prev && fresh.some((r) => r.id === prev) ? prev : pickInitialCoupleId(fresh)
+          );
+        });
         if (!isMounted) return;
         setSubmissions(records);
 
         if (records.length > 0) {
-          const params = new URLSearchParams(window.location.search);
-          const requestedId = params.get("coupleId");
-          const matching = requestedId
-            ? records.find((r) => r.id === requestedId)
-            : undefined;
-          setSelectedCoupleId(matching ? matching.id : records[0].id);
+          setSelectedCoupleId((prev) =>
+            prev && records.some((r) => r.id === prev)
+              ? prev
+              : pickInitialCoupleId(records)
+          );
         }
       } catch (err: any) {
         if (isMounted) {

@@ -169,9 +169,22 @@ export function synthesizeInterviewQuestions(
   const proposalText = (answers.q9_proposal?.story || "").toLowerCase();
   const isTripProposal = proposalText.includes("trip") || proposalText.includes("travel") || proposalText.includes("holiday") || proposalText.includes("mountain") || proposalText.includes("beach");
   
-  const hasGrandparents = (answers.q10_people?.familyMembers || []).some(
-    (m) => m.relationship.toLowerCase().includes("grand")
-  ) || (answers.q10_people?.treeNotes || "").toLowerCase().includes("grand");
+  const hasGrandparents =
+    (answers.q10_people?.familyMembers || []).some(
+      (m) =>
+        m.relationship.toLowerCase().includes("grand") ||
+        m.name.toLowerCase().includes("grand")
+    ) ||
+    [
+      answers.q10_people?.treeNotes || "",
+      answers.q10_people?.brideSide?.notes || "",
+      answers.q10_people?.groomSide?.notes || "",
+      ...(answers.q10_people?.brideSide?.photos || []).map((p) => p.caption || ""),
+      ...(answers.q10_people?.groomSide?.photos || []).map((p) => p.caption || ""),
+    ]
+      .join(" ")
+      .toLowerCase()
+      .includes("grand");
 
   const lines: string[] = [];
 

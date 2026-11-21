@@ -57,6 +57,29 @@ import {
   normalizeAdminEmail,
   isAllowlistedAdminEmail,
 } from "../lib/adminAllowlist.ts";
+import { getGroupedQ10People } from "./familyPeople.ts";
+import { getGroupedWardrobe } from "./wardrobe.ts";
+import {
+  MAX_DECOR_EVENTS,
+  addDecorEventToList,
+  createDefaultDecorEvents,
+  getGroupedDecorEvents,
+  removeDecorEventFromList,
+  renameDecorEventInList,
+} from "./decorEvents.ts";
+import {
+  MAX_PHOTO_UPLOAD_BYTES,
+  TOO_LARGE_PHOTO_ERROR,
+  isHeicPhotoFile,
+  validatePhotoFileBeforeCompression,
+} from "./imageCompressor.ts";
+import {
+  FIRESTORE_DOC_LIMIT_BYTES,
+  assertNoBase64Images,
+  estimateFirestoreRecordBytes,
+  findBase64ImagePaths,
+} from "./submissionSizeGuard.ts";
+import { synthesizeInterviewQuestions } from "./interviewQuestionsGenerator.ts";
 import type {
   ChecklistItemStatus,
   CustomProductionEvent,
@@ -573,7 +596,7 @@ test("synthesizeEditorialBrief includes all 27 questions across 6 chapters, summ
   assert.equal(brief.includes("Q28."), false);
 
   // Verify answered + unanswered behavior
-  assert.ok(brief.includes("Meenakshi — Grandmother (Priya's side) · Must capture"));
+  assert.ok(brief.includes("Bride's Side: Meenakshi — Grandmother · Must capture"));
   assert.ok(brief.includes("- Not provided"));
   assert.equal(isOutdatedEditorialBrief(brief), false);
 
@@ -1128,8 +1151,35 @@ test("mandatory step validation checks required partner pairs, optional couple p
   answers.q6_activities = { selected: [], other: "Late night drives" };
   answers.q7_loveMost = { partnerA: "Warmth", partnerB: "Calmness" };
 
-  // Q10 accepts familyMembers, treePhotoUrl, OR treeNotes
-  answers.q10_people = { familyMembers: [], treeNotes: "Close parents & grandparents" };
+  // Q10 requires at least one entry on BOTH Bride's Side and Groom's Side
+  answers.q10_people = {
+    familyMembers: [],
+    brideSide: {
+      photos: [{ id: "bp1", url: "https://example.com/bride-tree.jpg", caption: "Bride family tree" }],
+      notes: "",
+    },
+    groomSide: { photos: [], notes: "" },
+    treeNotes: "",
+  };
+  assert.equal(validateQuestionStep(10, answers).isComplete, false);
+
+  answers.q10_people = {
+    familyMembers: [],
+    brideSide: { photos: [], notes: "" },
+    groomSide: { photos: [], notes: "Groom's parents & sister" },
+    treeNotes: "",
+  };
+  assert.equal(validateQuestionStep(10, answers).isComplete, false);
+
+  answers.q10_people = {
+    familyMembers: [],
+    brideSide: {
+      photos: [{ id: "bp1", url: "https://example.com/bride-tree.jpg", caption: "Bride family tree" }],
+      notes: "",
+    },
+    groomSide: { photos: [], notes: "Groom's parents & sister" },
+    treeNotes: "",
+  };
   assert.equal(validateQuestionStep(10, answers).isComplete, true);
 
   // Q11 requires exact 3
@@ -1311,6 +1361,539 @@ test("admin allowlist authorizes rahulratna88@gmail.com, mywedding@oakswedding.c
   assert.equal(isAllowlistedAdminEmail(""), false);
   assert.equal(isAllowlistedAdminEmail(null), false);
 });
+
+test("Q10 helpers, brief summary, and cheat sheet group Bride's Side and Groom's Side with backward compatibility", () => {
+  const grouped = getGroupedQ10People({
+    familyMembers: [
+      {
+        id: "m1",
+        name: "Meera Nair",
+        relationship: "Mother",
+        side: "sideA",
+        mustCapture: true,
+        photoUrl: "https://example.com/meera.jpg",
+      },
+      { id: "m2", name: "Thomas", relationship: "Father", side: "sideB", mustCapture: false },
+      { id: "m3", name: "Bruno", relationship: "Dog", side: "both", mustCapture: false },
+    ],
+    brideSide: {
+      photos: [
+        { id: "p1", url: "https://example.com/bride-parents.jpg", caption: "Amma & Appa", mustCapture: true },
+      ],
+      notes: "Capture Amma welcoming guests",
+    },
+    groomSide: {
+      photos: [
+        { id: "p2", url: "https://example.com/groom-tree.jpg", caption: "Groom family chart", mustCapture: false },
+      ],
+      notes: "",
+    },
+    treePhotoUrl: "https://example.com/legacy-tree.jpg",
+    treeNotes: "Legacy note",
+  });
+
+  assert.equal(grouped.hasBrideEntry, true);
+  assert.equal(grouped.hasGroomEntry, true);
+  assert.equal(grouped.bride.photos.length, 1);
+  assert.equal(grouped.bride.members.length, 1);
+  assert.equal(grouped.bride.members[0].photoUrl, "https://example.com/meera.jpg");
+  assert.equal(grouped.groom.photos.length, 1);
+  assert.equal(grouped.groom.members.length, 1);
+  assert.equal(grouped.sharedMembers.length, 1);
+  assert.equal(grouped.totalPhotos, 4);
+
+  const vipOnlyAnswers = createBlankAnswers();
+  vipOnlyAnswers.q10_people = {
+    familyMembers: [
+      {
+        id: "v1",
+        name: "Mamooty",
+        relationship: "Uncle or Aunt",
+        side: "bride",
+        mustCapture: true,
+        photoUrl: "https://example.com/mamooty.jpg",
+      },
+      {
+        id: "v2",
+        name: "Joseph",
+        relationship: "Father",
+        side: "groom",
+        mustCapture: false,
+      },
+    ],
+    treeNotes: "",
+  };
+  assert.equal(validateQuestionStep(10, vipOnlyAnswers).isComplete, true);
+
+  const answers = createBlankAnswers();
+  answers.partner1 = "Anjali";
+  answers.partner2 = "Vikram";
+  answers.q10_people = {
+    familyMembers: [
+      { id: "m1", name: "Lakshmi", relationship: "Grandmother", side: "bride", mustCapture: true },
+      { id: "m2", name: "Raghav", relationship: "Brother", side: "groom", mustCapture: false },
+    ],
+    brideSide: {
+      photos: [{ id: "bp1", url: "https://example.com/b1.jpg", caption: "Maternal grandparents", mustCapture: true }],
+      notes: "Keep wheelchair seating accessible",
+    },
+    groomSide: {
+      photos: [{ id: "gp1", url: "https://example.com/g1.jpg", caption: "Groom parents", mustCapture: false }],
+      notes: "Dad arrives early",
+    },
+    treeNotes: "",
+  };
+
+  const summary = generateBriefSummary("OAKS WEDDING", answers);
+  assert.ok(summary.includes("[Bride's Side]"));
+  assert.ok(summary.includes("Photo 1: Maternal grandparents — [MUST CAPTURE]"));
+  assert.ok(summary.includes("Lakshmi (Grandmother) — [MUST CAPTURE]"));
+  assert.ok(summary.includes("[Groom's Side]"));
+  assert.ok(summary.includes("Photo 1: Groom parents"));
+  assert.ok(summary.includes("Raghav (Brother)"));
+
+  const sheet = synthesizeCheatSheet(answers, "OAKS WEDDING");
+  assert.ok(sheet.includes("Bride's Side:"));
+  assert.ok(sheet.includes("Groom's Side:"));
+  const parsedSheet = parseCheatSheetDocument(sheet, "Anjali", "Vikram");
+  assert.ok(parsedSheet.importantPeople.some((p) => p.side === "bride" && p.name === "Lakshmi"));
+  assert.ok(parsedSheet.importantPeople.some((p) => p.side === "groom" && p.name === "Raghav"));
+});
+
+test("Q13 wardrobe helpers, notes-only validation, brief summary, and editorial brief separate Bride and Groom wardrobes cleanly", () => {
+  const splitAnswers = createBlankAnswers();
+  splitAnswers.weddingOutfits = { links: [], images: [], notes: "" };
+  splitAnswers.wardrobe = {
+    bride: {
+      notes: "Ivory Kanjeevaram silk saree for ceremony, pastel lehenga for sangeet",
+      links: ["https://pinterest.com/bride-wardrobe"],
+      photos: ["https://example.com/bride-saree.jpg"],
+    },
+    groom: {
+      notes: "Off-white silk mundu & kurta for ceremony, tailored black bandhgala for reception",
+      links: ["https://pinterest.com/groom-wardrobe"],
+      photos: ["https://example.com/groom-bandhgala.jpg", "https://example.com/groom-kurta.jpg"],
+    },
+  };
+
+  const grouped = getGroupedWardrobe(splitAnswers);
+  assert.equal(grouped.hasBrideContent, true);
+  assert.equal(grouped.hasGroomContent, true);
+  assert.equal(grouped.hasBrideNotes, true);
+  assert.equal(grouped.hasGroomNotes, true);
+  assert.equal(grouped.hasAnyNotes, true);
+  assert.equal(grouped.legacyShared, undefined);
+  assert.deepEqual(grouped.bride.photos, ["https://example.com/bride-saree.jpg"]);
+  assert.deepEqual(grouped.groom.photos, [
+    "https://example.com/groom-bandhgala.jpg",
+    "https://example.com/groom-kurta.jpg",
+  ]);
+
+  // Validation: empty fails
+  const emptyWardrobe = createBlankAnswers();
+  assert.equal(validateQuestionStep(13, emptyWardrobe).isComplete, false);
+
+  // Validation: links and photos alone (without notes on either side) MUST fail
+  emptyWardrobe.wardrobe = {
+    bride: {
+      notes: "   ",
+      links: ["https://pinterest.com/bride"],
+      photos: ["https://example.com/b1.jpg"],
+    },
+    groom: {
+      notes: "",
+      links: ["https://pinterest.com/groom"],
+      photos: ["https://example.com/g1.jpg"],
+    },
+  };
+  assert.equal(validateQuestionStep(13, emptyWardrobe).isComplete, false);
+
+  // Validation: notes on Bride alone unlocks Continue
+  emptyWardrobe.wardrobe.bride.notes = "Ivory silk saree";
+  assert.equal(validateQuestionStep(13, emptyWardrobe).isComplete, true);
+
+  // Validation: notes on Groom alone unlocks Continue
+  emptyWardrobe.wardrobe.bride.notes = "";
+  emptyWardrobe.wardrobe.groom.notes = "Tailored black bandhgala";
+  assert.equal(validateQuestionStep(13, emptyWardrobe).isComplete, true);
+
+  // Legacy unsplit submission fallback preserves existing data without breaking validation
+  const legacyOnly = createBlankAnswers();
+  legacyOnly.weddingOutfits = {
+    notes: "Legacy ivory saree and dark suit",
+    links: ["https://pinterest.com/legacy"],
+    images: ["https://example.com/legacy.jpg"],
+  };
+  const legacyGrouped = getGroupedWardrobe(legacyOnly);
+  assert.ok(legacyGrouped.legacyShared);
+  assert.equal(legacyGrouped.hasAnyNotes, true);
+  assert.equal(validateQuestionStep(13, legacyOnly).isComplete, true);
+
+  // Brief summary and Editorial Brief both group into "Bride's wardrobe" and "Groom's wardrobe"
+  const summary = generateBriefSummary("OAKS WEDDING", splitAnswers);
+  assert.ok(summary.includes("[Bride's wardrobe]"));
+  assert.ok(summary.includes("Ivory Kanjeevaram silk saree"));
+  assert.ok(summary.includes("https://pinterest.com/bride-wardrobe"));
+  assert.ok(summary.includes("[Groom's wardrobe]"));
+  assert.ok(summary.includes("Off-white silk mundu & kurta"));
+  assert.ok(summary.includes("https://pinterest.com/groom-wardrobe"));
+
+  const editorial = synthesizeEditorialBrief(splitAnswers);
+  assert.ok(editorial.includes("Bride's wardrobe:"));
+  assert.ok(editorial.includes("Groom's wardrobe:"));
+});
+
+test("Q14 per-event decor helpers lock Wedding, allow renaming/removing Sangeet, enforce 8-event cap & uniqueness, validate any event, and preserve order in briefs", () => {
+  // Default events: Wedding first & locked, Sangeet second & editable
+  const defaults = createDefaultDecorEvents();
+  assert.equal(defaults.length, 2);
+  assert.equal(defaults[0].name, "Wedding");
+  assert.equal(defaults[0].isLocked, true);
+  assert.equal(defaults[1].name, "Sangeet");
+  assert.equal(defaults[1].isLocked, false);
+
+  // Wedding cannot be renamed or deleted
+  const weddingRenameAttempt = renameDecorEventInList(defaults, "wedding", "Ceremony");
+  assert.equal(weddingRenameAttempt.nextEvents[0].name, "Wedding");
+  const weddingDeleteAttempt = removeDecorEventFromList(defaults, "wedding");
+  assert.equal(weddingDeleteAttempt.length, 2);
+
+  // Attach content to Sangeet, then rename inline -> id & saved data stay attached
+  const withSangeetData = defaults.map((ev) =>
+    ev.id === "sangeet"
+      ? {
+          ...ev,
+          links: ["https://pinterest.com/sangeet-lights"],
+          images: ["https://example.com/sangeet.jpg"],
+          notes: "Mirrorball & warm amber spotlights",
+        }
+      : ev
+  );
+  const renamedSangeet = renameDecorEventInList(
+    withSangeetData,
+    "sangeet",
+    "Sangeet & Cocktail Night"
+  );
+  assert.equal(renamedSangeet.error, undefined);
+  assert.equal(renamedSangeet.nextEvents[1].id, "sangeet");
+  assert.equal(renamedSangeet.nextEvents[1].name, "Sangeet & Cocktail Night");
+  assert.equal(renamedSangeet.nextEvents[1].images.length, 1);
+  assert.equal(renamedSangeet.nextEvents[1].notes, "Mirrorball & warm amber spotlights");
+
+  // Duplicate event names rejected case-insensitively on both rename and add
+  const dupAdd = addDecorEventToList(renamedSangeet.nextEvents, "  wedding ");
+  assert.ok(dupAdd.error);
+  const dupRename = renameDecorEventInList(
+    renamedSangeet.nextEvents,
+    "sangeet",
+    "WEDDING"
+  );
+  assert.ok(dupRename.error);
+
+  // Add events up to MAX_DECOR_EVENTS (8), then reject the 9th
+  let list = renamedSangeet.nextEvents;
+  const extraNames = ["Haldi", "Mehendi", "Reception", "Engagement", "Welcome Dinner", "After Party"];
+  for (const name of extraNames) {
+    const res = addDecorEventToList(list, name);
+    assert.equal(res.error, undefined, `Should allow adding ${name}`);
+    assert.ok(res.addedEvent);
+    list = res.nextEvents;
+  }
+  assert.equal(list.length, MAX_DECOR_EVENTS);
+
+  const overCap = addDecorEventToList(list, "Brunch");
+  assert.ok(overCap.error);
+  assert.equal(overCap.nextEvents.length, MAX_DECOR_EVENTS);
+
+  // Removing Sangeet works cleanly while keeping Wedding
+  const afterRemove = removeDecorEventFromList(renamedSangeet.nextEvents, "sangeet");
+  assert.equal(afterRemove.length, 1);
+  assert.equal(afterRemove[0].id, "wedding");
+
+  // Validation: empty default events fail Q14; adding content to ONLY Sangeet passes
+  const blankQ14 = createBlankAnswers();
+  blankQ14.decorEvents = createDefaultDecorEvents();
+  assert.equal(validateQuestionStep(14, blankQ14).isComplete, false);
+
+  const sangeetOnlyAnswers = createBlankAnswers();
+  sangeetOnlyAnswers.decorEvents = [
+    ...createDefaultDecorEvents().slice(0, 1),
+    {
+      id: "sangeet",
+      name: "Sangeet",
+      isLocked: false,
+      links: [],
+      images: [],
+      notes: "Fairy lights canopy",
+    },
+  ];
+  assert.equal(validateQuestionStep(14, sangeetOnlyAnswers).isComplete, true);
+
+  // Legacy single decorMoodBoard fallback still passes validation & groups cleanly
+  const legacyDecorAnswers = createBlankAnswers();
+  legacyDecorAnswers.decorMoodBoard = {
+    links: ["https://pinterest.com/legacy-decor"],
+    images: [],
+    notes: "White jasmine & brass lamps",
+  };
+  assert.equal(validateQuestionStep(14, legacyDecorAnswers).isComplete, true);
+  const groupedLegacy = getGroupedDecorEvents(legacyDecorAnswers);
+  assert.equal(groupedLegacy.populatedEvents.length, 1);
+  assert.equal(groupedLegacy.populatedEvents[0].name, "Wedding");
+
+  // Brief summary and Editorial Brief preserve couple's event order
+  const orderedAnswers = createBlankAnswers();
+  orderedAnswers.decorEvents = [
+    {
+      id: "wedding",
+      name: "Wedding",
+      isLocked: true,
+      links: ["https://pinterest.com/mandap"],
+      images: ["https://example.com/mandap.jpg"],
+      notes: "Muted sage & ivory mandap",
+    },
+    {
+      id: "sangeet",
+      name: "Sangeet & Cocktail Night",
+      isLocked: false,
+      links: [],
+      images: [],
+      notes: "Moody candlelit tables",
+    },
+    {
+      id: "evt_haldi",
+      name: "Haldi",
+      isLocked: false,
+      links: ["https://pinterest.com/haldi"],
+      images: ["https://example.com/haldi.jpg"],
+      notes: "Marigold & sunlit courtyard",
+    },
+  ];
+
+  const summary = generateBriefSummary("OAKS WEDDING", orderedAnswers);
+  const idxWed = summary.indexOf("[Wedding]:");
+  const idxSang = summary.indexOf("[Sangeet & Cocktail Night]:");
+  const idxHaldi = summary.indexOf("[Haldi]:");
+  assert.ok(idxWed > 0 && idxSang > idxWed && idxHaldi > idxSang);
+  assert.ok(summary.includes("Muted sage & ivory mandap"));
+  assert.ok(summary.includes("https://pinterest.com/haldi"));
+
+  const editorial = synthesizeEditorialBrief(orderedAnswers);
+  const edWed = editorial.indexOf("Wedding links:");
+  const edSang = editorial.indexOf("Sangeet & Cocktail Night:");
+  const edHaldi = editorial.indexOf("Haldi links:");
+  assert.ok(edWed > 0 && edSang > edWed && edHaldi > edSang);
+});
+
+test("photo upload validator enforces 15 MB pre-compression limit, accepts JPEG/PNG/WebP/HEIC, and returns friendly oversized error", () => {
+  assert.equal(MAX_PHOTO_UPLOAD_BYTES, 15 * 1024 * 1024);
+
+  // Exact 15 MB boundary passes for JPEG, PNG, WebP, and HEIC (including empty browser MIME type)
+  assert.equal(
+    validatePhotoFileBeforeCompression({
+      size: 15 * 1024 * 1024,
+      type: "image/jpeg",
+      name: "portrait.jpg",
+    }).ok,
+    true
+  );
+  assert.equal(
+    validatePhotoFileBeforeCompression({
+      size: 8 * 1024 * 1024,
+      type: "image/png",
+      name: "sketch.png",
+    }).ok,
+    true
+  );
+  assert.equal(
+    validatePhotoFileBeforeCompression({
+      size: 6 * 1024 * 1024,
+      type: "image/webp",
+      name: "decor.webp",
+    }).ok,
+    true
+  );
+
+  // iPhone HEIC often reports empty MIME type in browsers
+  const heicFile = { size: 12 * 1024 * 1024, type: "", name: "IMG_4821.HEIC" };
+  assert.equal(isHeicPhotoFile(heicFile), true);
+  assert.equal(validatePhotoFileBeforeCompression(heicFile).ok, true);
+
+  // > 15 MB before compression fails with exact user-friendly error
+  const oversized = validatePhotoFileBeforeCompression({
+    size: 15 * 1024 * 1024 + 1,
+    type: "image/heic",
+    name: "RAW_HEIC.HEIC",
+  });
+  assert.equal(oversized.ok, false);
+  if (!oversized.ok) {
+    assert.equal(oversized.message, TOO_LARGE_PHOTO_ERROR);
+    assert.equal(
+      oversized.message,
+      "This photo is too large. Please choose a smaller one"
+    );
+  }
+
+  // Non-image files are rejected
+  assert.equal(
+    validatePhotoFileBeforeCompression({
+      size: 500_000,
+      type: "application/pdf",
+      name: "schedule.pdf",
+    }).ok,
+    false
+  );
+});
+
+test("submissionSizeGuard blocks inline base64 across every photo section and verifies heavy submission stays well under Firestore's 1 MB limit", () => {
+  const storagePath = (name: string) =>
+    `submissions/draft_1760000000000_ab12cd/1760000001000_9x8y7_${name}.jpg`;
+
+  const heavyAnswers: QuestionnaireAnswers = {
+    ...createBlankAnswers(),
+    partner1: "Ananya Krishnan",
+    partner2: "Siddharth Menon",
+    weddingDate: "2027-01-24",
+    phone: "+91 98765 43210",
+    email: "ananya.siddharth@example.com",
+    couplePhotoUrl: storagePath("couple_photo"),
+    q1_calls: { aCallsB: "Sid", bCallsA: "Anu" },
+    q2_workPassion: {
+      partnerA: "Architectural conservationist working across heritage courtyard homes in Kerala and Chennai, deeply drawn to tactile crafts, lime plaster, and quiet morning light.",
+      partnerB: "Documentary sound designer and vinyl collector who builds field recordings from monsoon rains and street markets.",
+    },
+    q3_firstMeet: "We met five years ago during a rainy architectural Biennale walk in Fort Kochi when we shared an umbrella waiting for a ferry and talked for four hours straight.",
+    q4_firstImpression: { partnerA: "Warm laugh and instant calm", partnerB: "Unfiltered curiosity and grace" },
+    q5_threeWords: ["Grounded", "Playful", "Intimate"],
+    q6_activities: { selected: ["Travelling", "Food and cafes", "Music and concerts"], other: "Analog film photography" },
+    q7_loveMost: { partnerA: "His patience and quiet loyalty", partnerB: "Her warmth with everyone around her" },
+    q8_funnyStory: "Missed the overnight train in Rajasthan and ended up celebrating on a rooftop dhaba with a brass band practicing next door.",
+    q9_proposal: { choice: "story", story: "Sunrise walk along Varkala cliffs with a hand-bound sketchbook of our five years together." },
+    q10_people: {
+      familyMembers: Array.from({ length: 16 }, (_, idx) => ({
+        id: `vip_${idx + 1}`,
+        name: `Family Member ${idx + 1}`,
+        relationship: idx % 2 === 0 ? "Grandparent" : "Sibling",
+        side: idx < 8 ? ("bride" as const) : ("groom" as const),
+        mustCapture: idx < 6,
+        photoUrl: storagePath(`vip_${idx + 1}`),
+      })),
+      brideSide: {
+        photos: Array.from({ length: 10 }, (_, idx) => ({
+          id: `bp_${idx + 1}`,
+          url: storagePath(`bride_tree_${idx + 1}`),
+          caption: `Bride family group photo ${idx + 1}`,
+          mustCapture: idx < 3,
+        })),
+        notes: "Maternal grandparents need gentle seating close to the mandap.",
+      },
+      groomSide: {
+        photos: Array.from({ length: 10 }, (_, idx) => ({
+          id: `gp_${idx + 1}`,
+          url: storagePath(`groom_tree_${idx + 1}`),
+          caption: `Groom family group photo ${idx + 1}`,
+          mustCapture: idx < 3,
+        })),
+        notes: "Groom's uncle arrives directly before the baraat.",
+      },
+      treeNotes: "",
+    },
+    q11_filmFeel: { selected: ["Natural and candid", "Warm and nostalgic", "Documentary"], other: "" },
+    q12_references: {
+      links: ["https://pinterest.com/oaks-ref-1", "https://vimeo.com/123456789"],
+      images: Array.from({ length: 6 }, (_, idx) => storagePath(`reference_${idx + 1}`)),
+      notes: "Natural skin tones, soft film grain, unhurried emotional pacing.",
+    },
+    wardrobe: {
+      bride: {
+        notes: "Ivory gold Kasavu Kanjeevaram silk saree for the morning ceremony; emerald velvet lehenga for sangeet.",
+        links: ["https://pinterest.com/bride-saree"],
+        photos: Array.from({ length: 6 }, (_, idx) => storagePath(`bride_outfit_${idx + 1}`)),
+      },
+      groom: {
+        notes: "Handloom off-white silk mundu and tailored Bandhgala with antique brass buttons.",
+        links: ["https://pinterest.com/groom-bandhgala"],
+        photos: Array.from({ length: 6 }, (_, idx) => storagePath(`groom_outfit_${idx + 1}`)),
+      },
+    },
+    decorEvents: [
+      { id: "wedding", name: "Wedding", isLocked: true, links: ["https://pinterest.com/wed"], images: Array.from({ length: 4 }, (_, i) => storagePath(`decor_wed_${i}`)), notes: "Jasmine and brass lamps." },
+      { id: "sangeet", name: "Sangeet", isLocked: false, links: ["https://pinterest.com/sang"], images: Array.from({ length: 4 }, (_, i) => storagePath(`decor_sang_${i}`)), notes: "Amber Edison bulbs and mirrorball." },
+      { id: "evt_haldi", name: "Haldi", isLocked: false, links: ["https://pinterest.com/haldi"], images: Array.from({ length: 3 }, (_, i) => storagePath(`decor_haldi_${i}`)), notes: "Marigold courtyard canopies." },
+      { id: "evt_rec", name: "Reception", isLocked: false, links: ["https://pinterest.com/rec"], images: Array.from({ length: 3 }, (_, i) => storagePath(`decor_rec_${i}`)), notes: "Candlelit long tables." },
+    ],
+    q13_tone: { selected: ["Romantic & Intimate", "Joyful & Energetic"], other: "" },
+    q14_moments: { selected: ["First look or first glance", "Family blessings", "Speeches and toasts"], other: "" },
+    q15_captureAvoid: { definitelyCapture: "Grandparents reactions, candid prepping laughter", pleaseAvoid: "Forced stiff poses" },
+    q16_nonNegotiables: "Clean wireless audio on ceremony mantras and evening toasts.",
+    q17_emotional: "Both of our fathers",
+    q18_cameraVersatility: "Pretty comfortable once we warm up",
+    choosingOaks: "Your documentary warmth and timeless colour palette.",
+    q20_guidanceComfort: "Gentle natural prompts",
+    q21_comfortTips: { selected: ["A moment alone as a couple"], notes: "Just give us 10 quiet minutes after the ceremony." },
+    q22_futureFeeling: "Deep warmth, gratitude, and our real voices.",
+    primaryContact: { role: "Bride", name: "Ananya Krishnan", phone: "+91 98765 43210" },
+    loveStoryNarrative: "We grew from studio friends into lifelong travel partners over rainy coffees, family dinners, and quiet Sunday afternoons.",
+    q23_oneLastThing: {
+      notes: "Our dog Pepper is joining portraits before dinner.",
+      images: Array.from({ length: 4 }, (_, idx) => storagePath(`last_${idx + 1}`)),
+    },
+  };
+
+  // Passes zero-base64 guard cleanly (73 Storage paths total, zero inline images)
+  assertNoBase64Images(heavyAnswers);
+
+  const fullRecordPayload = {
+    id: "sub_099_1760000009999",
+    sequenceNumber: 99,
+    displayId: "#099",
+    submittedAt: "2026-11-20T12:00:00.000Z",
+    status: "new" as const,
+    partner1: heavyAnswers.partner1,
+    partner2: heavyAnswers.partner2,
+    weddingDate: heavyAnswers.weddingDate || "",
+    phone: heavyAnswers.phone || "",
+    email: heavyAnswers.email || "",
+    answers: heavyAnswers,
+    coupleLetter: synthesizeCoupleLetter(heavyAnswers),
+    editorialBrief: synthesizeEditorialBrief(heavyAnswers),
+    interviewQuestions: synthesizeInterviewQuestions(heavyAnswers),
+    cheatSheet: synthesizeCheatSheet(heavyAnswers),
+    privateNotes: "",
+  };
+
+  const bytes = estimateFirestoreRecordBytes(fullRecordPayload);
+  console.log(
+    `[submissionSizeGuard] Full 73-photo submission payload size: ${bytes} bytes (${(
+      bytes / 1024
+    ).toFixed(2)} KB) vs Firestore limit ${FIRESTORE_DOC_LIMIT_BYTES} bytes`
+  );
+  assert.ok(bytes < 60 * 1024, `Expected payload < 60 KB, got ${bytes} bytes`);
+  assert.ok(bytes < FIRESTORE_DOC_LIMIT_BYTES * 0.06);
+
+  // Injecting base64 into ANY photo field must be caught immediately
+  const base64Checks: Array<(clone: QuestionnaireAnswers) => void> = [
+    (c) => { c.couplePhotoUrl = "data:image/jpeg;base64,AAA"; },
+    (c) => { c.q10_people.treePhotoUrl = "data:image/jpeg;base64,AAA"; },
+    (c) => { c.q10_people.familyMembers[0].photoUrl = "data:image/png;base64,AAA"; },
+    (c) => { c.q10_people.brideSide!.photos[0].url = "data:image/jpeg;base64,AAA"; },
+    (c) => { c.q10_people.groomSide!.photos[0].url = "data:image/jpeg;base64,AAA"; },
+    (c) => { c.q12_references.images[0] = "data:image/webp;base64,AAA"; },
+    (c) => { c.wardrobe!.bride.photos[0] = "data:image/jpeg;base64,AAA"; },
+    (c) => { c.wardrobe!.groom.photos[0] = "data:image/jpeg;base64,AAA"; },
+    (c) => { c.decorEvents![0].images[0] = "data:image/jpeg;base64,AAA"; },
+    (c) => { c.q23_oneLastThing.images[0] = "data:image/jpeg;base64,AAA"; },
+  ];
+
+  for (const mutate of base64Checks) {
+    const mutated: QuestionnaireAnswers = JSON.parse(JSON.stringify(heavyAnswers));
+    mutate(mutated);
+    assert.ok(findBase64ImagePaths(mutated).length > 0);
+    assert.throws(() => assertNoBase64Images(mutated), /Inline image data detected/i);
+  }
+});
+
+
 
 
 

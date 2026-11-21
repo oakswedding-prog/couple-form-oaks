@@ -4,6 +4,9 @@
  */
 
 import type { QuestionnaireAnswers } from "../types/questionnaire.ts";
+import { getGroupedQ10People } from "./familyPeople.ts";
+import { getGroupedWardrobe } from "./wardrobe.ts";
+import { getGroupedDecorEvents } from "./decorEvents.ts";
 
 /**
  * Generates a clean, elegant, human-readable brief text for the photography
@@ -87,40 +90,60 @@ export function generateBriefSummary(
   // CHAPTER 2
   lines.push(`CHAPTER 2: YOUR PEOPLE`);
   lines.push(subDivider);
-  lines.push(`10. Who are the most important people you want us to capture please give a family tree?`);
-  const members = answers.q10_people.familyMembers || [];
-  if (members.length === 0) {
+  lines.push(`10. Who are the most important people you want us to capture?`);
+  const groupedPeople = getGroupedQ10People(answers.q10_people);
+  const formatSideBlock = (
+    heading: string,
+    sideData: typeof groupedPeople.bride
+  ) => {
+    const hasSideContent =
+      sideData.photos.length > 0 ||
+      sideData.members.length > 0 ||
+      Boolean(sideData.notes.trim());
+    if (!hasSideContent) return;
+    lines.push(`   [${heading}]:`);
+    if (sideData.photos.length > 0) {
+      lines.push(`     • Uploaded photos / trees: ${sideData.photos.length}`);
+      sideData.photos.forEach((ph, idx) => {
+        const cap = ph.caption?.trim();
+        const star = ph.mustCapture ? " — [MUST CAPTURE]" : "";
+        if (cap) {
+          lines.push(`       - Photo ${idx + 1}: ${cap}${star}`);
+        } else if (ph.mustCapture) {
+          lines.push(`       - Photo ${idx + 1}${star}`);
+        }
+      });
+    }
+    sideData.members.forEach((m) => {
+      lines.push(`     • ${m.name} (${m.relationship})${m.mustCapture ? " — [MUST CAPTURE]" : ""}`);
+    });
+    if (sideData.notes.trim()) {
+      lines.push(`     • Notes: ${sideData.notes.trim()}`);
+    }
+  };
+
+  if (
+    !groupedPeople.hasBrideEntry &&
+    !groupedPeople.hasGroomEntry &&
+    groupedPeople.sharedMembers.length === 0
+  ) {
     lines.push(`   (No specific individual VIP cards entered)`);
   } else {
-    const sideA = members.filter((m) => m.side === "sideA");
-    const sideB = members.filter((m) => m.side === "sideB");
-    const both = members.filter((m) => m.side === "both");
-
-    if (sideA.length > 0) {
-      lines.push(`   [${p1}'s Side]:`);
-      sideA.forEach((m) => {
-        lines.push(`     • ${m.name} (${m.relationship})${m.mustCapture ? " — [MUST CAPTURE]" : ""}`);
-      });
-    }
-    if (sideB.length > 0) {
-      lines.push(`   [${p2}'s Side]:`);
-      sideB.forEach((m) => {
-        lines.push(`     • ${m.name} (${m.relationship})${m.mustCapture ? " — [MUST CAPTURE]" : ""}`);
-      });
-    }
-    if (both.length > 0) {
+    formatSideBlock("Bride's Side", groupedPeople.bride);
+    formatSideBlock("Groom's Side", groupedPeople.groom);
+    if (groupedPeople.sharedMembers.length > 0) {
       lines.push(`   [Both Sides / Mutual]:`);
-      both.forEach((m) => {
+      groupedPeople.sharedMembers.forEach((m) => {
         lines.push(`     • ${m.name} (${m.relationship})${m.mustCapture ? " — [MUST CAPTURE]" : ""}`);
       });
     }
   }
 
-  if (answers.q10_people.treePhotoUrl) {
+  if (groupedPeople.legacyTreePhotoUrl) {
     lines.push(`   • Family tree reference photo uploaded: Yes`);
   }
-  if (answers.q10_people.treeNotes) {
-    lines.push(`   • Written notes on family: ${answers.q10_people.treeNotes}`);
+  if (groupedPeople.legacyTreeNotes) {
+    lines.push(`   • Written notes on family: ${groupedPeople.legacyTreeNotes}`);
   }
   lines.push("");
 
@@ -158,32 +181,62 @@ export function generateBriefSummary(
   lines.push("");
 
   lines.push(`13. Have you finalised your wedding wardrobe? Share your outfit plans, colour preferences, and styling ideas. Knowing these details helps us plan your photography and films more thoughtfully.`);
-  if (answers.weddingOutfits?.notes) {
-    lines.push(`   • Wardrobe details: ${answers.weddingOutfits.notes}`);
-  }
-  if (answers.weddingOutfits?.links?.length) {
-    lines.push(`   • Links: ${answers.weddingOutfits.links.join(", ")}`);
-  }
-  if (answers.weddingOutfits?.images?.length) {
-    lines.push(`   • Outfit photos/references attached: ${answers.weddingOutfits.images.length} images`);
-  }
-  if (!answers.weddingOutfits?.notes && !answers.weddingOutfits?.links?.length && !answers.weddingOutfits?.images?.length) {
+  const groupedWardrobe = getGroupedWardrobe(answers);
+  const pushWardrobeSide = (
+    heading: string,
+    side: typeof groupedWardrobe.bride
+  ) => {
+    const hasSide =
+      Boolean(side.notes.trim()) ||
+      side.links.length > 0 ||
+      side.photos.length > 0;
+    if (!hasSide) return;
+    lines.push(`   [${heading}]:`);
+    if (side.notes.trim()) {
+      lines.push(`     • Wardrobe details: ${side.notes.trim()}`);
+    }
+    if (side.links.length > 0) {
+      lines.push(`     • Links: ${side.links.join(", ")}`);
+    }
+    if (side.photos.length > 0) {
+      lines.push(`     • Outfit photos/references attached: ${side.photos.length} images`);
+    }
+  };
+  if (groupedWardrobe.legacyShared) {
+    if (groupedWardrobe.legacyShared.notes.trim()) {
+      lines.push(`   • Wardrobe details: ${groupedWardrobe.legacyShared.notes.trim()}`);
+    }
+    if (groupedWardrobe.legacyShared.links.length > 0) {
+      lines.push(`   • Links: ${groupedWardrobe.legacyShared.links.join(", ")}`);
+    }
+    if (groupedWardrobe.legacyShared.photos.length > 0) {
+      lines.push(`   • Outfit photos/references attached: ${groupedWardrobe.legacyShared.photos.length} images`);
+    }
+  } else if (!groupedWardrobe.hasBrideContent && !groupedWardrobe.hasGroomContent) {
     lines.push(`   —`);
+  } else {
+    pushWardrobeSide("Bride's wardrobe", groupedWardrobe.bride);
+    pushWardrobeSide("Groom's wardrobe", groupedWardrobe.groom);
   }
   lines.push("");
 
   lines.push(`14. Do you have a wedding decor mood board or any visual references for your celebration?`);
-  if (answers.decorMoodBoard?.links?.length) {
-    lines.push(`   • Links: ${answers.decorMoodBoard.links.join(", ")}`);
-  }
-  if (answers.decorMoodBoard?.images?.length) {
-    lines.push(`   • Decor mood images attached: ${answers.decorMoodBoard.images.length} images`);
-  }
-  if (answers.decorMoodBoard?.notes) {
-    lines.push(`   • Decor & colour notes: ${answers.decorMoodBoard.notes}`);
-  }
-  if (!answers.decorMoodBoard?.links?.length && !answers.decorMoodBoard?.images?.length && !answers.decorMoodBoard?.notes) {
+  const groupedDecor = getGroupedDecorEvents(answers);
+  if (!groupedDecor.hasAnyContent) {
     lines.push(`   —`);
+  } else {
+    for (const ev of groupedDecor.populatedEvents) {
+      lines.push(`   [${ev.name}]:`);
+      if (ev.links.length > 0) {
+        lines.push(`     • Links: ${ev.links.join(", ")}`);
+      }
+      if (ev.images.length > 0) {
+        lines.push(`     • Decor mood images attached: ${ev.images.length} images`);
+      }
+      if (ev.notes.trim()) {
+        lines.push(`     • Decor & colour notes: ${ev.notes.trim()}`);
+      }
+    }
   }
   lines.push("");
 

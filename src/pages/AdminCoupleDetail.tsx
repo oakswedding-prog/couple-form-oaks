@@ -3,14 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   ArrowLeft,
   Printer,
   Download,
   FileText,
   FileCode,
-  ExternalLink,
   Star,
   CheckCircle2,
   X,
@@ -19,12 +18,14 @@ import {
   Mic,
   Trash2,
   AlertTriangle,
-  Users,
   HeartHandshake,
 } from "lucide-react";
 import { SubmissionRecord, SubmissionStatus } from "../types/questionnaire.ts";
 import {
-  getSubmissionById,
+  getCachedSubmissionById,
+  getSubmissionRecordFast,
+  hasUnresolvedMediaPaths,
+  resolveSubmissionMedia,
   updateSubmissionStatus,
   updateSubmissionNotes,
   updateSubmissionEditorialBrief,
@@ -39,6 +40,9 @@ import { CoupleInterviewView } from "../components/CoupleInterviewView.tsx";
 import { CoupleLetterView } from "../components/CoupleLetterView.tsx";
 import { synthesizeCoupleLetter } from "../utils/coupleLetterGenerator.ts";
 import { exportToPdf, exportToDocx } from "../utils/exportBrief.ts";
+import { getGroupedQ10People } from "../utils/familyPeople.ts";
+import { getGroupedWardrobe } from "../utils/wardrobe.ts";
+import { getGroupedDecorEvents } from "../utils/decorEvents.ts";
 import {
   LightboxModal,
   LightboxImage,
@@ -56,20 +60,53 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
   submissionId,
   onBack,
 }) => {
-  const [submission, setSubmission] = useState<SubmissionRecord | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  type DetailTab = "letter" | "brief" | "cheatsheet" | "interview" | "full" | "all";
+  const initialCached = useMemo(
+    () => getCachedSubmissionById(submissionId),
+    [submissionId]
+  );
+
+  const [submission, setSubmission] = useState<SubmissionRecord | null>(
+    () => initialCached
+  );
+  const [isLoading, setIsLoading] = useState<boolean>(() => !initialCached);
   const [error, setError] = useState<string | null>(null);
 
   // Private notes autosave state
-  const [notes, setNotes] = useState<string>("");
+  const [notes, setNotes] = useState<string>(() => initialCached?.privateNotes || "");
   const [notesSaveStatus, setNotesSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const notesDebounceRef = useRef<any>(null);
 
   // Download menu
   const [isDownloadOpen, setIsDownloadOpen] = useState<boolean>(false);
 
-  // Active view tab: "letter" | "brief" | "cheatsheet" | "interview" | "full" | "all"
-  const [activeTab, setActiveTab] = useState<"letter" | "brief" | "cheatsheet" | "interview" | "full" | "all">("letter");
+  // Active view tab & visited tab cache so switching back/forth is 0ms
+  const [activeTab, setActiveTab] = useState<DetailTab>("letter");
+  const [visitedTabs, setVisitedTabs] = useState<Set<DetailTab>>(
+    () => new Set(["letter"])
+  );
+
+  const selectTab = (tab: DetailTab) => {
+    setActiveTab(tab);
+    setVisitedTabs((prev) => {
+      if (tab === "all") {
+        if (
+          prev.has("letter") &&
+          prev.has("brief") &&
+          prev.has("interview") &&
+          prev.has("cheatsheet") &&
+          prev.has("full")
+        ) {
+          return prev;
+        }
+        return new Set(["letter", "brief", "interview", "cheatsheet", "full"]);
+      }
+      if (prev.has(tab)) return prev;
+      const next = new Set(prev);
+      next.add(tab);
+      return next;
+    });
+  };
 
   // Multi-image Lightbox modal state
   const [lightboxImages, setLightboxImages] = useState<LightboxImage[]>([]);
@@ -87,28 +124,51 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // Load submission on mount
+  // Load submission fast without blocking UI on Firebase Storage getDownloadURL calls
   useEffect(() => {
     let isMounted = true;
-    async function loadData() {
+    const cached = getCachedSubmissionById(submissionId);
+    setActiveTab("letter");
+    setVisitedTabs(new Set(["letter"]));
+
+    if (cached) {
+      setSubmission(cached);
+      setNotes(cached.privateNotes || "");
+      setIsLoading(false);
+    } else {
       setIsLoading(true);
-      setError(null);
+    }
+    setError(null);
+
+    async function loadData() {
       try {
-        const record = await getSubmissionById(submissionId);
-        if (isMounted) {
-          if (record) {
-            setSubmission(record);
-            setNotes(record.privateNotes || "");
-          } else {
-            setError("Submission not found.");
-          }
+        const raw = await getSubmissionRecordFast(submissionId);
+        if (!isMounted) return;
+        if (!raw) {
+          setError("Submission not found.");
+          setIsLoading(false);
+          return;
+        }
+        setSubmission(raw);
+        setNotes(raw.privateNotes || "");
+        setIsLoading(false);
+
+        if (hasUnresolvedMediaPaths(raw)) {
+          resolveSubmissionMedia(raw)
+            .then((resolved) => {
+              if (isMounted && resolved) {
+                setSubmission((prev) =>
+                  prev && prev.id === resolved.id ? { ...resolved, status: prev.status, privateNotes: prev.privateNotes } : resolved
+                );
+              }
+            })
+            .catch(() => {});
         }
       } catch (err: any) {
         if (isMounted) {
           setError(err?.message || "Failed to load submission.");
+          setIsLoading(false);
         }
-      } finally {
-        if (isMounted) setIsLoading(false);
       }
     }
     loadData();
@@ -205,6 +265,19 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
     }
   };
 
+  const groupedQ10 = useMemo(
+    () => (submission?.answers ? getGroupedQ10People(submission.answers.q10_people) : null),
+    [submission?.answers]
+  );
+  const groupedWardrobe = useMemo(
+    () => (submission?.answers ? getGroupedWardrobe(submission.answers) : null),
+    [submission?.answers]
+  );
+  const groupedDecor = useMemo(
+    () => (submission?.answers ? getGroupedDecorEvents(submission.answers) : null),
+    [submission?.answers]
+  );
+
   if (isLoading) {
     return (
       <div className="min-h-[100dvh] bg-[#FAF8F5] text-[#1A1A1A] safe-bottom pb-16 animate-pulse">
@@ -257,7 +330,6 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
   const ans = submission.answers;
   const p1 = submission.partner1 || "Partner 1";
   const p2 = submission.partner2 || "Partner 2";
-  const familyMembers = ans.q10_people?.familyMembers || [];
 
   return (
     <div className="min-h-[100dvh] bg-[#FAF8F5] text-[#1A1A1A] safe-bottom pb-16">
@@ -468,7 +540,7 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
         <div className="flex items-center gap-2 border-b border-[#E5DDD2] pb-3 print:hidden overflow-x-auto scrollbar-none">
           <button
             type="button"
-            onClick={() => setActiveTab("letter")}
+            onClick={() => selectTab("letter")}
             className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-medium transition-all cursor-pointer whitespace-nowrap ${
               activeTab === "letter"
                 ? "bg-[#1A1A1A] text-white shadow-xs"
@@ -481,7 +553,7 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
 
           <button
             type="button"
-            onClick={() => setActiveTab("brief")}
+            onClick={() => selectTab("brief")}
             className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-medium transition-all cursor-pointer whitespace-nowrap ${
               activeTab === "brief"
                 ? "bg-[#1A1A1A] text-white shadow-xs"
@@ -494,7 +566,7 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
 
           <button
             type="button"
-            onClick={() => setActiveTab("interview")}
+            onClick={() => selectTab("interview")}
             className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-medium transition-all cursor-pointer whitespace-nowrap ${
               activeTab === "interview"
                 ? "bg-[#1A1A1A] text-white shadow-xs"
@@ -507,7 +579,7 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
 
           <button
             type="button"
-            onClick={() => setActiveTab("cheatsheet")}
+            onClick={() => selectTab("cheatsheet")}
             className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-medium transition-all cursor-pointer whitespace-nowrap ${
               activeTab === "cheatsheet"
                 ? "bg-[#1A1A1A] text-white shadow-xs"
@@ -520,7 +592,7 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
 
           <button
             type="button"
-            onClick={() => setActiveTab("full")}
+            onClick={() => selectTab("full")}
             className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-medium transition-all cursor-pointer whitespace-nowrap ${
               activeTab === "full"
                 ? "bg-[#1A1A1A] text-white shadow-xs"
@@ -533,7 +605,7 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
 
           <button
             type="button"
-            onClick={() => setActiveTab("all")}
+            onClick={() => selectTab("all")}
             className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer whitespace-nowrap ml-auto ${
               activeTab === "all"
                 ? "bg-[#F2ECE4] text-[#1A1A1A] font-semibold"
@@ -545,8 +617,14 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
         </div>
 
         {/* 0. THE COUPLE LETTER — Our Understanding of Your Wedding */}
-        {(activeTab === "letter" || activeTab === "all") && (
-          <section className="space-y-4">
+        {(visitedTabs.has("letter") || activeTab === "letter" || activeTab === "all") && (
+          <section
+            className={
+              activeTab === "letter" || activeTab === "all"
+                ? "space-y-4"
+                : "hidden print:hidden"
+            }
+          >
             <CoupleLetterView
               letter={submission.coupleLetter || synthesizeCoupleLetter(submission.answers)}
               answers={submission.answers}
@@ -559,8 +637,14 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
         )}
 
         {/* 1. EDITORIAL CREATIVE BRIEF */}
-        {(activeTab === "brief" || activeTab === "all") && (
-          <section className="space-y-4">
+        {(visitedTabs.has("brief") || activeTab === "brief" || activeTab === "all") && (
+          <section
+            className={
+              activeTab === "brief" || activeTab === "all"
+                ? "space-y-4"
+                : "hidden print:hidden"
+            }
+          >
             <EditorialBriefView
               brief={submission.editorialBrief}
               answers={submission.answers}
@@ -573,8 +657,14 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
         )}
 
         {/* 2. COUPLE INTERVIEW & TESTIMONIAL QUESTIONS (11 QUESTIONS) */}
-        {(activeTab === "interview" || activeTab === "all") && (
-          <section className="space-y-4">
+        {(visitedTabs.has("interview") || activeTab === "interview" || activeTab === "all") && (
+          <section
+            className={
+              activeTab === "interview" || activeTab === "all"
+                ? "space-y-4"
+                : "hidden print:hidden"
+            }
+          >
             <CoupleInterviewView
               questionsText={submission.interviewQuestions}
               answers={submission.answers}
@@ -586,8 +676,14 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
         )}
 
         {/* 2. SHOOT DAY CHEAT SHEET */}
-        {(activeTab === "cheatsheet" || activeTab === "all") && (
-          <section className="space-y-3">
+        {(visitedTabs.has("cheatsheet") || activeTab === "cheatsheet" || activeTab === "all") && (
+          <section
+            className={
+              activeTab === "cheatsheet" || activeTab === "all"
+                ? "space-y-3"
+                : "hidden print:hidden"
+            }
+          >
             <div className="flex items-center justify-between print:hidden">
               <h2 className="font-cormorant text-2xl font-semibold text-[#1A1A1A] flex items-center gap-2">
                 <span>Shoot Day Cheat Sheet</span>
@@ -643,8 +739,14 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
         </section>
 
         {/* 3. FULL ANSWERS GROUPED BY CHAPTER */}
-        {(activeTab === "full" || activeTab === "all") && (
-          <section className="space-y-8 print:hidden">
+        {(visitedTabs.has("full") || activeTab === "full" || activeTab === "all") && (
+          <section
+            className={
+              activeTab === "full" || activeTab === "all"
+                ? "space-y-8 print:hidden"
+                : "hidden print:hidden"
+            }
+          >
             <div className="border-b border-[#E5DDD2] pb-3">
             <h2 className="font-cormorant text-3xl font-semibold text-[#1A1A1A]">
               Full Questionnaire Responses
@@ -866,140 +968,233 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
           >
             <AnswerBlock
               num={10}
-              question="Who are the most important people you want us to capture please give a family tree?"
-              content={
-                <div className="space-y-5">
-                  {familyMembers.length > 0 ? (
-                    <div className="space-y-2.5">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold text-[#4A453E] flex items-center gap-1.5">
-                          <Users className="w-3.5 h-3.5 text-[#8C7043]" />
-                          <span>VIP Family Members &amp; Friends</span>
+              question="Who are the most important people you want us to capture?"
+              content={(() => {
+                const grouped = groupedQ10!;
+                const renderAdminSideBlock = (
+                  sideLabel: string,
+                  sideData: typeof grouped.bride
+                ) => {
+                  const hasContent =
+                    sideData.photos.length > 0 ||
+                    sideData.members.length > 0 ||
+                    Boolean(sideData.notes.trim());
+
+                  const sideLightboxImages: LightboxImage[] = [
+                    ...sideData.photos.map((ph, idx) => ({
+                      url: ph.url,
+                      title: ph.caption?.trim() || `${sideLabel} — Photo ${idx + 1}`,
+                      subtitle: `${sideLabel}${ph.mustCapture ? " · ★ Must capture" : ""}`,
+                    })),
+                    ...sideData.members
+                      .filter((m) => Boolean(m.photoUrl))
+                      .map((m) => ({
+                        url: m.photoUrl!,
+                        title: m.name,
+                        subtitle: `${m.relationship} · ${sideLabel}${
+                          m.mustCapture ? " · ★ Must capture" : ""
+                        }`,
+                      })),
+                  ];
+
+                  return (
+                    <div className="bg-[#FAF8F5] border border-[#E8DFD3] rounded-2xl p-4 sm:p-5 space-y-4">
+                      <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-[#E8DFD3]">
+                        <span className="font-cormorant text-xl font-semibold text-[#1A1A1A]">
+                          {sideLabel}
                         </span>
-                        <span className="text-[11px] font-semibold text-[#8C7043] bg-[#FAF7F2] px-2 py-0.5 rounded-full border border-[#E8DFD3]">
-                          {familyMembers.length} {familyMembers.length === 1 ? "person" : "people"}
+                        <span className="text-xs text-[#7A756D] tabular-nums">
+                          {[
+                            sideData.photos.length > 0
+                              ? `${sideData.photos.length} ${
+                                  sideData.photos.length === 1 ? "photo" : "photos"
+                                }`
+                              : null,
+                            sideData.members.length > 0
+                              ? `${sideData.members.length} VIP`
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ") || "No entries"}
                         </span>
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                        {familyMembers.map((m, mIdx) => (
-                          <div
-                            key={m.id || mIdx}
-                            className={`p-3 rounded-xl border text-sm flex gap-3 items-center transition-all ${
-                              m.mustCapture
-                                ? "bg-[#FFFDF7] border-[#D4AF37] ring-1 ring-[#D4AF37]/30 shadow-2xs"
-                                : "bg-[#FAF8F5] border-[#E8DFD3]"
-                            }`}
-                          >
-                            {/* Member Photo or Initial Avatar */}
-                            {m.photoUrl ? (
-                              <SafeImageThumbnail
-                                src={m.photoUrl}
-                                alt={m.name}
-                                onClick={() => {
-                                  const memberImages: LightboxImage[] = familyMembers
-                                    .filter((mem) => Boolean(mem.photoUrl))
-                                    .map((mem) => ({
-                                      url: mem.photoUrl!,
-                                      title: mem.name,
-                                      subtitle: `${mem.relationship} · ${
-                                        mem.side === "sideA"
-                                          ? `${p1}'s side`
-                                          : mem.side === "sideB"
-                                          ? `${p2}'s side`
-                                          : "Both sides"
-                                      }${mem.mustCapture ? " (★ Must Capture)" : ""}`,
-                                    }));
-                                  const targetIdx = memberImages.findIndex(
-                                    (item) => item.url === m.photoUrl
-                                  );
-                                  openLightbox(memberImages, targetIdx >= 0 ? targetIdx : 0);
-                                }}
-                                className="w-14 h-14 shrink-0 rounded-lg"
-                              />
-                            ) : (
-                              <div className="w-14 h-14 shrink-0 rounded-lg bg-[#F0EBE1] border border-[#E8DFD3] flex items-center justify-center font-cormorant font-semibold text-lg text-[#8C7043]">
-                                {m.name ? m.name.charAt(0).toUpperCase() : "?"}
-                              </div>
-                            )}
-
-                            <div className="min-w-0 flex-1 space-y-0.5">
-                              <div className="flex items-center justify-between gap-1">
-                                <span className="font-semibold text-[#1A1A1A] truncate text-sm">
-                                  {m.name}
-                                </span>
-                              </div>
-                              <div className="text-xs text-[#5F5F5F] truncate">
-                                {m.relationship}
-                              </div>
-                              <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-                                <span className="text-[10px] text-[#7A756D] bg-white px-1.5 py-0.5 rounded border border-[#E8DFD3]">
-                                  {m.side === "sideA"
-                                    ? `${p1}'s side`
-                                    : m.side === "sideB"
-                                    ? `${p2}'s side`
-                                    : "Both"}
-                                </span>
-                                {m.mustCapture && (
-                                  <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-[#8C7043] bg-[#FAF7F2] px-1.5 py-0.5 rounded border border-[#E8DFD3]">
-                                    <Star className="w-2.5 h-2.5 fill-[#8C7043]" />
-                                    Must capture
-                                  </span>
-                                )}
+                      {!hasContent ? (
+                        <NotAnswered text={`No ${sideLabel.toLowerCase()} details provided.`} />
+                      ) : (
+                        <div className="space-y-4">
+                          {/* Uploaded Family Tree / Important People Photos */}
+                          {sideData.photos.length > 0 && (
+                            <div className="space-y-2">
+                              <span className="text-xs font-medium text-[#5F5F5F] block">
+                                Family tree &amp; VIP photos ({sideData.photos.length})
+                              </span>
+                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                                {sideData.photos.map((ph, pIdx) => (
+                                  <div
+                                    key={ph.id || pIdx}
+                                    className="bg-white border border-[#E8DFD3] rounded-xl overflow-hidden flex flex-col"
+                                  >
+                                    <SafeImageThumbnail
+                                      src={ph.url}
+                                      alt={ph.caption?.trim() || `${sideLabel} photo ${pIdx + 1}`}
+                                      onClick={() => {
+                                        const targetIdx = sideLightboxImages.findIndex(
+                                          (item) => item.url === ph.url
+                                        );
+                                        openLightbox(
+                                          sideLightboxImages,
+                                          targetIdx >= 0 ? targetIdx : 0
+                                        );
+                                      }}
+                                      className="aspect-4/3 w-full"
+                                    />
+                                    {(ph.caption?.trim() || ph.mustCapture) && (
+                                      <div className="px-2.5 py-2 border-t border-[#E8DFD3]/70 space-y-0.5">
+                                        {ph.caption?.trim() && (
+                                          <p className="text-xs font-medium text-[#1A1A1A] truncate">
+                                            {ph.caption}
+                                          </p>
+                                        )}
+                                        {ph.mustCapture && (
+                                          <p className="text-[11px] font-medium text-[#8C7043] inline-flex items-center gap-1">
+                                            <Star className="w-3 h-3 fill-[#8C7043]" />
+                                            <span>Must capture</span>
+                                          </p>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
                               </div>
                             </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    <NotAnswered text="No individual VIP family members listed." />
-                  )}
+                          )}
 
-                  {/* Family Tree Sketch Preview */}
-                  <div className="space-y-2 pt-2 border-t border-[#E8DFD3]/60">
-                    <span className="text-xs font-semibold text-[#4A453E] block">
-                      Uploaded Family Tree / Sketch:
-                    </span>
-                    {ans.q10_people?.treePhotoUrl ? (
-                      <div className="bg-[#FAF8F5] p-3 rounded-xl border border-[#E8DFD3] inline-block">
-                        <SafeImageThumbnail
-                          src={ans.q10_people.treePhotoUrl}
-                          alt="Uploaded Family Tree Sketch"
-                          onClick={() =>
-                            openLightbox([
-                              {
-                                url: ans.q10_people!.treePhotoUrl!,
-                                title: "Family Tree Sketch",
-                                subtitle: `Provided by ${p1} & ${p2}`,
-                              },
-                            ])
-                          }
-                          className="max-h-60 w-auto min-w-[200px]"
-                        />
-                        <div className="mt-2 flex items-center justify-between text-[11px] text-[#7A756D]">
-                          <span>Click sketch to view full screen</span>
-                          <span className="font-semibold text-[#8C7043]">1 image</span>
+                          {/* Named VIP Members */}
+                          {sideData.members.length > 0 && (
+                            <div className="space-y-2">
+                              <span className="text-xs font-medium text-[#5F5F5F] block">
+                                Listed VIPs ({sideData.members.length})
+                              </span>
+                              <div className="space-y-2">
+                                {sideData.members.map((m, mIdx) => (
+                                  <div
+                                    key={m.id || mIdx}
+                                    className="p-2.5 rounded-xl border border-[#E8DFD3] bg-white flex gap-3 items-center"
+                                  >
+                                    {m.photoUrl ? (
+                                      <SafeImageThumbnail
+                                        src={m.photoUrl}
+                                        alt={m.name}
+                                        onClick={() => {
+                                          const targetIdx = sideLightboxImages.findIndex(
+                                            (item) => item.url === m.photoUrl
+                                          );
+                                          openLightbox(
+                                            sideLightboxImages,
+                                            targetIdx >= 0 ? targetIdx : 0
+                                          );
+                                        }}
+                                        className="w-12 h-12 shrink-0 rounded-lg"
+                                      />
+                                    ) : (
+                                      <div className="w-12 h-12 shrink-0 rounded-lg bg-[#FAF8F5] border border-[#E8DFD3] flex items-center justify-center font-cormorant font-semibold text-base text-[#8C7043]">
+                                        {m.name ? m.name.charAt(0).toUpperCase() : "?"}
+                                      </div>
+                                    )}
+                                    <div className="min-w-0 flex-1">
+                                      <div className="font-semibold text-[#1A1A1A] truncate text-sm">
+                                        {m.name}
+                                      </div>
+                                      <div className="text-xs text-[#5F5F5F] flex items-center gap-1.5 flex-wrap">
+                                        <span>{m.relationship}</span>
+                                        {m.mustCapture && (
+                                          <>
+                                            <span aria-hidden="true">·</span>
+                                            <span className="text-[#8C7043] font-medium">
+                                              ★ Must capture
+                                            </span>
+                                          </>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Side Notes */}
+                          {sideData.notes.trim() && (
+                            <div className="bg-white p-3 rounded-xl border border-[#E8DFD3] text-sm">
+                              <span className="text-xs text-[#7A756D] font-medium block mb-1">
+                                {sideLabel} Notes
+                              </span>
+                              <p className="text-[#1A1A1A] leading-relaxed">{sideData.notes}</p>
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    ) : (
-                      <div className="p-3.5 rounded-xl border border-[#E8DFD3] bg-[#FAF8F5] text-xs text-[#7A756D] italic">
-                        No family tree sketch uploaded.
+                      )}
+                    </div>
+                  );
+                };
+
+                return (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                      {renderAdminSideBlock("Bride's Side", grouped.bride)}
+                      {renderAdminSideBlock("Groom's Side", grouped.groom)}
+                    </div>
+
+                    {/* Legacy Shared / Tree Sketch fallback for older submissions */}
+                    {(grouped.sharedMembers.length > 0 ||
+                      grouped.legacyTreePhotoUrl ||
+                      grouped.legacyTreeNotes) && (
+                      <div className="bg-[#FAF8F5] p-4 rounded-xl border border-[#E8DFD3] space-y-3">
+                        <span className="text-xs font-semibold text-[#4A453E] block">
+                          Shared / Legacy Family Details
+                        </span>
+                        {grouped.sharedMembers.length > 0 && (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {grouped.sharedMembers.map((m, idx) => (
+                              <div
+                                key={m.id || idx}
+                                className="p-2.5 bg-white rounded-xl border border-[#E8DFD3] text-xs"
+                              >
+                                <span className="font-semibold text-[#1A1A1A]">{m.name}</span>{" "}
+                                <span className="text-[#5F5F5F]">({m.relationship})</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {grouped.legacyTreePhotoUrl && (
+                          <div className="inline-block">
+                            <SafeImageThumbnail
+                              src={grouped.legacyTreePhotoUrl}
+                              alt="Uploaded Family Tree Sketch"
+                              onClick={() =>
+                                openLightbox([
+                                  {
+                                    url: grouped.legacyTreePhotoUrl!,
+                                    title: "Family Tree Sketch",
+                                    subtitle: `Provided by ${p1} & ${p2}`,
+                                  },
+                                ])
+                              }
+                              className="max-h-52 w-auto min-w-[180px]"
+                            />
+                          </div>
+                        )}
+                        {grouped.legacyTreeNotes && (
+                          <p className="text-sm text-[#1A1A1A] leading-relaxed">
+                            {grouped.legacyTreeNotes}
+                          </p>
+                        )}
                       </div>
                     )}
                   </div>
-
-                  {/* Family Dynamics & Tree Notes */}
-                  {ans.q10_people?.treeNotes && (
-                    <div className="bg-[#FAF8F5] p-3 rounded-xl border border-[#E8DFD3] text-sm">
-                      <span className="text-xs text-[#7A756D] font-medium block mb-1">
-                        Family Dynamics &amp; Tree Notes:
-                      </span>
-                      <p className="text-[#1A1A1A] leading-relaxed">{ans.q10_people.treeNotes}</p>
-                    </div>
-                  )}
-                </div>
-              }
+                );
+              })()}
             />
           </ChapterSection>
 
@@ -1074,72 +1269,166 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
             <AnswerBlock
               num={13}
               question="Have you finalised your wedding wardrobe? Share your outfit plans, colour preferences, and styling ideas. Knowing these details helps us plan your photography and films more thoughtfully."
-              content={
-                <div className="space-y-4">
-                  {ans.weddingOutfits?.notes ? (
-                    <TextAnswer text={ans.weddingOutfits.notes} />
-                  ) : (!ans.weddingOutfits?.links?.length && !ans.weddingOutfits?.images?.length) ? (
-                    <NotAnswered />
-                  ) : null}
+              content={(() => {
+                const groupedWardrobeData = groupedWardrobe!;
+                const renderWardrobeSide = (
+                  sideHeading: string,
+                  sideData: typeof groupedWardrobeData.bride
+                ) => {
+                  const hasSide =
+                    Boolean(sideData.notes.trim()) ||
+                    sideData.links.length > 0 ||
+                    sideData.photos.length > 0;
 
-                  {ans.weddingOutfits?.links && ans.weddingOutfits.links.length > 0 && (
-                    <ReferenceLinksList links={ans.weddingOutfits.links} />
-                  )}
+                  return (
+                    <div className="bg-[#FAF8F5] border border-[#E8DFD3] rounded-2xl p-4 sm:p-5 space-y-3.5">
+                      <div className="flex items-center justify-between gap-2 pb-2 border-b border-[#E8DFD3]">
+                        <h4 className="font-cormorant text-xl font-semibold text-[#1A1A1A]">
+                          {sideHeading}
+                        </h4>
+                        <span className="text-xs text-[#7A756D] tabular-nums">
+                          {[
+                            sideData.photos.length > 0
+                              ? `${sideData.photos.length} ${
+                                  sideData.photos.length === 1 ? "photo" : "photos"
+                                }`
+                              : null,
+                            sideData.links.length > 0
+                              ? `${sideData.links.length} ${
+                                  sideData.links.length === 1 ? "link" : "links"
+                                }`
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ") || (hasSide ? "Notes added" : "Empty")}
+                        </span>
+                      </div>
 
-                  <ThumbnailGallery
-                    images={ans.weddingOutfits?.images || []}
-                    titlePrefix="Wedding Outfit Reference"
-                    categoryLabel="Outfit Photos &amp; Styling References"
-                    emptyLabel="No outfit photos or references uploaded."
-                    onOpenImage={(idx) => {
-                      const list: LightboxImage[] = (ans.weddingOutfits?.images || []).map(
-                        (img, i) => ({
-                          url: img,
-                          title: `Outfit Reference ${i + 1}`,
-                          subtitle: `Wardrobe plans for ${p1} & ${p2}`,
-                        })
-                      );
-                      openLightbox(list, idx);
-                    }}
-                  />
-                </div>
-              }
+                      {!hasSide ? (
+                        <NotAnswered text={`No ${sideHeading.toLowerCase()} details provided yet.`} />
+                      ) : (
+                        <div className="space-y-3">
+                          {sideData.notes.trim() && (
+                            <TextAnswer text={sideData.notes} />
+                          )}
+
+                          {sideData.links.length > 0 && (
+                            <ReferenceLinksList links={sideData.links} />
+                          )}
+
+                          <ThumbnailGallery
+                            images={sideData.photos}
+                            titlePrefix={sideHeading}
+                            categoryLabel={`${sideHeading} — Photos &amp; References`}
+                            emptyLabel={`No ${sideHeading.toLowerCase()} photos uploaded.`}
+                            onOpenImage={(idx) => {
+                              const list: LightboxImage[] = sideData.photos.map(
+                                (img, i) => ({
+                                  url: img,
+                                  title: `${sideHeading} Reference ${i + 1}`,
+                                  subtitle: `Wardrobe plans for ${p1} & ${p2}`,
+                                })
+                              );
+                              openLightbox(list, idx);
+                            }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  );
+                };
+
+                if (groupedWardrobeData.legacyShared) {
+                  return (
+                    <div className="space-y-4">
+                      {groupedWardrobeData.legacyShared.notes ? (
+                        <TextAnswer text={groupedWardrobeData.legacyShared.notes} />
+                      ) : null}
+                      {groupedWardrobeData.legacyShared.links.length > 0 && (
+                        <ReferenceLinksList links={groupedWardrobeData.legacyShared.links} />
+                      )}
+                      <ThumbnailGallery
+                        images={groupedWardrobeData.legacyShared.photos}
+                        titlePrefix="Wedding Outfit Reference"
+                        categoryLabel="Outfit Photos &amp; Styling References"
+                        emptyLabel="No outfit photos or references uploaded."
+                        onOpenImage={(idx) => {
+                          const list: LightboxImage[] =
+                            groupedWardrobeData.legacyShared!.photos.map((img, i) => ({
+                              url: img,
+                              title: `Outfit Reference ${i + 1}`,
+                              subtitle: `Wardrobe plans for ${p1} & ${p2}`,
+                            }));
+                          openLightbox(list, idx);
+                        }}
+                      />
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    {renderWardrobeSide("Bride's wardrobe", groupedWardrobeData.bride)}
+                    {renderWardrobeSide("Groom's wardrobe", groupedWardrobeData.groom)}
+                  </div>
+                );
+              })()}
             />
 
-            {/* Q14: DECOR MOOD BOARD */}
+            {/* Q14: DECOR MOOD BOARD (BY EVENT) */}
             <AnswerBlock
               num={14}
               question="Do you have a wedding decor mood board or any visual references for your celebration?"
-              content={
-                <div className="space-y-4">
-                  {ans.decorMoodBoard?.notes ? (
-                    <TextAnswer text={ans.decorMoodBoard.notes} />
-                  ) : (!ans.decorMoodBoard?.links?.length && !ans.decorMoodBoard?.images?.length) ? (
-                    <NotAnswered />
-                  ) : null}
+              content={(() => {
+                const groupedDecorData = groupedDecor!;
+                if (!groupedDecorData.hasAnyContent) {
+                  return <NotAnswered />;
+                }
 
-                  {ans.decorMoodBoard?.links && ans.decorMoodBoard.links.length > 0 && (
-                    <ReferenceLinksList links={ans.decorMoodBoard.links} />
-                  )}
+                return (
+                  <div className="space-y-4">
+                    {groupedDecorData.populatedEvents.map((ev) => (
+                      <div
+                        key={ev.id}
+                        className="p-4 rounded-xl bg-[#FAFAFA] border border-[#E8E8E8] space-y-3"
+                      >
+                        <h4 className="text-xs font-semibold text-[#8C7043]">
+                          {ev.name}
+                        </h4>
 
-                  <ThumbnailGallery
-                    images={ans.decorMoodBoard?.images || []}
-                    titlePrefix="Decor Mood Board"
-                    categoryLabel="Decor Mood Board &amp; Colour References"
-                    emptyLabel="No decor mood board images uploaded."
-                    onOpenImage={(idx) => {
-                      const list: LightboxImage[] = (ans.decorMoodBoard?.images || []).map(
-                        (img, i) => ({
-                          url: img,
-                          title: `Decor Mood Image ${i + 1}`,
-                          subtitle: `Decor atmosphere reference for ${p1} & ${p2}`,
-                        })
-                      );
-                      openLightbox(list, idx);
-                    }}
-                  />
-                </div>
-              }
+                        {ev.notes.trim() ? (
+                          <TextAnswer text={ev.notes} />
+                        ) : !ev.links.length && !ev.images.length ? (
+                          <NotAnswered />
+                        ) : null}
+
+                        {ev.links.length > 0 && (
+                          <ReferenceLinksList links={ev.links} />
+                        )}
+
+                        {ev.images.length > 0 && (
+                          <ThumbnailGallery
+                            images={ev.images}
+                            titlePrefix={`${ev.name} Decor`}
+                            categoryLabel={`${ev.name} Mood Board &amp; Colour References`}
+                            emptyLabel="No decor mood board images uploaded."
+                            onOpenImage={(idx) => {
+                              const list: LightboxImage[] = ev.images.map(
+                                (img, i) => ({
+                                  url: img,
+                                  title: `${ev.name} Decor Image ${i + 1}`,
+                                  subtitle: `Decor reference for ${p1} & ${p2}`,
+                                })
+                              );
+                              openLightbox(list, idx);
+                            }}
+                          />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
             />
 
             {/* Q15 (previously Q13) */}

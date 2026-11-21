@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
   Sparkles,
   Copy,
@@ -132,7 +132,7 @@ export const EditorialBriefView: React.FC<EditorialBriefViewProps> = ({
     }
   };
 
-  const chapters = parseEditorialBriefDocument(briefText);
+  const chapters = useMemo(() => parseEditorialBriefDocument(briefText), [briefText]);
 
   return (
     <div className="bg-white border border-[#E5DDD2] rounded-3xl p-6 sm:p-10 shadow-xs relative overflow-hidden space-y-8">
