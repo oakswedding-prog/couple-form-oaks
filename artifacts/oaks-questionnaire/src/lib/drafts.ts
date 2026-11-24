@@ -409,30 +409,61 @@ export function subscribeOnlineDraft(
     return () => {};
   }
   const draftRef = doc(db, "drafts", resumeToken);
-  return onSnapshot(
-    draftRef,
-    (snap) => {
-      if (!snap.exists()) {
-        onInactive("not_found");
-        return;
-      }
-      const data = snap.data() as DraftRecord;
-      const inactiveReason = getDraftLinkInactiveReason(data);
-      if (inactiveReason) {
-        onInactive(inactiveReason);
-        return;
-      }
-      onUpdate({ ...data, id: snap.id });
-    },
-    (err) => {
-      const isPermDenied =
-        (err as any)?.code === "permission-denied" ||
-        String(err?.message || "").toLowerCase().includes("insufficient permissions");
-      if (isPermDenied) {
+
+  // A brand-new draft has no Firestore document until the first auto-save lands. The read rule
+  // dereferences the existing document, so a listener attached before that first save is
+  // answered with "permission-denied" even though the link is perfectly valid. Only treat a
+  // denial as "locked" once the document has been seen to exist (a real admin lock/revoke), or
+  // after the document still cannot be read following a few retries.
+  const MAX_PRE_CREATE_RETRIES = 6;
+  const RETRY_DELAY_MS = 2000;
+  let seenExisting = false;
+  let retries = 0;
+  let stopped = false;
+  let unsubscribe: () => void = () => {};
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const attach = () => {
+    unsubscribe = onSnapshot(
+      draftRef,
+      (snap) => {
+        if (!snap.exists()) {
+          onInactive("not_found");
+          return;
+        }
+        seenExisting = true;
+        const data = snap.data() as DraftRecord;
+        const inactiveReason = getDraftLinkInactiveReason(data);
+        if (inactiveReason) {
+          onInactive(inactiveReason);
+          return;
+        }
+        onUpdate({ ...data, id: snap.id });
+      },
+      (err) => {
+        const isPermDenied =
+          (err as any)?.code === "permission-denied" ||
+          String(err?.message || "").toLowerCase().includes("insufficient permissions");
+        if (!isPermDenied || stopped) return;
+        if (!seenExisting && retries < MAX_PRE_CREATE_RETRIES) {
+          retries += 1;
+          retryTimer = setTimeout(() => {
+            retryTimer = null;
+            if (!stopped) attach();
+          }, RETRY_DELAY_MS);
+          return;
+        }
         onInactive("locked");
       }
-    }
-  );
+    );
+  };
+
+  attach();
+  return () => {
+    stopped = true;
+    if (retryTimer) clearTimeout(retryTimer);
+    unsubscribe();
+  };
 }
 
 /**
