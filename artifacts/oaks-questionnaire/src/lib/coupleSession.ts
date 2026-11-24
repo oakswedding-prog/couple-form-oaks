@@ -173,8 +173,9 @@ export function isPrivatePreviewOrigin(originOverride?: string): boolean {
 
 function getConfiguredPublicAppOrigin(): string {
   try {
-    const raw = (import.meta as unknown as { env?: Record<string, string | undefined> })
-      ?.env?.VITE_PUBLIC_APP_URL;
+    // Must be the literal `import.meta.env.X` so Vite replaces it at build time.
+    const raw = (import.meta as unknown as { env: Record<string, string | undefined> }).env
+      .VITE_PUBLIC_APP_URL;
     if (typeof raw === "string" && /^https?:\/\//i.test(raw.trim())) {
       return raw.trim().replace(/\/+$/, "");
     }

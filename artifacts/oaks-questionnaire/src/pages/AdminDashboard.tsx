@@ -27,7 +27,9 @@ import {
   Info,
   Lock,
   RotateCcw,
+  Send,
 } from "lucide-react";
+import { ShareLinkMenu } from "../components/ShareLinkMenu.tsx";
 import {
   DraftRecord,
   SubmissionDeliveryState,
@@ -138,6 +140,36 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [openReasonsId, setOpenReasonsId] = useState<string | null>(null);
   const [copyingResumeId, setCopyingResumeId] = useState<string | null>(null);
   const [copiedResumeId, setCopiedResumeId] = useState<string | null>(null);
+  const [shareTarget, setShareTarget] = useState<{
+    url: string;
+    names: string;
+    phone?: string;
+    email?: string;
+  } | null>(null);
+  const [preparingShareId, setPreparingShareId] = useState<string | null>(null);
+
+  // Team share menu for a finished couple: make sure a working link exists first.
+  const handleShareCoupleLink = async (couple: SubmissionRecord) => {
+    setPreparingShareId(couple.id);
+    try {
+      const { token, url } = await ensureResumeLinkForSubmission(couple, allDrafts);
+      setSubmissions((prev) =>
+        prev.map((item) =>
+          item.id === couple.id ? { ...item, resumeToken: token, finalized: false } : item
+        )
+      );
+      setShareTarget({
+        url,
+        names: `${couple.partner1} & ${couple.partner2}`,
+        phone: couple.phone,
+        email: couple.email,
+      });
+    } catch (err: any) {
+      setError(err?.message || "Could not prepare resume link for this couple.");
+    } finally {
+      setPreparingShareId(null);
+    }
+  };
 
   // Background error log records (used only to flag "Email not sent" on Needs attention badges)
   const [errorLogs, setErrorLogs] = useState<SubmissionErrorRecord[]>([]);
@@ -1101,6 +1133,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           )}
                         </button>
 
+                        <button
+                          type="button"
+                          disabled={preparingShareId === couple.id}
+                          onClick={() => void handleShareCoupleLink(couple)}
+                          className="p-2 md:px-3 md:py-2 rounded-xl text-xs font-medium text-[#5C492A] bg-[#FAF7F2] hover:bg-[#F2ECE1] border border-[#E5DDD2] transition-colors cursor-pointer shrink-0 inline-flex items-center justify-center gap-1.5 disabled:opacity-60"
+                          title={`Send link to ${couple.partner1} & ${couple.partner2} (WhatsApp, email)`}
+                        >
+                          <Send className="w-3.5 h-3.5 text-[#8C7043]" />
+                          <span className="hidden lg:inline">Send link</span>
+                        </button>
+
                         {/* Delete Button */}
                         <button
                           type="button"
@@ -1268,6 +1311,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         </button>
                         <button
                           type="button"
+                          onClick={() =>
+                            setShareTarget({
+                              url: buildResumeUrl(draft.id),
+                              names: coupleTitle,
+                              phone: draft.phone,
+                              email: draft.email,
+                            })
+                          }
+                          className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium text-[#5C492A] bg-[#FAF7F2] hover:bg-[#F2ECE1] border border-[#E5DDD2] transition-colors cursor-pointer"
+                          title={`Send link to ${coupleTitle} (WhatsApp, email)`}
+                        >
+                          <Send className="w-3.5 h-3.5 text-[#8C7043]" />
+                          <span>Send link</span>
+                        </button>
+                        <button
+                          type="button"
                           disabled={isLockedOrExpired || lockingDraftId === draft.id}
                           onClick={() => void handleLockDraftLink(draft)}
                           className="inline-flex items-center justify-center gap-1 px-2.5 py-2 rounded-xl text-xs font-medium text-[#5F5F5F] bg-white hover:bg-[#FAF7F2] border border-[#E5DDD2] transition-colors cursor-pointer disabled:opacity-50"
@@ -1419,6 +1478,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
         )}
       </main>
+      <ShareLinkMenu
+        open={shareTarget !== null}
+        onClose={() => setShareTarget(null)}
+        url={shareTarget?.url ?? ""}
+        kind="team"
+        recipientName={shareTarget?.names ?? ""}
+        knownPhone={shareTarget?.phone}
+        knownEmail={shareTarget?.email}
+      />
     </div>
   );
 };

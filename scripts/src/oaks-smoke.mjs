@@ -49,6 +49,20 @@ try {
   // New drafts also need the couple photo, so Continue stays disabled and says why.
   await page.getByText("Please add a photo of the two of you to continue").first().waitFor();
   await page.screenshot({ path: `${output}/question-one-mobile.jpg`, fullPage: true });
+  // Share menu: WhatsApp/Email links carry the message and a public (non-preview) link.
+  await page.getByRole("button", { name: /^Invite PreviewOnly$/ }).first().click();
+  await page.getByLabel("Share link").waitFor();
+  await page.getByPlaceholder("e.g. 98765 43210 or name@example.com").fill("98765 43210");
+  const waHref = await page.getByRole("link", { name: "WhatsApp" }).getAttribute("href");
+  assert.match(waHref, /^https:\/\/wa\.me\/919876543210\?text=/);
+  const waText = decodeURIComponent(waHref.split("?text=")[1]);
+  assert.match(waText, /OAKS Wedding questionnaire/);
+  assert.match(waText, /\nhttps:\/\/coupleform-oaks\.vercel\.app\/\?resume=/);
+  assert.equal(waText.includes("replit.dev"), false);
+  const mailHref = await page.getByRole("link", { name: "Email" }).getAttribute("href");
+  assert.match(mailHref, /^mailto:\?subject=/);
+  await page.screenshot({ path: `${output}/share-menu-mobile.jpg` });
+  await page.keyboard.press("Escape");
   // Reload: the chosen mode ("Separately") and the nickname must survive, not flip to Together.
   await page.reload({ waitUntil: "networkidle" });
   const resume = page.getByRole("button", { name: /resume/i }).first();

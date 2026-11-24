@@ -17,6 +17,7 @@ import {
 import { STUDIO_LOGO_URL, STUDIO_NAME } from "../constants.ts";
 import { LOCKED_LINK_MESSAGE } from "../config/splitMode.ts";
 import { buildResumeUrl } from "../lib/coupleSession.ts";
+import { ShareLinkMenu } from "./ShareLinkMenu.tsx";
 import type { FillMode, PartnerSlot } from "../types/questionnaire.ts";
 import { getPartnerDisplayName } from "../utils/splitModeHelpers.ts";
 
@@ -127,8 +128,8 @@ interface InvitePartnerButtonProps {
 }
 
 /**
- * Shares the couple's active invite/resume link with the other partner via
- * native mobile Share Sheet (`navigator.share`) or clipboard copy fallback.
+ * Opens the share menu (WhatsApp, email, copy, device share sheet) for the
+ * couple's active invite/resume link.
  */
 export const InvitePartnerButton: React.FC<InvitePartnerButtonProps> = ({
   resumeToken,
@@ -141,6 +142,7 @@ export const InvitePartnerButton: React.FC<InvitePartnerButtonProps> = ({
   className = "",
 }) => {
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   if (!resumeToken) return null;
 
@@ -151,54 +153,22 @@ export const InvitePartnerButton: React.FC<InvitePartnerButtonProps> = ({
 
   const label = invitedAlready ? `Remind ${otherName}` : `Invite ${otherName}`;
 
-  const handleShare = async (e: React.MouseEvent) => {
+  const handleOpen = (e: React.MouseEvent) => {
     e.stopPropagation();
-    const url = buildResumeUrl(resumeToken);
-    const shareText = `Hey ${otherName}, here's our ${STUDIO_NAME} wedding questionnaire link. Tap it to fill in your part — make sure you pick your own name!`;
+    setMenuOpen(true);
+  };
 
-    let sharedViaNative = false;
-    if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
-      try {
-        await navigator.share({
-          title: `${myName} & ${otherName} — ${STUDIO_NAME}`,
-          text: shareText,
-          url,
-        });
-        sharedViaNative = true;
-      } catch (err: any) {
-        if (err?.name === "AbortError") return;
-      }
-    }
-
-    if (!sharedViaNative) {
-      const fullCopy = `${shareText}\n${url}`;
-      try {
-        await navigator.clipboard.writeText(fullCopy);
-      } catch {
-        try {
-          const ta = document.createElement("textarea");
-          ta.value = fullCopy;
-          ta.style.position = "fixed";
-          ta.style.opacity = "0";
-          document.body.appendChild(ta);
-          ta.select();
-          document.execCommand("copy");
-          document.body.removeChild(ta);
-        } catch {
-          // ignore
-        }
-      }
-    }
-
+  const handleShared = () => {
     onShared?.();
-    setFeedback(sharedViaNative ? `Shared with ${otherName}` : "Invite link copied");
+    setFeedback(`Sent to ${otherName}`);
     window.setTimeout(() => setFeedback(null), 2600);
   };
 
   return (
+    <>
     <button
       type="button"
-      onClick={(e) => void handleShare(e)}
+      onClick={handleOpen}
       className={`inline-flex items-center justify-center gap-1.5 rounded-xl border border-[#DFD4C3] bg-[#FAF8F5] hover:bg-[#F2ECE1] text-[#1A1A1A] font-medium transition-colors cursor-pointer whitespace-nowrap ${
         compact
           ? "px-2.5 py-1.5 text-[11px] sm:text-xs min-h-[34px]"
@@ -217,6 +187,17 @@ export const InvitePartnerButton: React.FC<InvitePartnerButtonProps> = ({
         </>
       )}
     </button>
+    <ShareLinkMenu
+      open={menuOpen}
+      onClose={() => setMenuOpen(false)}
+      url={buildResumeUrl(resumeToken)}
+      kind={invitedAlready ? "remind" : "invite"}
+      recipientName={otherName}
+      senderName={myName}
+      contactStorageKey={resumeToken}
+      onShared={handleShared}
+    />
+    </>
   );
 };
 
