@@ -5,6 +5,8 @@
 
 import React, { useEffect } from "react";
 import { ArrowRight } from "lucide-react";
+import type { FillMode, PartnerSlot } from "../types/questionnaire.ts";
+import { InvitePartnerButton } from "./SplitModeUI.tsx";
 
 interface ChapterCardProps {
   chapterNumber: number | string;
@@ -12,6 +14,14 @@ interface ChapterCardProps {
   subtitle?: string;
   questionRange?: string;
   onProceed: () => void;
+  splitModeEnabled?: boolean;
+  fillMode?: FillMode;
+  resumeToken?: string | null;
+  partner1?: string;
+  partner2?: string;
+  activePartner?: PartnerSlot;
+  invitedAlready?: boolean;
+  onPartnerInvited?: () => void;
 }
 
 export const ChapterCard: React.FC<ChapterCardProps> = ({
@@ -20,15 +30,24 @@ export const ChapterCard: React.FC<ChapterCardProps> = ({
   subtitle,
   questionRange,
   onProceed,
+  splitModeEnabled = false,
+  fillMode = "together",
+  resumeToken = null,
+  partner1,
+  partner2,
+  activePartner = "partnerA",
+  invitedAlready = false,
+  onPartnerInvited,
 }) => {
   useEffect(() => {
-    // Auto-advance after 1.5 seconds as specified
+    // Auto-advance after 1.5 seconds (gives a slight extra beat if Invite button is visible in separate mode)
+    const delayMs = splitModeEnabled && fillMode === "separate" && resumeToken ? 2600 : 1500;
     const timer = setTimeout(() => {
       onProceed();
-    }, 1500);
+    }, delayMs);
 
     return () => clearTimeout(timer);
-  }, [onProceed]);
+  }, [onProceed, splitModeEnabled, fillMode, resumeToken]);
 
   return (
     <div
@@ -63,6 +82,18 @@ export const ChapterCard: React.FC<ChapterCardProps> = ({
           <p className="text-lg sm:text-xl text-[#5F5F5F] max-w-md mx-auto font-light">
             {subtitle}
           </p>
+        )}
+        {splitModeEnabled && fillMode === "separate" && resumeToken && (
+          <div className="pt-3" onClick={(e) => e.stopPropagation()}>
+            <InvitePartnerButton
+              resumeToken={resumeToken}
+              partner1={partner1 || "Partner 1"}
+              partner2={partner2 || "Partner 2"}
+              activePartner={activePartner}
+              invitedAlready={invitedAlready}
+              onShared={onPartnerInvited}
+            />
+          </div>
         )}
       </div>
 

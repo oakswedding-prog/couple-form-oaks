@@ -29,6 +29,35 @@ import {
   hasUnresolvedMediaPaths,
   resolveSubmissionMedia,
 } from "../lib/submissions.ts";
+import {
+  getLabelledOverlayDisplay,
+  hasSplitOverlayAnswers,
+  OverlayFieldKey,
+} from "./splitModeHelpers.ts";
+
+function formatSplitTextForExport(
+  answers: SubmissionRecord["answers"],
+  key: OverlayFieldKey,
+  legacyText: string,
+  separator: string = "\n"
+): string {
+  const disp = getLabelledOverlayDisplay(answers, key);
+  if (!disp.isSplit) return legacyText;
+  return [
+    `${disp.partnerALabel}: ${disp.partnerAValue || "Not answered"}`,
+    `${disp.partnerBLabel}: ${disp.partnerBValue || "Not answered"}`,
+  ].join(separator);
+}
+
+function getAllQ27ImagesForExport(answers: SubmissionRecord["answers"]): string[] {
+  const urls: string[] = [];
+  if (hasSplitOverlayAnswers(answers, "q23_oneLastThing")) {
+    urls.push(...(answers.partnerAnswers?.partnerA?.q23_oneLastThing?.images || []));
+    urls.push(...(answers.partnerAnswers?.partnerB?.q23_oneLastThing?.images || []));
+  }
+  urls.push(...(answers.q23_oneLastThing?.images || []));
+  return Array.from(new Set(urls.filter(Boolean)));
+}
 
 async function ensureExportMediaResolved(
   submission: SubmissionRecord
@@ -651,20 +680,20 @@ export async function exportToPdf(rawSubmission: SubmissionRecord) {
     { q: "Q8. Funny story / inside joke?", a: ans.q8_funnyStory || "Not answered" },
     { q: "Q9. How did the proposal happen?", a: ans.q9_proposal?.story || "Not answered" },
     { q: "Q10. Family members & tree (Bride & Groom sides)", a: q10AnswerLines.join("\n") || "None" },
-    { q: "Q11. Film & photo feel?", a: filmFeelStr || "Not answered" },
+    { q: "Q11. Film & photo feel?", a: formatSplitTextForExport(ans, "q11_filmFeel", filmFeelStr || "Not answered") },
     { q: "Q12. References & Links", a: `Links: ${(ans.q12_references?.links || []).join(", ") || "None"}\nNotes: ${ans.q12_references?.notes || "None"}` },
     { q: "Q13. Have you finalised your wedding wardrobe? Share your outfit plans, colour preferences, and styling ideas. Knowing these details helps us plan your photography and films more thoughtfully.", a: q13PdfAnswerText },
     { q: "Q14. Wedding Decor Mood Board & References", a: q14PdfAnswerText },
-    { q: "Q15. Wedding day tone?", a: toneStr || "Not answered" },
-    { q: "Q16. Moments looking forward to?", a: `${(ans.q14_moments?.selected || []).join(", ")} ${ans.q14_moments?.other || ""}` },
-    { q: "Q17. Definitely capture / avoid?", a: `Capture: ${ans.q15_captureAvoid?.definitelyCapture || "N/A"}\nAvoid: ${ans.q15_captureAvoid?.pleaseAvoid || "N/A"}` },
-    { q: "Q18. Non-negotiables?", a: ans.q16_nonNegotiables || "Not answered" },
-    { q: "Q19. Who will be more emotional?", a: ans.q17_emotional || "Not answered" },
-    { q: "Q20. Camera versatility?", a: ans.q18_cameraVersatility || "Not answered" },
-    { q: "Q21. What mattered most when choosing OAKS Wedding?", a: ans.choosingOaks || "Not answered" },
-    { q: "Q22. Guidance comfort?", a: ans.q20_guidanceComfort || "Not answered" },
-    { q: "Q23. Comfort tips?", a: `${(ans.q21_comfortTips?.selected || []).join(", ")} ${ans.q21_comfortTips?.notes || ""}` },
-    { q: "Q24. Future film feeling?", a: ans.q22_futureFeeling || "Not answered" },
+    { q: "Q15. Wedding day tone?", a: formatSplitTextForExport(ans, "q13_tone", toneStr || "Not answered") },
+    { q: "Q16. Moments looking forward to?", a: formatSplitTextForExport(ans, "q14_moments", `${(ans.q14_moments?.selected || []).join(", ")} ${ans.q14_moments?.other || ""}`) },
+    { q: "Q17. Definitely capture / avoid?", a: formatSplitTextForExport(ans, "q15_captureAvoid", `Capture: ${ans.q15_captureAvoid?.definitelyCapture || "N/A"}\nAvoid: ${ans.q15_captureAvoid?.pleaseAvoid || "N/A"}`) },
+    { q: "Q18. Non-negotiables?", a: formatSplitTextForExport(ans, "q16_nonNegotiables", ans.q16_nonNegotiables || "Not answered") },
+    { q: "Q19. Who will be more emotional?", a: formatSplitTextForExport(ans, "q17_emotional", ans.q17_emotional || "Not answered") },
+    { q: "Q20. Camera versatility?", a: formatSplitTextForExport(ans, "q18_cameraVersatility", ans.q18_cameraVersatility || "Not answered") },
+    { q: "Q21. What mattered most when choosing OAKS Wedding?", a: formatSplitTextForExport(ans, "choosingOaks", ans.choosingOaks || "Not answered") },
+    { q: "Q22. Guidance comfort?", a: formatSplitTextForExport(ans, "q20_guidanceComfort", ans.q20_guidanceComfort || "Not answered") },
+    { q: "Q23. Comfort tips?", a: formatSplitTextForExport(ans, "q21_comfortTips", `${(ans.q21_comfortTips?.selected || []).join(", ")} ${ans.q21_comfortTips?.notes || ""}`) },
+    { q: "Q24. Future film feeling?", a: formatSplitTextForExport(ans, "q22_futureFeeling", ans.q22_futureFeeling || "Not answered") },
     {
       q: "Q25. Primary point of contact?",
       a: ans.primaryContact?.role
@@ -682,7 +711,7 @@ export async function exportToPdf(rawSubmission: SubmissionRecord) {
         : "Not answered",
     },
     { q: "Q26. Your story & journey?", a: ans.loveStoryNarrative || "Not answered" },
-    { q: "Q27. Is there anything else you'd like to let us know?", a: `${ans.q23_oneLastThing?.notes || "Not answered"}` },
+    { q: "Q27. Is there anything else you'd like to let us know?", a: formatSplitTextForExport(ans, "q23_oneLastThing", `${ans.q23_oneLastThing?.notes || "Not answered"}`) },
   ];
 
   for (const item of fullQuestions) {
@@ -960,9 +989,9 @@ export async function exportToPdf(rawSubmission: SubmissionRecord) {
       }
     }
 
-    // Embed Q27 Images (Attached Photos)
+    // Embed Q27 Images (Attached Photos — includes both partners' images when split)
     if (item.q.startsWith("Q27.")) {
-      const lastImages = ans.q23_oneLastThing?.images || [];
+      const lastImages = getAllQ27ImagesForExport(ans);
       if (lastImages.length > 0) {
         if (y > 225) {
           doc.addPage();
@@ -1136,8 +1165,8 @@ export async function exportToDocx(rawSubmission: SubmissionRecord) {
     }))
   );
   const lastPhotoBytes = await Promise.all(
-    (ans.q23_oneLastThing?.images || [])
-      .slice(0, 6)
+    getAllQ27ImagesForExport(ans)
+      .slice(0, 12)
       .map(async (img) => await loadImageAsUint8Array(img))
   );
 
@@ -1552,7 +1581,7 @@ export async function exportToDocx(rawSubmission: SubmissionRecord) {
 
           // Q11
           new Paragraph({ children: [new TextRun({ text: "11. Film & Photo feel", bold: true })] }),
-          new Paragraph({ text: filmFeelDocxStr }),
+          new Paragraph({ text: formatSplitTextForExport(ans, "q11_filmFeel", filmFeelDocxStr, " | ") }),
           new Paragraph({ text: "" }),
 
           // Q12
@@ -1685,52 +1714,52 @@ export async function exportToDocx(rawSubmission: SubmissionRecord) {
 
           // Q15 (previously Q13)
           new Paragraph({ children: [new TextRun({ text: "15. Day Tone", bold: true })] }),
-          new Paragraph({ text: toneDocxStr }),
+          new Paragraph({ text: formatSplitTextForExport(ans, "q13_tone", toneDocxStr, " | ") }),
           new Paragraph({ text: "" }),
 
           // Q16 (previously Q14)
           new Paragraph({ children: [new TextRun({ text: "16. Key Moments", bold: true })] }),
-          new Paragraph({ text: `${(ans.q14_moments?.selected || []).join(", ")} ${ans.q14_moments?.other || ""}` }),
+          new Paragraph({ text: formatSplitTextForExport(ans, "q14_moments", `${(ans.q14_moments?.selected || []).join(", ")} ${ans.q14_moments?.other || ""}`, " | ") }),
           new Paragraph({ text: "" }),
 
           // Q17 (previously Q15)
           new Paragraph({ children: [new TextRun({ text: "17. Capture vs Avoid", bold: true })] }),
-          new Paragraph({ text: `Capture: ${ans.q15_captureAvoid?.definitelyCapture || "N/A"} | Avoid: ${ans.q15_captureAvoid?.pleaseAvoid || "N/A"}` }),
+          new Paragraph({ text: formatSplitTextForExport(ans, "q15_captureAvoid", `Capture: ${ans.q15_captureAvoid?.definitelyCapture || "N/A"} | Avoid: ${ans.q15_captureAvoid?.pleaseAvoid || "N/A"}`, " | ") }),
           new Paragraph({ text: "" }),
 
           // Q18 (previously Q16)
           new Paragraph({ children: [new TextRun({ text: "18. Non-negotiables", bold: true })] }),
-          new Paragraph({ text: ans.q16_nonNegotiables || "Not answered" }),
+          new Paragraph({ text: formatSplitTextForExport(ans, "q16_nonNegotiables", ans.q16_nonNegotiables || "Not answered", " | ") }),
           new Paragraph({ text: "" }),
 
           // Q19 (previously Q17)
           new Paragraph({ children: [new TextRun({ text: "19. Emotional", bold: true })] }),
-          new Paragraph({ text: ans.q17_emotional || "Not answered" }),
+          new Paragraph({ text: formatSplitTextForExport(ans, "q17_emotional", ans.q17_emotional || "Not answered", " | ") }),
           new Paragraph({ text: "" }),
 
           // Q20 (previously Q18)
           new Paragraph({ children: [new TextRun({ text: "20. Camera Versatility", bold: true })] }),
-          new Paragraph({ text: ans.q18_cameraVersatility || "Not answered" }),
+          new Paragraph({ text: formatSplitTextForExport(ans, "q18_cameraVersatility", ans.q18_cameraVersatility || "Not answered", " | ") }),
           new Paragraph({ text: "" }),
 
           // Q21 (previously Q19)
           new Paragraph({ children: [new TextRun({ text: "21. What mattered most when choosing OAKS Wedding", bold: true })] }),
-          new Paragraph({ text: ans.choosingOaks || "Not answered" }),
+          new Paragraph({ text: formatSplitTextForExport(ans, "choosingOaks", ans.choosingOaks || "Not answered", " | ") }),
           new Paragraph({ text: "" }),
 
           // Q22
           new Paragraph({ children: [new TextRun({ text: "22. Guidance comfort", bold: true })] }),
-          new Paragraph({ text: ans.q20_guidanceComfort || "Not answered" }),
+          new Paragraph({ text: formatSplitTextForExport(ans, "q20_guidanceComfort", ans.q20_guidanceComfort || "Not answered", " | ") }),
           new Paragraph({ text: "" }),
 
           // Q23
           new Paragraph({ children: [new TextRun({ text: "23. Comfort tips", bold: true })] }),
-          new Paragraph({ text: `${(ans.q21_comfortTips?.selected || []).join(", ")} ${ans.q21_comfortTips?.notes || ""}` }),
+          new Paragraph({ text: formatSplitTextForExport(ans, "q21_comfortTips", `${(ans.q21_comfortTips?.selected || []).join(", ")} ${ans.q21_comfortTips?.notes || ""}`, " | ") }),
           new Paragraph({ text: "" }),
 
           // Q24
           new Paragraph({ children: [new TextRun({ text: "24. Future film feeling", bold: true })] }),
-          new Paragraph({ text: ans.q22_futureFeeling || "Not answered" }),
+          new Paragraph({ text: formatSplitTextForExport(ans, "q22_futureFeeling", ans.q22_futureFeeling || "Not answered", " | ") }),
           new Paragraph({ text: "" }),
 
           // Q25: Primary Point of Contact
@@ -1763,7 +1792,7 @@ export async function exportToDocx(rawSubmission: SubmissionRecord) {
 
           // Q27
           new Paragraph({ children: [new TextRun({ text: "27. Is there anything else you'd like to let us know?", bold: true })] }),
-          new Paragraph({ text: ans.q23_oneLastThing?.notes || "Not answered" }),
+          new Paragraph({ text: formatSplitTextForExport(ans, "q23_oneLastThing", ans.q23_oneLastThing?.notes || "Not answered", " | ") }),
           ...lastPhotoBytes
             .filter((b): b is Uint8Array => b !== null)
             .map(

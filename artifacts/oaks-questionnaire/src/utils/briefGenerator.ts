@@ -7,6 +7,11 @@ import type { QuestionnaireAnswers } from "../types/questionnaire.ts";
 import { getGroupedQ10People } from "./familyPeople.ts";
 import { getGroupedWardrobe } from "./wardrobe.ts";
 import { getGroupedDecorEvents } from "./decorEvents.ts";
+import {
+  getLabelledOverlayDisplay,
+  hasSplitOverlayAnswers,
+  OverlayFieldKey,
+} from "./splitModeHelpers.ts";
 
 /**
  * Generates a clean, elegant, human-readable brief text for the photography
@@ -23,6 +28,16 @@ export function generateBriefSummary(
   const subDivider = "-".repeat(40);
 
   const lines: string[] = [];
+
+  const pushSplitOrFallback = (key: OverlayFieldKey, fallbackLine: string) => {
+    const disp = getLabelledOverlayDisplay(answers, key);
+    if (disp.isSplit) {
+      lines.push(`   • ${disp.partnerALabel}: ${disp.partnerAValue || "—"}`);
+      lines.push(`   • ${disp.partnerBLabel}: ${disp.partnerBValue || "—"}`);
+    } else {
+      lines.push(fallbackLine);
+    }
+  };
 
   lines.push(divider);
   lines.push(`OUR STORY QUESTIONNAIRE — STUDIO BRIEF`);
@@ -161,7 +176,7 @@ export function generateBriefSummary(
     : typeof answers.q11_filmFeel === "string"
     ? answers.q11_filmFeel
     : "";
-  lines.push(`   ${q11Text ? q11Text : '—'}`);
+  pushSplitOrFallback("q11_filmFeel", `   ${q11Text ? q11Text : '—'}`);
   lines.push("");
 
 
@@ -251,7 +266,7 @@ export function generateBriefSummary(
     : typeof answers.q13_tone === "string"
     ? answers.q13_tone
     : "";
-  lines.push(`   ${q13Text ? q13Text : '—'}`);
+  pushSplitOrFallback("q13_tone", `   ${q13Text ? q13Text : '—'}`);
   lines.push("");
 
   // CHAPTER 4
@@ -262,35 +277,42 @@ export function generateBriefSummary(
     answers.q14_moments.other ? `Other: ${answers.q14_moments.other}` : null,
   ].filter(Boolean).join("; ");
   lines.push(`16. What are the moments you are most looking forward to during your wedding?`);
-  lines.push(`   ${moments ? moments : '—'}`);
+  pushSplitOrFallback("q14_moments", `   ${moments ? moments : '—'}`);
   lines.push("");
 
   lines.push(`17. Is there anything you definitely want us to capture or avoid?`);
-  lines.push(`   • Definitely capture: ${answers.q15_captureAvoid.definitelyCapture || '—'}`);
-  lines.push(`   • Please avoid: ${answers.q15_captureAvoid.pleaseAvoid || '—'}`);
+  if (hasSplitOverlayAnswers(answers, "q15_captureAvoid")) {
+    const a = answers.partnerAnswers?.partnerA?.q15_captureAvoid;
+    const b = answers.partnerAnswers?.partnerB?.q15_captureAvoid;
+    lines.push(`   • ${p1} — Definitely capture: ${a?.definitelyCapture?.trim() || '—'} | Please avoid: ${a?.pleaseAvoid?.trim() || '—'}`);
+    lines.push(`   • ${p2} — Definitely capture: ${b?.definitelyCapture?.trim() || '—'} | Please avoid: ${b?.pleaseAvoid?.trim() || '—'}`);
+  } else {
+    lines.push(`   • Definitely capture: ${answers.q15_captureAvoid.definitelyCapture || '—'}`);
+    lines.push(`   • Please avoid: ${answers.q15_captureAvoid.pleaseAvoid || '—'}`);
+  }
   lines.push("");
 
   lines.push(`18. Please mention your non negotiables in your films and photographs?`);
-  lines.push(`   ${answers.q16_nonNegotiables ? answers.q16_nonNegotiables : '—'}`);
+  pushSplitOrFallback("q16_nonNegotiables", `   ${answers.q16_nonNegotiables ? answers.q16_nonNegotiables : '—'}`);
   lines.push("");
 
   lines.push(`19. Who do you think is going to be more emotional during wedding?`);
-  lines.push(`   ${answers.q17_emotional ? answers.q17_emotional : '—'}`);
+  pushSplitOrFallback("q17_emotional", `   ${answers.q17_emotional ? answers.q17_emotional : '—'}`);
   lines.push("");
 
   // CHAPTER 5
   lines.push(`CHAPTER 5: WORKING TOGETHER`);
   lines.push(subDivider);
   lines.push(`20. How versatile are you with the camera?`);
-  lines.push(`   ${answers.q18_cameraVersatility ? answers.q18_cameraVersatility : '—'}`);
+  pushSplitOrFallback("q18_cameraVersatility", `   ${answers.q18_cameraVersatility ? answers.q18_cameraVersatility : '—'}`);
   lines.push("");
 
   lines.push(`21. What mattered most to you when choosing OAKS Wedding to capture your wedding?`);
-  lines.push(`   ${answers.choosingOaks ? answers.choosingOaks : '—'}`);
+  pushSplitOrFallback("choosingOaks", `   ${answers.choosingOaks ? answers.choosingOaks : '—'}`);
   lines.push("");
 
   lines.push(`22. How comfortable are you with being guided or directed during portraits and filming?`);
-  lines.push(`   ${answers.q20_guidanceComfort ? answers.q20_guidanceComfort : '—'}`);
+  pushSplitOrFallback("q20_guidanceComfort", `   ${answers.q20_guidanceComfort ? answers.q20_guidanceComfort : '—'}`);
   lines.push("");
 
   const comfortTips = [
@@ -298,11 +320,11 @@ export function generateBriefSummary(
     answers.q21_comfortTips.notes ? `Note: ${answers.q21_comfortTips.notes}` : null,
   ].filter(Boolean).join("; ");
   lines.push(`23. Is there anything that would help you feel more comfortable in front of the camera?`);
-  lines.push(`   ${comfortTips ? comfortTips : '—'}`);
+  pushSplitOrFallback("q21_comfortTips", `   ${comfortTips ? comfortTips : '—'}`);
   lines.push("");
 
   lines.push(`24. What do you hope to feel when you watch your wedding film years from now?`);
-  lines.push(`   ${answers.q22_futureFeeling ? answers.q22_futureFeeling : '—'}`);
+  pushSplitOrFallback("q22_futureFeeling", `   ${answers.q22_futureFeeling ? answers.q22_futureFeeling : '—'}`);
   lines.push("");
 
   lines.push(`25. Who should be our primary point of contact for wedding-related communication and coordination?`);
@@ -331,9 +353,15 @@ export function generateBriefSummary(
   lines.push("");
 
   lines.push(`27. Is there anything else you'd like to let us know?`);
-  lines.push(`   ${answers.q23_oneLastThing.notes ? answers.q23_oneLastThing.notes : '—'}`);
-  if (answers.q23_oneLastThing.images?.length) {
-    lines.push(`   • Attached photos: ${answers.q23_oneLastThing.images.length} photos`);
+  if (hasSplitOverlayAnswers(answers, "q23_oneLastThing")) {
+    const disp27 = getLabelledOverlayDisplay(answers, "q23_oneLastThing");
+    lines.push(`   • ${disp27.partnerALabel}: ${disp27.partnerAValue || '—'}`);
+    lines.push(`   • ${disp27.partnerBLabel}: ${disp27.partnerBValue || '—'}`);
+  } else {
+    lines.push(`   ${answers.q23_oneLastThing.notes ? answers.q23_oneLastThing.notes : '—'}`);
+    if (answers.q23_oneLastThing.images?.length) {
+      lines.push(`   • Attached photos: ${answers.q23_oneLastThing.images.length} photos`);
+    }
   }
   lines.push("");
   lines.push(divider);

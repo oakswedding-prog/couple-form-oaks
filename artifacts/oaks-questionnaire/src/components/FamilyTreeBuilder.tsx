@@ -19,6 +19,8 @@ import {
 import type {
   FamilyMember,
   FamilySideData,
+  FillMode,
+  PartnerSlot,
   QuestionnaireAnswers,
   SideFamilyPhoto,
 } from "../types/questionnaire.ts";
@@ -42,6 +44,9 @@ interface FamilyTreeBuilderProps {
   partner2: string;
   value: QuestionnaireAnswers["q10_people"];
   onChange: (next: QuestionnaireAnswers["q10_people"]) => void;
+  splitModeEnabled?: boolean;
+  fillMode?: FillMode;
+  activePartner?: PartnerSlot;
 }
 
 const RELATIONSHIP_OPTIONS = [
@@ -60,10 +65,25 @@ const MAX_PHOTOS_PER_SIDE = 12;
 type SideTabKey = "vip" | "tree" | "notes";
 
 export const FamilyTreeBuilder: React.FC<FamilyTreeBuilderProps> = ({
+  partner1,
+  partner2,
   value,
   onChange,
+  splitModeEnabled = false,
+  fillMode = "together",
+  activePartner = "partnerA",
 }) => {
   const grouped = getGroupedQ10People(value);
+  const brideLabel =
+    splitModeEnabled && partner1?.trim()
+      ? `${partner1.trim()}'s Side`
+      : "Bride's Side";
+  const groomLabel =
+    splitModeEnabled && partner2?.trim()
+      ? `${partner2.trim()}'s Side`
+      : "Groom's Side";
+  const isSeparatePartnerB =
+    splitModeEnabled && fillMode === "separate" && activePartner === "partnerB";
 
   const updateSideData = (
     side: "bride" | "groom",
@@ -163,7 +183,7 @@ export const FamilyTreeBuilder: React.FC<FamilyTreeBuilderProps> = ({
               <span className="w-1.5 h-1.5 rounded-full bg-[#B08D57]" aria-hidden="true" />
             )}
             <span>
-              Bride&apos;s Side:{" "}
+              {brideLabel}:{" "}
               <span className={grouped.hasBrideEntry ? "text-emerald-800 font-semibold" : "text-[#8C7043]"}>
                 {grouped.hasBrideEntry ? "Added" : "Required"}
               </span>
@@ -179,7 +199,7 @@ export const FamilyTreeBuilder: React.FC<FamilyTreeBuilderProps> = ({
               <span className="w-1.5 h-1.5 rounded-full bg-[#B08D57]" aria-hidden="true" />
             )}
             <span>
-              Groom&apos;s Side:{" "}
+              {groomLabel}:{" "}
               <span className={grouped.hasGroomEntry ? "text-emerald-800 font-semibold" : "text-[#8C7043]"}>
                 {grouped.hasGroomEntry ? "Added" : "Required"}
               </span>
@@ -267,45 +287,49 @@ export const FamilyTreeBuilder: React.FC<FamilyTreeBuilderProps> = ({
         </div>
       )}
 
-      {/* Side-by-side on desktop (lg:grid-cols-2), stacked on mobile */}
+      {/* Side-by-side on desktop (lg:grid-cols-2), stacked on mobile — active partner's side surfaces first in Separate mode */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
-        <FamilySideSection
-          side="bride"
-          title="Bride's Side"
-          subtitle="Add important family & friends, upload a family tree, or write notes for the bride's side."
-          photos={grouped.bride.photos}
-          members={grouped.bride.members}
-          notes={grouped.bride.notes}
-          isComplete={grouped.hasBrideEntry}
-          onPhotosChange={(photos) =>
-            updateSideData("bride", (curr) => ({ ...curr, photos }))
-          }
-          onNotesChange={(notes) =>
-            updateSideData("bride", (curr) => ({ ...curr, notes }))
-          }
-          onAddMember={handleAddMember}
-          onUpdateMember={handleUpdateMember}
-          onRemoveMember={handleRemoveMember}
-        />
+        <div className={isSeparatePartnerB ? "order-2 lg:order-1" : "order-1"}>
+          <FamilySideSection
+            side="bride"
+            title={brideLabel}
+            subtitle={`Add important family & friends, upload a family tree, or write notes for ${brideLabel.toLowerCase()}.`}
+            photos={grouped.bride.photos}
+            members={grouped.bride.members}
+            notes={grouped.bride.notes}
+            isComplete={grouped.hasBrideEntry}
+            onPhotosChange={(photos) =>
+              updateSideData("bride", (curr) => ({ ...curr, photos }))
+            }
+            onNotesChange={(notes) =>
+              updateSideData("bride", (curr) => ({ ...curr, notes }))
+            }
+            onAddMember={handleAddMember}
+            onUpdateMember={handleUpdateMember}
+            onRemoveMember={handleRemoveMember}
+          />
+        </div>
 
-        <FamilySideSection
-          side="groom"
-          title="Groom's Side"
-          subtitle="Add important family & friends, upload a family tree, or write notes for the groom's side."
-          photos={grouped.groom.photos}
-          members={grouped.groom.members}
-          notes={grouped.groom.notes}
-          isComplete={grouped.hasGroomEntry}
-          onPhotosChange={(photos) =>
-            updateSideData("groom", (curr) => ({ ...curr, photos }))
-          }
-          onNotesChange={(notes) =>
-            updateSideData("groom", (curr) => ({ ...curr, notes }))
-          }
-          onAddMember={handleAddMember}
-          onUpdateMember={handleUpdateMember}
-          onRemoveMember={handleRemoveMember}
-        />
+        <div className={isSeparatePartnerB ? "order-1 lg:order-2" : "order-2"}>
+          <FamilySideSection
+            side="groom"
+            title={groomLabel}
+            subtitle={`Add important family & friends, upload a family tree, or write notes for ${groomLabel.toLowerCase()}.`}
+            photos={grouped.groom.photos}
+            members={grouped.groom.members}
+            notes={grouped.groom.notes}
+            isComplete={grouped.hasGroomEntry}
+            onPhotosChange={(photos) =>
+              updateSideData("groom", (curr) => ({ ...curr, photos }))
+            }
+            onNotesChange={(notes) =>
+              updateSideData("groom", (curr) => ({ ...curr, notes }))
+            }
+            onAddMember={handleAddMember}
+            onUpdateMember={handleUpdateMember}
+            onRemoveMember={handleRemoveMember}
+          />
+        </div>
       </div>
     </div>
   );

@@ -30,8 +30,18 @@ try {
   await page.getByPlaceholder("e.g. Leo", { exact: true }).fill("PreviewOnly");
   await page.locator('input[type="date"]').fill("2027-06-12");
   await page.getByPlaceholder("e.g. maya@example.com", { exact: true }).fill("migration-check@example.com");
+  await page.getByRole("button", { name: /Separately, each on our own/ }).click();
+  await page.getByRole("button", { name: "I'm MigrationTest" }).click();
   await page.getByRole("button", { name: "Begin Questionnaire" }).click();
   await page.getByRole("button", { name: /continue/i }).click();
+  const partnerMode = page.getByRole("button", { name: "MigrationTest", exact: true });
+  await partnerMode.waitFor();
+  await partnerMode.click();
+  await page.getByRole("button").filter({ hasText: "Fill together on one device" }).click();
+  await page.getByRole("button", { name: "Together" }).waitFor();
+  await page.getByRole("button", { name: "Together" }).click();
+  await page.getByRole("button").filter({ hasText: "Fill separately on own phones" }).click();
+  await page.getByRole("button", { name: "MigrationTest", exact: true }).waitFor();
   await page.getByPlaceholder("e.g. Honey, Meeru").fill("Test nickname one");
   await page.getByPlaceholder("e.g. Captain, Aaru").fill("Test nickname two");
   await page.screenshot({ path: `${output}/question-one-mobile.jpg`, fullPage: true });

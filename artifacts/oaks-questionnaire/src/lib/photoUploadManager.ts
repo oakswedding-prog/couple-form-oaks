@@ -672,8 +672,21 @@ export function findMissingPhotoSlots(
     const slug = (ev.id || ev.name || "decor").toLowerCase().replace(/[^a-z0-9]+/g, "_");
     ev.images?.forEach((img) => checkToken(img, `decor_${slug}`));
   });
+  if (answers.decorEventsMap) {
+    Object.values(answers.decorEventsMap).forEach((ev) => {
+      if (!ev || ev.deleted || !ev.imagesById) return;
+      const slug = (ev.id || ev.name || "decor").toLowerCase().replace(/[^a-z0-9]+/g, "_");
+      Object.values(ev.imagesById).forEach((img) => checkToken(img, `decor_${slug}`));
+    });
+  }
   answers.decorMoodBoard?.images?.forEach((img) => checkToken(img, "decor"));
   answers.q23_oneLastThing?.images?.forEach((img) => checkToken(img, "last_thing"));
+  answers.partnerAnswers?.partnerA?.q23_oneLastThing?.images?.forEach((img) =>
+    checkToken(img, "last_thing")
+  );
+  answers.partnerAnswers?.partnerB?.q23_oneLastThing?.images?.forEach((img) =>
+    checkToken(img, "last_thing")
+  );
 
   // Also check saved Firestore photoStatuses (for resume links opened on a different device
   // where pending/failed tokens were stripped from Firestore answers)
@@ -1042,7 +1055,7 @@ export function sanitizeAnswersForFirestore(
     );
   }
 
-  // Q14 decor events
+  // Q14 decor events (array + optional collaborative map)
   if (Array.isArray(cloned.decorEvents)) {
     cloned.decorEvents.forEach((ev, idx) => {
       if (Array.isArray(ev?.images)) {
@@ -1055,6 +1068,25 @@ export function sanitizeAnswersForFirestore(
       }
     });
   }
+  if (cloned.decorEventsMap) {
+    Object.entries(cloned.decorEventsMap).forEach(([evKey, ev]) => {
+      if (ev && !ev.deleted && ev.imagesById && typeof ev.imagesById === "object") {
+        const slug =
+          (ev.id || ev.name || evKey)
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "_")
+            .replace(/^_+|_+$/g, "") || evKey;
+        const nextImagesById: Record<string, string> = {};
+        Object.entries(ev.imagesById).forEach(([imgKey, imgVal]) => {
+          const resolved = resolveArray([imgVal], `decor_${slug}`);
+          if (resolved.length > 0) {
+            nextImagesById[imgKey] = resolved[0];
+          }
+        });
+        ev.imagesById = nextImagesById;
+      }
+    });
+  }
   if (cloned.decorMoodBoard?.images) {
     cloned.decorMoodBoard.images = resolveArray(
       cloned.decorMoodBoard.images,
@@ -1062,10 +1094,22 @@ export function sanitizeAnswersForFirestore(
     );
   }
 
-  // Q27 one last thing
+  // Q27 one last thing (shared + optional per-partner overlay)
   if (cloned.q23_oneLastThing?.images) {
     cloned.q23_oneLastThing.images = resolveArray(
       cloned.q23_oneLastThing.images,
+      "last_thing"
+    );
+  }
+  if (cloned.partnerAnswers?.partnerA?.q23_oneLastThing?.images) {
+    cloned.partnerAnswers.partnerA.q23_oneLastThing.images = resolveArray(
+      cloned.partnerAnswers.partnerA.q23_oneLastThing.images,
+      "last_thing"
+    );
+  }
+  if (cloned.partnerAnswers?.partnerB?.q23_oneLastThing?.images) {
+    cloned.partnerAnswers.partnerB.q23_oneLastThing.images = resolveArray(
+      cloned.partnerAnswers.partnerB.q23_oneLastThing.images,
       "last_thing"
     );
   }
@@ -1097,7 +1141,12 @@ export function countAllPhotosInAnswers(answers: QuestionnaireAnswers): number {
     }
   }
   count += answers.decorMoodBoard?.images?.length || 0;
-  count += answers.q23_oneLastThing?.images?.length || 0;
+  const lastThingSet = new Set<string>([
+    ...(answers.q23_oneLastThing?.images || []),
+    ...(answers.partnerAnswers?.partnerA?.q23_oneLastThing?.images || []),
+    ...(answers.partnerAnswers?.partnerB?.q23_oneLastThing?.images || []),
+  ]);
+  count += lastThingSet.size;
   return count;
 }
 

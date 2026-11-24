@@ -14,6 +14,11 @@ import {
 } from "./constants.ts";
 import {
   AutoSaveStatus,
+  DraftRecord,
+  FieldEditMeta,
+  FillMode,
+  PartnerProgressMap,
+  PartnerSlot,
   QuestionnaireAnswers,
   FamilyMember,
 } from "./types/questionnaire.ts";
@@ -37,7 +42,6 @@ import {
   Q15_MAX_SELECTIONS,
   isQuestionMandatory,
   toggleMultiSelectWithMax,
-  validateQuestionStep,
 } from "./utils/questionnaireValidation.ts";
 import {
   computePersistedStep,
@@ -47,7 +51,40 @@ import {
   isValidResumeToken,
   resetActiveCoupleSession,
 } from "./lib/coupleSession.ts";
-import { loadOnlineDraftByToken, saveOnlineDraft } from "./lib/drafts.ts";
+import {
+  getDraftExpiryMillis,
+  loadOnlineDraftWithStatus,
+  saveOnlineDraft,
+  saveOnlineDraftFieldPatch,
+  subscribeOnlineDraft,
+} from "./lib/drafts.ts";
+import { isSplitModeEnabled, isPerPersonQuestion } from "./config/splitMode.ts";
+import {
+  buildPartnerProgressSnapshot,
+  decorEventsToMap,
+  decorMapToEvents,
+  detectSharedFieldConflict,
+  getEffectiveFillMode,
+  getFirstUnansweredStepForPartner,
+  getOtherPartnerSlot,
+  getOverlayFieldKeyForStep,
+  getPartnerAnsweredCount,
+  getPartnerDisplayName,
+  getPartnerOverlayValue,
+  isOverlayValueEmpty,
+  isSameForBothForStep,
+  mergeDecorEventMaps,
+  setPartnerOverlayValue,
+  setSameForBothForStep,
+  syncDecorMapAndArray,
+  validateQuestionStepForContext,
+} from "./utils/splitModeHelpers.ts";
+import {
+  LockedLinkScreen,
+  PartnerIdentityGate,
+  SameForBothToggle,
+  SharedFieldConflictBanner,
+} from "./components/SplitModeUI.tsx";
 import {
   installSiteUpdateGuard,
   registerBeforeReloadFlusher,
@@ -302,6 +339,18 @@ function sanitizeAnswers(raw: any): QuestionnaireAnswers {
       notes: typeof raw.q23_oneLastThing?.notes === "string" ? raw.q23_oneLastThing.notes : "",
       images: Array.isArray(raw.q23_oneLastThing?.images) ? raw.q23_oneLastThing.images : [],
     },
+    ...(raw.fillMode === "separate" || raw.fillMode === "together"
+      ? { fillMode: raw.fillMode }
+      : {}),
+    ...(raw.partnerAnswers && typeof raw.partnerAnswers === "object"
+      ? { partnerAnswers: raw.partnerAnswers }
+      : {}),
+    ...(raw.decorEventsMap && typeof raw.decorEventsMap === "object"
+      ? { decorEventsMap: raw.decorEventsMap }
+      : {}),
+    ...(raw.fieldMeta && typeof raw.fieldMeta === "object"
+      ? { fieldMeta: raw.fieldMeta }
+      : {}),
   };
 }
 
@@ -374,6 +423,26 @@ export default function App() {
   const [pendingPhotosAfterSend, setPendingPhotosAfterSend] = useState<number>(0);
   const [missingPhotoSlots, setMissingPhotoSlots] = useState<MissingPhotoSlot[]>([]);
 
+  // Phase 0 Link Lock state (always active) + Feature-Flagged Split Mode state (OFF by default)
+  const splitModeEnabled = isSplitModeEnabled();
+  const [isLinkLocked, setIsLinkLocked] = useState<boolean>(false);
+  const [fillMode, setFillMode] = useState<FillMode>("together");
+  const [activePartner, setActivePartner] = useState<PartnerSlot>("partnerA");
+  const [togetherActiveTab, setTogetherActiveTab] = useState<PartnerSlot>("partnerA");
+  const [needsPartnerGate, setNeedsPartnerGate] = useState<boolean>(false);
+  const [invitedAlready, setInvitedAlready] = useState<boolean>(false);
+  const [partnerProgress, setPartnerProgress] = useState<PartnerProgressMap>({
+    partnerA: { done: false, answeredCount: 0 },
+    partnerB: { done: false, answeredCount: 0 },
+  });
+  const [sharedConflict, setSharedConflict] = useState<{
+    step: number;
+    fieldKey: string;
+    otherPartnerName: string;
+    theirValue: unknown;
+    myValue: unknown;
+  } | null>(null);
+
   // Client-side URL Routing
   const [currentPath, setCurrentPath] = useState<string>(
     typeof window !== "undefined" ? window.location.pathname : "/"
@@ -423,6 +492,16 @@ export default function App() {
   const savedStepNoticeRef = useRef<number>(savedStepNotice);
   savedStepNoticeRef.current = savedStepNotice;
   const lastSavedDigestRef = useRef<string>("");
+  const draftOwnerUidRef = useRef<string | undefined>(undefined);
+  const participantUidsRef = useRef<string[] | undefined>(undefined);
+  const draftExpiryMsRef = useRef<number | undefined>(undefined);
+  const fillModeRef = useRef<FillMode>(fillMode);
+  fillModeRef.current = fillMode;
+  const activePartnerRef = useRef<PartnerSlot>(activePartner);
+  activePartnerRef.current = activePartner;
+  const partnerProgressRef = useRef<PartnerProgressMap>(partnerProgress);
+  partnerProgressRef.current = partnerProgress;
+  const localFieldMetaRef = useRef<Record<string, FieldEditMeta>>({});
 
   // Silent anonymous login & HEIC converter preload for couples (non-admin routes)
   useEffect(() => {
@@ -482,13 +561,35 @@ export default function App() {
 
     setAutoSaveStatus("saving");
     try {
+      const nextProgress = splitModeEnabled
+        ? buildPartnerProgressSnapshot(
+            latestAnswers,
+            partnerProgressRef.current
+          )
+        : undefined;
+      if (nextProgress) {
+        setPartnerProgress(nextProgress);
+      }
+
       await saveOnlineDraft({
         resumeToken: session.resumeToken,
         submissionId: session.submissionId,
-        answers: latestAnswers,
+        answers: splitModeEnabled
+          ? { ...latestAnswers, fillMode: fillModeRef.current }
+          : latestAnswers,
         currentStep: persistedStep,
         furthestStep: Math.max(persistedStep, savedStepNoticeRef.current),
         createdAt: session.createdAt,
+        ...(splitModeEnabled
+          ? {
+              fillMode: fillModeRef.current,
+              partnerProgress: nextProgress,
+              fieldMeta: localFieldMetaRef.current,
+            }
+          : {}),
+        existingOwnerUid: draftOwnerUidRef.current,
+        participantUids: participantUidsRef.current,
+        linkExpiresAtMs: draftExpiryMsRef.current,
       });
       lastSavedDigestRef.current = digest;
       setAutoSaveStatus("saved");
@@ -530,9 +631,41 @@ export default function App() {
 
         if (isValidResumeToken(resumeParam)) {
           setIsRestoringResumeLink(true);
-          const restored = await loadOnlineDraftByToken(resumeParam);
+          const loadResult = await loadOnlineDraftWithStatus(resumeParam);
+          if (cancelled) return;
+
+          if (loadResult.status === "inactive") {
+            // Link is locked, revoked, expired (> 7 days), or invalid — show ZERO answers!
+            try {
+              window.history.replaceState({}, "", window.location.pathname || "/");
+            } catch {
+              // ignore
+            }
+            setIsLinkLocked(true);
+            setIsRestoringResumeLink(false);
+            setHasLoadedStorage(true);
+            return;
+          }
+
+          const restored = loadResult.draft;
           if (!cancelled && restored) {
             const cleanAnswers = sanitizeAnswers(restored.answers);
+            draftOwnerUidRef.current = restored.ownerUid;
+            participantUidsRef.current = restored.participantUids;
+            draftExpiryMsRef.current = getDraftExpiryMillis(restored);
+            if (restored.partnerProgress) {
+              setPartnerProgress(restored.partnerProgress);
+            }
+            if (restored.fieldMeta) {
+              localFieldMetaRef.current = { ...restored.fieldMeta };
+            }
+
+            const restoredMode = getEffectiveFillMode({
+              fillMode: restored.fillMode || cleanAnswers.fillMode,
+            });
+            if (splitModeEnabled) {
+              setFillMode(restoredMode);
+            }
 
             // Resume any unfinished photo blobs still in IndexedDB on this device
             // and identify any missing slots that need to be re-added on a new device.
@@ -575,6 +708,11 @@ export default function App() {
             setMissingPhotoSlots(missingSlots);
             setAutoSaveStatus("saved");
             setResumeBanner(bannerText);
+
+            if (splitModeEnabled && restoredMode === "separate" && restored.status !== "submitted") {
+              setNeedsPartnerGate(true);
+            }
+
             try {
               localStorage.setItem(
                 STORAGE_KEY,
@@ -762,6 +900,136 @@ export default function App() {
     });
   }, [hasLoadedStorage, currentPath]);
 
+  // Real-time collaborative draft sync (ONLY active when ENABLE_SPLIT_MODE is ON and fillMode === "separate")
+  useEffect(() => {
+    if (
+      !splitModeEnabled ||
+      fillMode !== "separate" ||
+      !resumeToken ||
+      !hasLoadedStorage ||
+      currentPath.startsWith("/admin") ||
+      currentStep === 29
+    ) {
+      return;
+    }
+
+    return subscribeOnlineDraft(
+      resumeToken,
+      (remoteDraft: DraftRecord) => {
+        draftOwnerUidRef.current = remoteDraft.ownerUid;
+        participantUidsRef.current = remoteDraft.participantUids;
+        draftExpiryMsRef.current = getDraftExpiryMillis(remoteDraft);
+        if (remoteDraft.partnerProgress) {
+          setPartnerProgress(remoteDraft.partnerProgress);
+        }
+
+        const remoteAnswers = sanitizeAnswers(remoteDraft.answers);
+        const me = activePartnerRef.current;
+        const other = getOtherPartnerSlot(me);
+
+        // Detect simultaneous shared-field edit conflict on the currently visible step
+        const stepSharedFieldMap: Record<number, keyof QuestionnaireAnswers> = {
+          3: "q3_firstMeet",
+          5: "q5_threeWords",
+          6: "q6_activities",
+          8: "q8_funnyStory",
+          9: "q9_proposal",
+          12: "q12_references",
+          25: "primaryContact",
+          26: "loveStoryNarrative",
+        };
+        const currentSharedKey = stepSharedFieldMap[currentStepRef.current];
+        if (currentSharedKey && remoteDraft.fieldMeta?.[currentSharedKey]) {
+          const localMeta = localFieldMetaRef.current[currentSharedKey];
+          const isFieldLocallyDirty = Boolean(
+            localMeta &&
+              Date.now() - Date.parse(localMeta.updatedAt) <= 5000
+          );
+          const theirVal = remoteAnswers[currentSharedKey];
+          const myVal = answersRef.current[currentSharedKey];
+          const conflict = detectSharedFieldConflict({
+            fieldKey: String(currentSharedKey),
+            activePartner: me,
+            localValue: myVal,
+            remoteValue: theirVal,
+            remoteMeta: remoteDraft.fieldMeta[currentSharedKey],
+            partnerNames: {
+              partner1: answersRef.current.partner1,
+              partner2: answersRef.current.partner2,
+            },
+            isFieldLocallyDirty,
+          });
+          if (conflict) {
+            setSharedConflict({
+              step: currentStepRef.current,
+              fieldKey: String(currentSharedKey),
+              otherPartnerName: conflict.otherPartnerName,
+              theirValue: theirVal,
+              myValue: myVal,
+            });
+          }
+        }
+
+        // Merge remote partner's answers & per-event Q14 decor map without overwriting active partner's local edits
+        setAnswers((prev) => {
+          const next = { ...prev };
+          if (remoteAnswers.partnerAnswers?.[other]) {
+            next.partnerAnswers = {
+              ...(prev.partnerAnswers || {}),
+              [other]: remoteAnswers.partnerAnswers[other],
+              sameForBoth: {
+                ...(remoteAnswers.partnerAnswers.sameForBoth || {}),
+                ...(prev.partnerAnswers?.sameForBoth || {}),
+              },
+            };
+          }
+
+          // Merge Q10 & Q13 other partner's side safely
+          if (other === "partnerA" && remoteAnswers.q10_people?.brideSide) {
+            next.q10_people = {
+              ...prev.q10_people,
+              brideSide: remoteAnswers.q10_people.brideSide,
+            };
+          } else if (other === "partnerB" && remoteAnswers.q10_people?.groomSide) {
+            next.q10_people = {
+              ...prev.q10_people,
+              groomSide: remoteAnswers.q10_people.groomSide,
+            };
+          }
+
+          if (other === "partnerA" && remoteAnswers.wardrobe?.bride) {
+            next.wardrobe = {
+              bride: remoteAnswers.wardrobe.bride,
+              groom: prev.wardrobe?.groom || { notes: "", links: [], photos: [] },
+            };
+          } else if (other === "partnerB" && remoteAnswers.wardrobe?.groom) {
+            next.wardrobe = {
+              bride: prev.wardrobe?.bride || { notes: "", links: [], photos: [] },
+              groom: remoteAnswers.wardrobe.groom,
+            };
+          }
+
+          // Merge Q14 decor events per eventId
+          if (remoteAnswers.decorEventsMap || prev.decorEventsMap) {
+            const localMap = prev.decorEventsMap || decorEventsToMap(prev.decorEvents);
+            const remoteMap =
+              remoteAnswers.decorEventsMap || decorEventsToMap(remoteAnswers.decorEvents);
+            const mergedMap = mergeDecorEventMaps(localMap, remoteMap);
+            next.decorEventsMap = mergedMap;
+            next.decorEvents = decorMapToEvents(mergedMap);
+          }
+
+          return next;
+        });
+      },
+      (reason) => {
+        if (reason === "locked" || reason === "revoked" || reason === "expired") {
+          setIsLinkLocked(true);
+        }
+      }
+    );
+  }, [splitModeEnabled, fillMode, resumeToken, hasLoadedStorage, currentPath, currentStep]);
+
   // Clean up timers
   useEffect(() => {
     return () => {
@@ -796,8 +1064,18 @@ export default function App() {
     setCurrentStep(targetStep);
   };
 
+  const activeFillMode: FillMode = splitModeEnabled ? fillMode : "together";
+
   const handleNext = (bypassValidation = false) => {
-    if (!bypassValidation && !validateQuestionStep(currentStep, answersRef.current).isComplete) {
+    if (
+      !bypassValidation &&
+      !validateQuestionStepForContext(
+        currentStep,
+        answersRef.current,
+        activeFillMode,
+        activePartnerRef.current
+      ).isComplete
+    ) {
       return;
     }
     if (editingFromReview) {
@@ -872,6 +1150,190 @@ export default function App() {
     }
   };
 
+  // Mark active partner's part done in Separate mode; returns whether both are now done
+  const handleMarkMyPartDone = async (
+    slot: PartnerSlot
+  ): Promise<{ bothDone: boolean; nextProgress: PartnerProgressMap }> => {
+    const existingWithDone: PartnerProgressMap = {
+      partnerA: { ...(partnerProgressRef.current?.partnerA || { done: false, answeredCount: 0 }) },
+      partnerB: { ...(partnerProgressRef.current?.partnerB || { done: false, answeredCount: 0 }) },
+    };
+    existingWithDone[slot] = {
+      ...existingWithDone[slot],
+      done: true,
+      doneAt: new Date().toISOString(),
+    };
+    const nextProgress = buildPartnerProgressSnapshot(
+      answersRef.current,
+      existingWithDone
+    );
+    setPartnerProgress(nextProgress);
+    const session = getOrCreateCoupleSession();
+    try {
+      await saveOnlineDraftFieldPatch({
+        resumeToken: session.resumeToken,
+        submissionId: session.submissionId,
+        patch: {
+          fillMode: "separate",
+        },
+        answersForSummary: answersRef.current,
+        partnerProgress: nextProgress,
+        existingOwnerUid: draftOwnerUidRef.current,
+        participantUids: participantUidsRef.current,
+      });
+    } catch {
+      await flushOnlineDraftNow();
+    }
+    const otherSlot = getOtherPartnerSlot(slot);
+    const bothDone = Boolean(nextProgress[slot]?.done && nextProgress[otherSlot]?.done);
+    return { bothDone, nextProgress };
+  };
+
+  // Helper for per-person overlay questions (Q11, Q15–Q24, Q27):
+  // - When splitModeEnabled is false: reads/writes top-level answers 100% identically to today
+  // - In Separate mode: reads/writes activePartner's overlay slot (and syncs top-level fallback when empty)
+  // - In Together mode: when "Same answer for both of us" is checked, reads/writes top-level;
+  //   when unchecked, reads/writes togetherActiveTab's overlay slot.
+  const getStepOverlayTargetSlot = (step: number): PartnerSlot | null => {
+    if (!splitModeEnabled || !getOverlayFieldKeyForStep(step)) return null;
+    if (fillMode === "separate") return activePartner;
+    if (!isSameForBothForStep(answers, step)) return togetherActiveTab;
+    return null;
+  };
+
+  const readOverlayField = <K extends keyof QuestionnaireAnswers>(
+    step: number,
+    key: K
+  ): QuestionnaireAnswers[K] => {
+    const targetSlot = getStepOverlayTargetSlot(step);
+    if (!targetSlot) return answers[key];
+    return getPartnerOverlayValue(answers, targetSlot, key as any) as QuestionnaireAnswers[K];
+  };
+
+  const writeOverlayField = <K extends keyof QuestionnaireAnswers>(
+    step: number,
+    key: K,
+    updater: (prevVal: QuestionnaireAnswers[K]) => QuestionnaireAnswers[K]
+  ) => {
+    const targetSlot = getStepOverlayTargetSlot(step);
+    setAnswers((prev) => {
+      if (!targetSlot) {
+        return { ...prev, [key]: updater(prev[key]) };
+      }
+      const currentSlotVal = getPartnerOverlayValue(
+        prev,
+        targetSlot,
+        key as any
+      ) as QuestionnaireAnswers[K];
+      const nextSlotVal = updater(currentSlotVal);
+      return setPartnerOverlayValue(prev, targetSlot, key as any, nextSlotVal as any);
+    });
+  };
+
+  const recordSharedFieldEdit = (fieldKey: string) => {
+    if (!splitModeEnabled || fillMode !== "separate") return;
+    localFieldMetaRef.current[fieldKey] = {
+      updatedBy: activePartnerRef.current,
+      updatedAt: new Date().toISOString(),
+    };
+  };
+
+  const prevSharedFieldDigestRef = useRef<Record<string, string>>({});
+  useEffect(() => {
+    if (!splitModeEnabled || fillMode !== "separate" || !hasLoadedStorage) return;
+    const stepSharedFieldMap: Record<number, keyof QuestionnaireAnswers> = {
+      3: "q3_firstMeet",
+      5: "q5_threeWords",
+      6: "q6_activities",
+      8: "q8_funnyStory",
+      9: "q9_proposal",
+      12: "q12_references",
+      25: "primaryContact",
+      26: "loveStoryNarrative",
+    };
+    const key = stepSharedFieldMap[currentStep];
+    if (!key) return;
+    const digest = JSON.stringify(answers[key]);
+    const prevDigest = prevSharedFieldDigestRef.current[String(key)];
+    if (prevDigest !== undefined && prevDigest !== digest) {
+      recordSharedFieldEdit(String(key));
+    }
+    prevSharedFieldDigestRef.current[String(key)] = digest;
+  }, [splitModeEnabled, fillMode, hasLoadedStorage, currentStep, answers]);
+
+  const renderPerPersonControls = (step: number) => {
+    if (!splitModeEnabled || !isPerPersonQuestion(step) || !getOverlayFieldKeyForStep(step)) {
+      return null;
+    }
+    const fieldKey = getOverlayFieldKeyForStep(step)!;
+
+    if (fillMode === "separate") {
+      const otherSlot = getOtherPartnerSlot(activePartner);
+      const otherName = getPartnerDisplayName(answers, otherSlot);
+      const myName = getPartnerDisplayName(answers, activePartner);
+      const otherVal = answers.partnerAnswers?.[otherSlot]?.[fieldKey];
+      const otherAnswered = !isOverlayValueEmpty(fieldKey, otherVal);
+      return (
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-3.5 py-2 rounded-xl bg-[#FAF8F5] border border-[#EFECE6] text-xs text-[#5F5F5F]">
+          <span>
+            Answering for <strong className="text-[#1A1A1A]">{myName}</strong>
+          </span>
+          <span className={otherAnswered ? "text-emerald-800 font-medium" : "text-[#7A756D]"}>
+            {otherAnswered ? `${otherName} answered` : `${otherName} hasn't answered yet`}
+          </span>
+        </div>
+      );
+    }
+
+    const sameForBoth = isSameForBothForStep(answers, step);
+    return (
+      <div className="space-y-3">
+        <SameForBothToggle
+          checked={sameForBoth}
+          onChange={(checked) =>
+            setAnswers((prev) => setSameForBothForStep(prev, step, checked))
+          }
+          partner1={p1}
+          partner2={p2}
+        />
+        {!sameForBoth && (
+          <div
+            role="tablist"
+            aria-label="Choose partner to answer for"
+            className="grid grid-cols-2 gap-1 p-1 bg-[#F2EFE9] border border-[#E8E8E8] rounded-2xl"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={togetherActiveTab === "partnerA"}
+              onClick={() => setTogetherActiveTab("partnerA")}
+              className={`min-h-[40px] px-3 py-1.5 rounded-xl text-xs sm:text-sm transition-all cursor-pointer truncate ${
+                togetherActiveTab === "partnerA"
+                  ? "bg-white text-[#1A1A1A] font-semibold shadow-2xs"
+                  : "text-[#5F5F5F] hover:text-[#1A1A1A] font-medium"
+              }`}
+            >
+              {p1}&apos;s answer
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={togetherActiveTab === "partnerB"}
+              onClick={() => setTogetherActiveTab("partnerB")}
+              className={`min-h-[40px] px-3 py-1.5 rounded-xl text-xs sm:text-sm transition-all cursor-pointer truncate ${
+                togetherActiveTab === "partnerB"
+                  ? "bg-white text-[#1A1A1A] font-semibold shadow-2xs"
+                  : "text-[#5F5F5F] hover:text-[#1A1A1A] font-medium"
+              }`}
+            >
+              {p2}&apos;s answer
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // Reset form
   const handleReset = () => {
     const activeSessionId = getActiveCoupleSession()?.submissionId;
@@ -883,6 +1345,18 @@ export default function App() {
     setPendingPhotosAfterSend(0);
     setMissingPhotoSlots([]);
     setResumeBanner(null);
+    setIsLinkLocked(false);
+    setFillMode("together");
+    setActivePartner("partnerA");
+    setNeedsPartnerGate(false);
+    setPartnerProgress({
+      partnerA: { done: false, answeredCount: 0 },
+      partnerB: { done: false, answeredCount: 0 },
+    });
+    setSharedConflict(null);
+    draftOwnerUidRef.current = undefined;
+    participantUidsRef.current = undefined;
+    draftExpiryMsRef.current = undefined;
     lastSavedDigestRef.current = "";
     clearPendingPostSubmitState();
     resetActiveCoupleSession();
@@ -979,6 +1453,27 @@ export default function App() {
     );
   }
 
+  // Phase 0: Locked, revoked, or expired resume link shows ONLY the neutral message & zero answers
+  if (isLinkLocked) {
+    return <LockedLinkScreen />;
+  }
+
+  // Separate mode invite link identity picker ("Who's opening this?")
+  if (splitModeEnabled && needsPartnerGate && !isRestoringResumeLink) {
+    return (
+      <PartnerIdentityGate
+        partner1={answers.partner1}
+        partner2={answers.partner2}
+        onSelectPartner={(slot) => {
+          setActivePartner(slot);
+          setNeedsPartnerGate(false);
+          const nextUnanswered = getFirstUnansweredStepForPartner(answers, slot);
+          setCurrentStep(nextUnanswered);
+        }}
+      />
+    );
+  }
+
   // Active chapter title for header
   const currentChapter = CHAPTERS.find(
     (c) => currentStep >= c.startQ && currentStep <= c.endQ
@@ -997,6 +1492,14 @@ export default function App() {
           subtitle={chapter.subtitle}
           questionRange={chapter.range}
           onProceed={handleChapterProceed}
+          splitModeEnabled={splitModeEnabled}
+          fillMode={fillMode}
+          resumeToken={resumeToken}
+          partner1={answers.partner1}
+          partner2={answers.partner2}
+          activePartner={activePartner}
+          invitedAlready={invitedAlready}
+          onPartnerInvited={() => setInvitedAlready(true)}
         />
       );
     }
@@ -1040,6 +1543,14 @@ export default function App() {
         hasSavedProgress={savedStepNotice > 0}
         savedStep={savedStepNotice}
         onResume={handleResume}
+        splitModeEnabled={splitModeEnabled}
+        fillMode={fillMode}
+        activePartner={activePartner}
+        onFillModeChange={(mode) => {
+          setFillMode(mode);
+          setAnswers((prev) => ({ ...prev, fillMode: mode }));
+        }}
+        onActivePartnerChange={setActivePartner}
       />
     );
   }
@@ -1065,6 +1576,14 @@ export default function App() {
           }
           setCurrentStep(29);
         }}
+        splitModeEnabled={splitModeEnabled}
+        fillMode={fillMode}
+        activePartner={activePartner}
+        partnerProgress={partnerProgress}
+        participantUids={participantUidsRef.current}
+        invitedAlready={invitedAlready}
+        onPartnerInvited={() => setInvitedAlready(true)}
+        onMarkMyPartDone={handleMarkMyPartDone}
       />
     );
   }
@@ -1097,7 +1616,14 @@ export default function App() {
         canGoBack={true}
         editingFromReview={editingFromReview}
         onReturnToReview={() => {
-          if (!validateQuestionStep(currentStep, answersRef.current).isComplete) {
+          if (
+            !validateQuestionStepForContext(
+              currentStep,
+              answersRef.current,
+              activeFillMode,
+              activePartnerRef.current
+            ).isComplete
+          ) {
             return;
           }
           setCurrentStep(28);
@@ -1108,6 +1634,26 @@ export default function App() {
         partner1={answers.partner1}
         partner2={answers.partner2}
         email={answers.email}
+        splitModeEnabled={splitModeEnabled}
+        fillMode={fillMode}
+        activePartner={activePartner}
+        partnerACount={
+          splitModeEnabled && fillMode === "separate"
+            ? getPartnerAnsweredCount(answers, "partnerA")
+            : undefined
+        }
+        partnerBCount={
+          splitModeEnabled && fillMode === "separate"
+            ? getPartnerAnsweredCount(answers, "partnerB")
+            : undefined
+        }
+        invitedAlready={invitedAlready}
+        onChangeFillMode={(mode) => {
+          setFillMode(mode);
+          setAnswers((prev) => ({ ...prev, fillMode: mode }));
+        }}
+        onChangeActivePartner={setActivePartner}
+        onPartnerInvited={() => setInvitedAlready(true)}
       />
 
       {siteUpdatingNotice && (
@@ -1175,6 +1721,25 @@ export default function App() {
         }`}
       >
         <div className="space-y-6">
+          {splitModeEnabled &&
+            sharedConflict &&
+            sharedConflict.step === currentStep && (
+              <SharedFieldConflictBanner
+                otherPartnerName={sharedConflict.otherPartnerName}
+                onKeepTheirs={() => {
+                  const key = sharedConflict.fieldKey as keyof QuestionnaireAnswers;
+                  setAnswers((prev) => ({ ...prev, [key]: sharedConflict.theirValue }));
+                  setSharedConflict(null);
+                }}
+                onUseMine={() => {
+                  recordSharedFieldEdit(sharedConflict.fieldKey);
+                  setSharedConflict(null);
+                  lastSavedDigestRef.current = "";
+                  void flushOnlineDraftNow();
+                }}
+              />
+            )}
+
           {/* QUESTION 1 */}
           {currentStep === 1 && (
             <div className="space-y-6">
@@ -1608,6 +2173,9 @@ export default function App() {
                   partner1={p1}
                   partner2={p2}
                   value={answers.q10_people}
+                  splitModeEnabled={splitModeEnabled}
+                  fillMode={fillMode}
+                  activePartner={activePartner}
                   onChange={(nextQ10) =>
                     setAnswers((prev) => ({
                       ...prev,
@@ -1620,110 +2188,104 @@ export default function App() {
           )}
 
           {/* QUESTION 11 */}
-          {currentStep === 11 && (
-            <div className="space-y-6">
-              <div>
-                <QuestionHeader
-                  title="How do you want your wedding photographs and films to feel?"
-                  helper="Choose 3 styles that resonate with you both. Uncheck one if you'd like to swap."
-                  required
-                />
-                {/* Exact 3 Counter Indicator */}
-                {(() => {
-                  const selectedCount = answers.q11_filmFeel.selected?.length || 0;
-                  return (
-                    <div className="mt-3 flex items-center gap-2">
-                      <span
-                        className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-colors border ${
-                          selectedCount === Q11_REQUIRED_SELECTIONS
-                            ? "bg-emerald-50 text-emerald-800 border-emerald-200 font-semibold"
-                            : selectedCount > Q11_MAX_SELECTIONS
-                            ? "bg-amber-50 text-amber-800 border-amber-200 font-semibold"
-                            : "bg-[#FAF7F2] text-[#8C7043] border-[#E8DFD3]"
-                        }`}
-                      >
-                        {selectedCount === Q11_REQUIRED_SELECTIONS ? (
-                          <span>
-                            ✓ 3 of 3 styles selected · Uncheck one to choose another
-                          </span>
-                        ) : selectedCount > Q11_MAX_SELECTIONS ? (
-                          <span>
-                            Select only {Q11_MAX_SELECTIONS} styles — please uncheck{" "}
-                            {selectedCount - Q11_MAX_SELECTIONS}
-                          </span>
-                        ) : (
-                          <span>
-                            Choose {Q11_REQUIRED_SELECTIONS} styles ·{" "}
-                            {Q11_REQUIRED_SELECTIONS - selectedCount} more needed ({selectedCount} of{" "}
-                            {Q11_REQUIRED_SELECTIONS} selected)
-                          </span>
-                        )}
-                      </span>
-                    </div>
-                  );
-                })()}
-              </div>
+          {currentStep === 11 && (() => {
+            const q11Val = readOverlayField(11, "q11_filmFeel") || { selected: [], other: "" };
+            const selectedCount = q11Val.selected?.length || 0;
+            return (
+              <div className="space-y-6">
+                <div>
+                  <QuestionHeader
+                    title="How do you want your wedding photographs and films to feel?"
+                    helper="Choose 3 styles that resonate with you both. Uncheck one if you'd like to swap."
+                    required
+                  />
+                  {renderPerPersonControls(11)}
+                  {/* Exact 3 Counter Indicator */}
+                  <div className="mt-3 flex items-center gap-2">
+                    <span
+                      className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-colors border ${
+                        selectedCount === Q11_REQUIRED_SELECTIONS
+                          ? "bg-emerald-50 text-emerald-800 border-emerald-200 font-semibold"
+                          : selectedCount > Q11_MAX_SELECTIONS
+                          ? "bg-amber-50 text-amber-800 border-amber-200 font-semibold"
+                          : "bg-[#FAF7F2] text-[#8C7043] border-[#E8DFD3]"
+                      }`}
+                    >
+                      {selectedCount === Q11_REQUIRED_SELECTIONS ? (
+                        <span>
+                          ✓ 3 of 3 styles selected · Uncheck one to choose another
+                        </span>
+                      ) : selectedCount > Q11_MAX_SELECTIONS ? (
+                        <span>
+                          Select only {Q11_MAX_SELECTIONS} styles — please uncheck{" "}
+                          {selectedCount - Q11_MAX_SELECTIONS}
+                        </span>
+                      ) : (
+                        <span>
+                          Choose {Q11_REQUIRED_SELECTIONS} styles ·{" "}
+                          {Q11_REQUIRED_SELECTIONS - selectedCount} more needed ({selectedCount} of{" "}
+                          {Q11_REQUIRED_SELECTIONS} selected)
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {[
-                  "Natural and candid",
-                  "Emotional and intimate",
-                  "Elegant and editorial",
-                  "Fun and energetic",
-                  "Timeless and classic",
-                  "Cinematic and dramatic",
-                  "Warm and nostalgic",
-                  "A mix of everything",
-                ].map((opt) => {
-                  const currentSelected = answers.q11_filmFeel.selected || [];
-                  const isSelected = currentSelected.includes(opt);
-                  const isCapReached =
-                    !isSelected && currentSelected.length >= Q11_MAX_SELECTIONS;
-                  return (
-                    <OptionCard
-                      key={opt}
-                      label={opt}
-                      isSelected={isSelected}
-                      isMultiSelect={true}
-                      disabled={isCapReached}
-                      onSelect={() => {
-                        setAnswers((prev) => ({
-                          ...prev,
-                          q11_filmFeel: {
-                            ...prev.q11_filmFeel,
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {[
+                    "Natural and candid",
+                    "Emotional and intimate",
+                    "Elegant and editorial",
+                    "Fun and energetic",
+                    "Timeless and classic",
+                    "Cinematic and dramatic",
+                    "Warm and nostalgic",
+                    "A mix of everything",
+                  ].map((opt) => {
+                    const currentSelected = q11Val.selected || [];
+                    const isSelected = currentSelected.includes(opt);
+                    const isCapReached =
+                      !isSelected && currentSelected.length >= Q11_MAX_SELECTIONS;
+                    return (
+                      <OptionCard
+                        key={opt}
+                        label={opt}
+                        isSelected={isSelected}
+                        isMultiSelect={true}
+                        disabled={isCapReached}
+                        onSelect={() => {
+                          writeOverlayField(11, "q11_filmFeel", (prevQ11) => ({
+                            ...(prevQ11 || { selected: [], other: "" }),
                             selected: toggleMultiSelectWithMax(
-                              prev.q11_filmFeel.selected,
+                              prevQ11?.selected || [],
                               opt,
                               Q11_MAX_SELECTIONS
                             ),
-                          },
-                        }));
-                      }}
-                    />
-                  );
-                })}
-              </div>
+                          }));
+                        }}
+                      />
+                    );
+                  })}
+                </div>
 
-              <div className="pt-2">
-                <VoiceTextarea
-                  id="q11-other"
-                  label="Anything else in your own words? (Optional)"
-                  value={answers.q11_filmFeel?.other ?? ""}
-                  onChange={(val) =>
-                    setAnswers((prev) => ({
-                      ...prev,
-                      q11_filmFeel: {
-                        ...prev.q11_filmFeel,
+                <div className="pt-2">
+                  <VoiceTextarea
+                    id="q11-other"
+                    label="Anything else in your own words? (Optional)"
+                    value={q11Val.other ?? ""}
+                    onChange={(val) =>
+                      writeOverlayField(11, "q11_filmFeel", (prevQ11) => ({
+                        ...(prevQ11 || { selected: [], other: "" }),
                         other: val,
-                      },
-                    }))
-                  }
-                  placeholder="e.g. Grainy 35mm film vibes, warm golden hour tones, unposed candid moments..."
-                  rows={2}
-                />
+                      }))
+                    }
+                    placeholder="e.g. Grainy 35mm film vibes, warm golden hour tones, unposed candid moments..."
+                    rows={2}
+                  />
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
 
           {/* QUESTION 12 */}
@@ -1890,6 +2452,11 @@ export default function App() {
                 <WardrobeQuestion
                   wardrobe={answers.wardrobe}
                   legacyWeddingOutfits={answers.weddingOutfits}
+                  partner1={p1}
+                  partner2={p2}
+                  splitModeEnabled={splitModeEnabled}
+                  fillMode={fillMode}
+                  activePartner={activePartner}
                   onChange={(nextWardrobe) =>
                     setAnswers((prev) => ({
                       ...prev,
@@ -1921,10 +2488,26 @@ export default function App() {
                   decorEvents={answers.decorEvents}
                   legacyDecorMoodBoard={answers.decorMoodBoard}
                   onChange={(nextEvents) =>
-                    setAnswers((prev) => ({
-                      ...prev,
-                      decorEvents: nextEvents,
-                    }))
+                    setAnswers((prev) => {
+                      if (!splitModeEnabled) {
+                        return { ...prev, decorEvents: nextEvents };
+                      }
+                      const rawMap = decorEventsToMap(nextEvents);
+                      const nowIso = new Date().toISOString();
+                      const stampedMap: typeof rawMap = {};
+                      for (const [evId, entry] of Object.entries(rawMap)) {
+                        stampedMap[evId] = {
+                          ...entry,
+                          updatedAt: nowIso,
+                          updatedBy: activePartner,
+                        };
+                      }
+                      return {
+                        ...prev,
+                        decorEvents: nextEvents,
+                        decorEventsMap: stampedMap,
+                      };
+                    })
                   }
                   onClearLegacy={() =>
                     setAnswers((prev) => ({
@@ -1938,441 +2521,465 @@ export default function App() {
           )}
 
           {/* QUESTION 15 (previously Q13) */}
-          {currentStep === 15 && (
-            <div className="space-y-6">
-              <div className="space-y-3">
-                <QuestionHeader
-                  title="What tone are you expecting to set for your wedding day"
-                  helper="Select up to 3 tones that capture your wedding day (at least 1 required · uncheck one to choose another)."
-                  required
-                />
-                {(() => {
-                  const selectedCount = answers.q13_tone.selected?.length || 0;
-                  return (
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-colors border ${
-                          selectedCount > Q15_MAX_SELECTIONS
-                            ? "bg-amber-50 text-amber-800 border-amber-200 font-semibold"
-                            : selectedCount === Q15_MAX_SELECTIONS
-                            ? "bg-emerald-50 text-emerald-800 border-emerald-200 font-semibold"
-                            : selectedCount >= 1
-                            ? "bg-[#FAF7F2] text-[#8C7043] border-[#E8DFD3]"
-                            : "bg-[#FAF7F2] text-[#8C7043] border-[#E8DFD3]"
-                        }`}
-                      >
-                        {selectedCount > Q15_MAX_SELECTIONS ? (
-                          <span>
-                            Select at most {Q15_MAX_SELECTIONS} tones — please uncheck{" "}
-                            {selectedCount - Q15_MAX_SELECTIONS}
-                          </span>
-                        ) : selectedCount === Q15_MAX_SELECTIONS ? (
-                          <span>
-                            ✓ 3 of 3 tones selected · Uncheck one to choose another
-                          </span>
-                        ) : selectedCount >= 1 ? (
-                          <span>
-                            ✓ {selectedCount} of {Q15_MAX_SELECTIONS} tones selected · ready to continue
-                          </span>
-                        ) : (
-                          <span>
-                            Choose 1 to {Q15_MAX_SELECTIONS} tones (0 of {Q15_MAX_SELECTIONS} selected)
-                          </span>
-                        )}
-                      </span>
-                    </div>
-                  );
-                })()}
-              </div>
+          {currentStep === 15 && (() => {
+            const q15Val = readOverlayField(15, "q13_tone") || { selected: [], other: "" };
+            const selectedCount = q15Val.selected?.length || 0;
+            return (
+              <div className="space-y-6">
+                <div className="space-y-3">
+                  <QuestionHeader
+                    title="What tone are you expecting to set for your wedding day"
+                    helper="Select up to 3 tones that capture your wedding day (at least 1 required · uncheck one to choose another)."
+                    required
+                  />
+                  {renderPerPersonControls(15)}
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-colors border ${
+                        selectedCount > Q15_MAX_SELECTIONS
+                          ? "bg-amber-50 text-amber-800 border-amber-200 font-semibold"
+                          : selectedCount === Q15_MAX_SELECTIONS
+                          ? "bg-emerald-50 text-emerald-800 border-emerald-200 font-semibold"
+                          : "bg-[#FAF7F2] text-[#8C7043] border-[#E8DFD3]"
+                      }`}
+                    >
+                      {selectedCount > Q15_MAX_SELECTIONS ? (
+                        <span>
+                          Select at most {Q15_MAX_SELECTIONS} tones — please uncheck{" "}
+                          {selectedCount - Q15_MAX_SELECTIONS}
+                        </span>
+                      ) : selectedCount === Q15_MAX_SELECTIONS ? (
+                        <span>
+                          ✓ 3 of 3 tones selected · Uncheck one to choose another
+                        </span>
+                      ) : selectedCount >= 1 ? (
+                        <span>
+                          ✓ {selectedCount} of {Q15_MAX_SELECTIONS} tones selected · ready to continue
+                        </span>
+                      ) : (
+                        <span>
+                          Choose 1 to {Q15_MAX_SELECTIONS} tones (0 of {Q15_MAX_SELECTIONS} selected)
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {[
-                  "Romantic & Intimate",
-                  "Fun & Vibrant",
-                  "Fashion-Forward & Editorial",
-                  "Organic & Natural",
-                  "Traditional & Grand",
-                  "Timeless & Elegant",
-                  "Relaxed & Festive",
-                  "A mix of tones",
-                ].map((tone) => {
-                  const currentSelected = answers.q13_tone.selected || [];
-                  const isSelected = currentSelected.includes(tone);
-                  const isCapReached =
-                    !isSelected && currentSelected.length >= Q15_MAX_SELECTIONS;
-                  return (
-                    <OptionCard
-                      key={tone}
-                      label={tone}
-                      isSelected={isSelected}
-                      isMultiSelect={true}
-                      disabled={isCapReached}
-                      onSelect={() => {
-                        setAnswers((prev) => ({
-                          ...prev,
-                          q13_tone: {
-                            ...prev.q13_tone,
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {[
+                    "Romantic & Intimate",
+                    "Fun & Vibrant",
+                    "Fashion-Forward & Editorial",
+                    "Organic & Natural",
+                    "Traditional & Grand",
+                    "Timeless & Elegant",
+                    "Relaxed & Festive",
+                    "A mix of tones",
+                  ].map((tone) => {
+                    const currentSelected = q15Val.selected || [];
+                    const isSelected = currentSelected.includes(tone);
+                    const isCapReached =
+                      !isSelected && currentSelected.length >= Q15_MAX_SELECTIONS;
+                    return (
+                      <OptionCard
+                        key={tone}
+                        label={tone}
+                        isSelected={isSelected}
+                        isMultiSelect={true}
+                        disabled={isCapReached}
+                        onSelect={() => {
+                          writeOverlayField(15, "q13_tone", (prevTone) => ({
+                            ...(prevTone || { selected: [], other: "" }),
                             selected: toggleMultiSelectWithMax(
-                              prev.q13_tone.selected,
+                              prevTone?.selected || [],
                               tone,
                               Q15_MAX_SELECTIONS
                             ),
-                          },
-                        }));
-                      }}
-                    />
-                  );
-                })}
-              </div>
+                          }));
+                        }}
+                      />
+                    );
+                  })}
+                </div>
 
-              <div className="pt-2">
-                <VoiceTextarea
-                  id="q15-tone-other"
-                  label="Anything specific about the tone or vibe in your own words? (Optional)"
-                  value={answers.q13_tone?.other ?? ""}
-                  onChange={(val) =>
-                    setAnswers((prev) => ({
-                      ...prev,
-                      q13_tone: {
-                        ...prev.q13_tone,
+                <div className="pt-2">
+                  <VoiceTextarea
+                    id="q15-tone-other"
+                    label="Anything specific about the tone or vibe in your own words? (Optional)"
+                    value={q15Val.other ?? ""}
+                    onChange={(val) =>
+                      writeOverlayField(15, "q13_tone", (prevTone) => ({
+                        ...(prevTone || { selected: [], other: "" }),
                         other: val,
-                      },
-                    }))
-                  }
-                  placeholder="e.g. Cozy and emotional ceremony leading into a lively celebration, candlelit evening..."
-                  rows={2}
-                />
+                      }))
+                    }
+                    placeholder="e.g. Cozy and emotional ceremony leading into a lively celebration, candlelit evening..."
+                    rows={2}
+                  />
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* QUESTION 16 (previously Q14) */}
-          {currentStep === 16 && (
-            <div className="space-y-6">
-              <QuestionHeader
-                title="What are the moments you are most looking forward to during your wedding?"
-                helper="Select all that apply, or enter anything unique you have planned."
-                required
-              />
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {[
-                  "Getting ready",
-                  "First look or first glance",
-                  "Ceremony and vows",
-                  "Family blessings",
-                  "Couple portraits",
-                  "Grand entry",
-                  "The celebration and dancing",
-                  "Quiet moments together",
-                  "Speeches and toasts",
-                  "Send-off",
-                ].map((moment) => {
-                  const isSelected =
-                    answers.q14_moments.selected.includes(moment);
-                  return (
-                    <OptionCard
-                      key={moment}
-                      label={moment}
-                      isSelected={isSelected}
-                      isMultiSelect={true}
-                      onSelect={() => {
-                        const current = answers.q14_moments.selected;
-                        const updated = isSelected
-                          ? current.filter((x) => x !== moment)
-                          : [...current, moment];
-                        setAnswers((prev) => ({
-                          ...prev,
-                          q14_moments: {
-                            ...prev.q14_moments,
-                            selected: updated,
-                          },
-                        }));
-                      }}
-                    />
-                  );
-                })}
-              </div>
-              <div className="pt-2">
-                <VoiceTextarea
-                  id="q16-moments-other"
-                  label="Anything else?"
-                  value={answers.q14_moments?.other ?? ""}
-                  onChange={(val) =>
-                    setAnswers((prev) => ({
-                      ...prev,
-                      q14_moments: {
-                        selected: prev.q14_moments?.selected ?? [],
-                        other: val,
-                      },
-                    }))
-                  }
-                  placeholder="e.g. Flash mob with cousins, private vow reading before sunrise..."
-                  rows={2}
+          {currentStep === 16 && (() => {
+            const q16Val = readOverlayField(16, "q14_moments") || { selected: [], other: "" };
+            return (
+              <div className="space-y-6">
+                <QuestionHeader
+                  title="What are the moments you are most looking forward to during your wedding?"
+                  helper="Select all that apply, or enter anything unique you have planned."
+                  required
                 />
+                {renderPerPersonControls(16)}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {[
+                    "Getting ready",
+                    "First look or first glance",
+                    "Ceremony and vows",
+                    "Family blessings",
+                    "Couple portraits",
+                    "Grand entry",
+                    "The celebration and dancing",
+                    "Quiet moments together",
+                    "Speeches and toasts",
+                    "Send-off",
+                  ].map((moment) => {
+                    const isSelected = (q16Val.selected || []).includes(moment);
+                    return (
+                      <OptionCard
+                        key={moment}
+                        label={moment}
+                        isSelected={isSelected}
+                        isMultiSelect={true}
+                        onSelect={() => {
+                          writeOverlayField(16, "q14_moments", (prevM) => {
+                            const current = prevM?.selected || [];
+                            const updated = current.includes(moment)
+                              ? current.filter((x) => x !== moment)
+                              : [...current, moment];
+                            return { selected: updated, other: prevM?.other ?? "" };
+                          });
+                        }}
+                      />
+                    );
+                  })}
+                </div>
+                <div className="pt-2">
+                  <VoiceTextarea
+                    id="q16-moments-other"
+                    label="Anything else?"
+                    value={q16Val.other ?? ""}
+                    onChange={(val) =>
+                      writeOverlayField(16, "q14_moments", (prevM) => ({
+                        selected: prevM?.selected ?? [],
+                        other: val,
+                      }))
+                    }
+                    placeholder="e.g. Flash mob with cousins, private vow reading before sunrise..."
+                    rows={2}
+                  />
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* QUESTION 17 (previously Q15) */}
-          {currentStep === 17 && (
-            <div className="space-y-6">
-              <QuestionHeader
-                title="Is there anything you definitely want us to capture or avoid?"
-                helper="Speak or type freely in both boxes."
-              />
+          {currentStep === 17 && (() => {
+            const q17Val = readOverlayField(17, "q15_captureAvoid") || {
+              definitelyCapture: "",
+              pleaseAvoid: "",
+            };
+            return (
               <div className="space-y-6">
-                <VoiceTextarea
-                  id="q17-capture"
-                  label="Definitely capture"
-                  value={answers.q15_captureAvoid?.definitelyCapture ?? ""}
-                  onChange={(val) =>
-                    setAnswers((prev) => ({
-                      ...prev,
-                      q15_captureAvoid: {
+                <QuestionHeader
+                  title="Is there anything you definitely want us to capture or avoid?"
+                  helper="Speak or type freely in both boxes."
+                />
+                {renderPerPersonControls(17)}
+                <div className="space-y-6">
+                  <VoiceTextarea
+                    id="q17-capture"
+                    label="Definitely capture"
+                    value={q17Val.definitelyCapture ?? ""}
+                    onChange={(val) =>
+                      writeOverlayField(17, "q15_captureAvoid", (prevCA) => ({
                         definitelyCapture: val,
-                        pleaseAvoid: prev.q15_captureAvoid?.pleaseAvoid ?? "",
-                      },
-                    }))
-                  }
-                  placeholder="e.g. The look on dad's face during the ceremony, candid reactions from college friends..."
-                  rows={3}
-                />
-                <VoiceTextarea
-                  id="q17-avoid"
-                  label="Please avoid"
-                  value={answers.q15_captureAvoid?.pleaseAvoid ?? ""}
-                  onChange={(val) =>
-                    setAnswers((prev) => ({
-                      ...prev,
-                      q15_captureAvoid: {
-                        definitelyCapture: prev.q15_captureAvoid?.definitelyCapture ?? "",
+                        pleaseAvoid: prevCA?.pleaseAvoid ?? "",
+                      }))
+                    }
+                    placeholder="e.g. The look on dad's face during the ceremony, candid reactions from college friends..."
+                    rows={3}
+                  />
+                  <VoiceTextarea
+                    id="q17-avoid"
+                    label="Please avoid"
+                    value={q17Val.pleaseAvoid ?? ""}
+                    onChange={(val) =>
+                      writeOverlayField(17, "q15_captureAvoid", (prevCA) => ({
+                        definitelyCapture: prevCA?.definitelyCapture ?? "",
                         pleaseAvoid: val,
-                      },
-                    }))
-                  }
-                  placeholder="e.g. Stiff table-to-table poses, overly cheesy spins, people eating at buffet..."
-                  rows={3}
-                />
+                      }))
+                    }
+                    placeholder="e.g. Stiff table-to-table poses, overly cheesy spins, people eating at buffet..."
+                    rows={3}
+                  />
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* QUESTION 18 (previously Q16) */}
-          {currentStep === 18 && (
-            <div className="space-y-6">
-              <QuestionHeader
-                title="Please mention your non negotiables in your films and photographs?"
-                helper="Things that are absolutely sacred to you on this day."
-                required
-              />
-              <VoiceTextarea
-                id="q18-non-negotiables"
-                value={answers.q16_nonNegotiables ?? ""}
-                onChange={(val) =>
-                  setAnswers((prev) => ({ ...prev, q16_nonNegotiables: val }))
-                }
-                placeholder="e.g. Crystal clear audio of our live vows, capturing the sunset portraits on time..."
-                rows={5}
-              />
-            </div>
-          )}
-
-          {/* QUESTION 19 (previously Q17) */}
-          {currentStep === 19 && (
-            <div className="space-y-6">
-              <QuestionHeader
-                title="Who do you think is going to be more emotional during wedding?"
-                helper="Tap an option to continue."
-              />
-              <div className="space-y-3">
-                {[
-                  p1,
-                  p2,
-                  "Both of us equally",
-                  "Our parents",
-                  "Honestly, no idea!",
-                ].map((opt) => (
-                  <OptionCard
-                    key={opt}
-                    label={opt}
-                    isSelected={answers.q17_emotional === opt}
-                    onSelect={() =>
-                      handleSingleChoiceSelect(() =>
-                        setAnswers((prev) => ({ ...prev, q17_emotional: opt }))
-                      )
-                    }
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* QUESTION 20 (previously Q18) */}
-          {currentStep === 20 && (
-            <div className="space-y-6">
-              <QuestionHeader
-                title="How versatile are you with the camera?"
-                helper="Tap an option to continue."
-                required
-              />
-              <div className="space-y-3">
-                {[
-                  "Total natural, I love the camera",
-                  "Pretty comfortable",
-                  "A little shy, but willing",
-                  "Very camera-shy",
-                ].map((opt) => (
-                  <OptionCard
-                    key={opt}
-                    label={opt}
-                    isSelected={answers.q18_cameraVersatility === opt}
-                    onSelect={() =>
-                      handleSingleChoiceSelect(() =>
-                        setAnswers((prev) => ({
-                          ...prev,
-                          q18_cameraVersatility: opt,
-                        }))
-                      )
-                    }
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* QUESTION 21: WHAT MATTERED MOST WHEN CHOOSING OAKS WEDDING (previously Q19) */}
-          {currentStep === 21 && (
-            <div className="space-y-6">
-              <QuestionHeader
-                title="What mattered most to you when choosing OAKS Wedding to capture your wedding?"
-                helper="Was it our photography style, storytelling, films, recommendations, or something else that made you choose us?"
-                required
-              />
-              <VoiceTextarea
-                id="q21-choosing-oaks"
-                value={answers.choosingOaks ?? ""}
-                onChange={(val) =>
-                  setAnswers((prev) => ({ ...prev, choosingOaks: val }))
-                }
-                placeholder="e.g. We were drawn to your candid storytelling, the emotion in your films, and how natural every couple looked..."
-                rows={5}
-              />
-            </div>
-          )}
-
-          {/* QUESTION 22 (previously Q23) */}
-          {currentStep === 22 && (
-            <div className="space-y-6">
-              <QuestionHeader
-                title="How comfortable are you with being guided or directed during portraits and filming?"
-                helper="Tap an option to continue."
-                required
-              />
-              <div className="space-y-3">
-                {[
-                  "I love being guided",
-                  "Happy with gentle guidance",
-                  "Mostly candid, a few directions please",
-                  "Please keep it candid, minimal direction",
-                ].map((opt) => (
-                  <OptionCard
-                    key={opt}
-                    label={opt}
-                    isSelected={answers.q20_guidanceComfort === opt}
-                    onSelect={() =>
-                      handleSingleChoiceSelect(() =>
-                        setAnswers((prev) => ({
-                          ...prev,
-                          q20_guidanceComfort: opt,
-                        }))
-                      )
-                    }
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* QUESTION 23 (previously Q24) */}
-          {currentStep === 23 && (
-            <div className="space-y-6">
-              <QuestionHeader
-                title="Is there anything that would help you feel more comfortable in front of the camera?"
-                helper="Select all that apply, or tell us in your own words."
-              />
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {[
-                  "A few practice shots first",
-                  "Chatting with the photographer beforehand",
-                  "A moment alone as a couple",
-                  "Seeing previews as we go",
-                  "Not sure yet",
-                ].map((tip) => {
-                  const isSelected =
-                    answers.q21_comfortTips.selected.includes(tip);
-                  return (
-                    <OptionCard
-                      key={tip}
-                      label={tip}
-                      isSelected={isSelected}
-                      isMultiSelect={true}
-                      onSelect={() => {
-                        const current = answers.q21_comfortTips.selected;
-                        const updated = isSelected
-                          ? current.filter((x) => x !== tip)
-                          : [...current, tip];
-                        setAnswers((prev) => ({
-                          ...prev,
-                          q21_comfortTips: {
-                            ...prev.q21_comfortTips,
-                            selected: updated,
-                          },
-                        }));
-                      }}
-                    />
-                  );
-                })}
-              </div>
-
-              <div className="pt-2">
+          {currentStep === 18 && (() => {
+            const q18Val = readOverlayField(18, "q16_nonNegotiables") ?? "";
+            return (
+              <div className="space-y-6">
+                <QuestionHeader
+                  title="Please mention your non negotiables in your films and photographs?"
+                  helper="Things that are absolutely sacred to you on this day."
+                  required
+                />
+                {renderPerPersonControls(18)}
                 <VoiceTextarea
-                  id="q23-comfort-notes"
-                  label="In your own words"
-                  value={answers.q21_comfortTips?.notes ?? ""}
+                  id="q18-non-negotiables"
+                  value={q18Val}
                   onChange={(val) =>
-                    setAnswers((prev) => ({
-                      ...prev,
-                      q21_comfortTips: {
-                        selected: prev.q21_comfortTips?.selected ?? [],
-                        notes: val,
-                      },
-                    }))
+                    writeOverlayField(18, "q16_nonNegotiables", () => val)
                   }
-                  placeholder="e.g. Having music playing, having a glass of champagne, taking short breathers..."
-                  rows={2}
+                  placeholder="e.g. Crystal clear audio of our live vows, capturing the sunset portraits on time..."
+                  rows={5}
                 />
               </div>
-            </div>
-          )}
+            );
+          })()}
+
+          {/* QUESTION 19 (previously Q17) */}
+          {currentStep === 19 && (() => {
+            const q19Val = readOverlayField(19, "q17_emotional") ?? "";
+            const isTogetherSplit =
+              splitModeEnabled && fillMode === "together" && !isSameForBothForStep(answers, 19);
+            return (
+              <div className="space-y-6">
+                <QuestionHeader
+                  title="Who do you think is going to be more emotional during wedding?"
+                  helper="Tap an option to continue."
+                />
+                {renderPerPersonControls(19)}
+                <div className="space-y-3">
+                  {[
+                    p1,
+                    p2,
+                    "Both of us equally",
+                    "Our parents",
+                    "Honestly, no idea!",
+                  ].map((opt) => (
+                    <OptionCard
+                      key={opt}
+                      label={opt}
+                      isSelected={q19Val === opt}
+                      onSelect={() => {
+                        if (isTogetherSplit) {
+                          writeOverlayField(19, "q17_emotional", () => opt);
+                        } else {
+                          handleSingleChoiceSelect(() =>
+                            writeOverlayField(19, "q17_emotional", () => opt)
+                          );
+                        }
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* QUESTION 20 (previously Q18) */}
+          {currentStep === 20 && (() => {
+            const q20Val = readOverlayField(20, "q18_cameraVersatility") ?? "";
+            const isTogetherSplit =
+              splitModeEnabled && fillMode === "together" && !isSameForBothForStep(answers, 20);
+            return (
+              <div className="space-y-6">
+                <QuestionHeader
+                  title="How versatile are you with the camera?"
+                  helper="Tap an option to continue."
+                  required
+                />
+                {renderPerPersonControls(20)}
+                <div className="space-y-3">
+                  {[
+                    "Total natural, I love the camera",
+                    "Pretty comfortable",
+                    "A little shy, but willing",
+                    "Very camera-shy",
+                  ].map((opt) => (
+                    <OptionCard
+                      key={opt}
+                      label={opt}
+                      isSelected={q20Val === opt}
+                      onSelect={() => {
+                        if (isTogetherSplit) {
+                          writeOverlayField(20, "q18_cameraVersatility", () => opt);
+                        } else {
+                          handleSingleChoiceSelect(() =>
+                            writeOverlayField(20, "q18_cameraVersatility", () => opt)
+                          );
+                        }
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* QUESTION 21: WHAT MATTERED MOST WHEN CHOOSING OAKS WEDDING (previously Q19) */}
+          {currentStep === 21 && (() => {
+            const q21Val = readOverlayField(21, "choosingOaks") ?? "";
+            return (
+              <div className="space-y-6">
+                <QuestionHeader
+                  title="What mattered most to you when choosing OAKS Wedding to capture your wedding?"
+                  helper="Was it our photography style, storytelling, films, recommendations, or something else that made you choose us?"
+                  required
+                />
+                {renderPerPersonControls(21)}
+                <VoiceTextarea
+                  id="q21-choosing-oaks"
+                  value={q21Val}
+                  onChange={(val) =>
+                    writeOverlayField(21, "choosingOaks", () => val)
+                  }
+                  placeholder="e.g. We were drawn to your candid storytelling, the emotion in your films, and how natural every couple looked..."
+                  rows={5}
+                />
+              </div>
+            );
+          })()}
+
+          {/* QUESTION 22 (previously Q23) */}
+          {currentStep === 22 && (() => {
+            const q22Val = readOverlayField(22, "q20_guidanceComfort") ?? "";
+            const isTogetherSplit =
+              splitModeEnabled && fillMode === "together" && !isSameForBothForStep(answers, 22);
+            return (
+              <div className="space-y-6">
+                <QuestionHeader
+                  title="How comfortable are you with being guided or directed during portraits and filming?"
+                  helper="Tap an option to continue."
+                  required
+                />
+                {renderPerPersonControls(22)}
+                <div className="space-y-3">
+                  {[
+                    "I love being guided",
+                    "Happy with gentle guidance",
+                    "Mostly candid, a few directions please",
+                    "Please keep it candid, minimal direction",
+                  ].map((opt) => (
+                    <OptionCard
+                      key={opt}
+                      label={opt}
+                      isSelected={q22Val === opt}
+                      onSelect={() => {
+                        if (isTogetherSplit) {
+                          writeOverlayField(22, "q20_guidanceComfort", () => opt);
+                        } else {
+                          handleSingleChoiceSelect(() =>
+                            writeOverlayField(22, "q20_guidanceComfort", () => opt)
+                          );
+                        }
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* QUESTION 23 (previously Q24) */}
+          {currentStep === 23 && (() => {
+            const q23Val = readOverlayField(23, "q21_comfortTips") || {
+              selected: [],
+              notes: "",
+            };
+            return (
+              <div className="space-y-6">
+                <QuestionHeader
+                  title="Is there anything that would help you feel more comfortable in front of the camera?"
+                  helper="Select all that apply, or tell us in your own words."
+                />
+                {renderPerPersonControls(23)}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {[
+                    "A few practice shots first",
+                    "Chatting with the photographer beforehand",
+                    "A moment alone as a couple",
+                    "Seeing previews as we go",
+                    "Not sure yet",
+                  ].map((tip) => {
+                    const isSelected = (q23Val.selected || []).includes(tip);
+                    return (
+                      <OptionCard
+                        key={tip}
+                        label={tip}
+                        isSelected={isSelected}
+                        isMultiSelect={true}
+                        onSelect={() => {
+                          writeOverlayField(23, "q21_comfortTips", (prevTips) => {
+                            const current = prevTips?.selected || [];
+                            const updated = current.includes(tip)
+                              ? current.filter((x) => x !== tip)
+                              : [...current, tip];
+                            return { selected: updated, notes: prevTips?.notes ?? "" };
+                          });
+                        }}
+                      />
+                    );
+                  })}
+                </div>
+
+                <div className="pt-2">
+                  <VoiceTextarea
+                    id="q23-comfort-notes"
+                    label="In your own words"
+                    value={q23Val.notes ?? ""}
+                    onChange={(val) =>
+                      writeOverlayField(23, "q21_comfortTips", (prevTips) => ({
+                        selected: prevTips?.selected ?? [],
+                        notes: val,
+                      }))
+                    }
+                    placeholder="e.g. Having music playing, having a glass of champagne, taking short breathers..."
+                    rows={2}
+                  />
+                </div>
+              </div>
+            );
+          })()}
 
           {/* QUESTION 24 (previously Q25) */}
-          {currentStep === 24 && (
-            <div className="space-y-6">
-              <QuestionHeader
-                title="What do you hope to feel when you watch your wedding film years from now?"
-                helper="Close your eyes and imagine watching it on your tenth anniversary."
-              />
-              <VoiceTextarea
-                id="q24-future-feeling"
-                value={answers.q22_futureFeeling ?? ""}
-                onChange={(val) =>
-                  setAnswers((prev) => ({ ...prev, q22_futureFeeling: val }))
-                }
-                placeholder="What emotions or memories do you want rushing back when you press play?"
-                rows={5}
-              />
-            </div>
-          )}
+          {currentStep === 24 && (() => {
+            const q24Val = readOverlayField(24, "q22_futureFeeling") ?? "";
+            return (
+              <div className="space-y-6">
+                <QuestionHeader
+                  title="What do you hope to feel when you watch your wedding film years from now?"
+                  helper="Close your eyes and imagine watching it on your tenth anniversary."
+                />
+                {renderPerPersonControls(24)}
+                <VoiceTextarea
+                  id="q24-future-feeling"
+                  value={q24Val}
+                  onChange={(val) =>
+                    writeOverlayField(24, "q22_futureFeeling", () => val)
+                  }
+                  placeholder="What emotions or memories do you want rushing back when you press play?"
+                  rows={5}
+                />
+              </div>
+            );
+          })()}
 
           {/* QUESTION 25 (previously Q26): YOUR PRIMARY POINT OF CONTACT */}
           {currentStep === 25 && (
@@ -2629,63 +3236,71 @@ export default function App() {
           )}
 
           {/* QUESTION 27 (previously Q28): IS THERE ANYTHING ELSE YOU'D LIKE TO LET US KNOW? */}
-          {currentStep === 27 && (
-            <div className="space-y-6">
-              <div>
-                <span className="text-xs uppercase tracking-widest font-semibold text-[#B08D57] block mb-1">
-                  One Last Thing
-                </span>
-                <QuestionHeader
-                  title="Is there anything else you'd like to let us know?"
-                  helper="Surprises, family dynamics, specific song requests, or any parting thoughts."
-                />
-              </div>
+          {currentStep === 27 && (() => {
+            const q27Val = readOverlayField(27, "q23_oneLastThing") || {
+              notes: "",
+              images: [],
+            };
+            return (
+              <div className="space-y-6">
+                <div>
+                  <span className="text-xs uppercase tracking-widest font-semibold text-[#B08D57] block mb-1">
+                    One Last Thing
+                  </span>
+                  <QuestionHeader
+                    title="Is there anything else you'd like to let us know?"
+                    helper="Surprises, family dynamics, specific song requests, or any parting thoughts."
+                  />
+                </div>
+                {renderPerPersonControls(27)}
 
-              <VoiceTextarea
-                id="q27-one-last-thing-notes"
-                value={answers.q23_oneLastThing?.notes ?? ""}
-                onChange={(val) =>
-                  setAnswers((prev) => ({
-                    ...prev,
-                    q23_oneLastThing: {
-                      images: prev.q23_oneLastThing?.images ?? [],
+                <VoiceTextarea
+                  id="q27-one-last-thing-notes"
+                  value={q27Val.notes ?? ""}
+                  onChange={(val) =>
+                    writeOverlayField(27, "q23_oneLastThing", (prevLast) => ({
+                      images: prevLast?.images ?? [],
                       notes: val,
-                    },
-                  }))
-                }
-                placeholder="Any special details, surprises planned for each other, or anything we didn't ask..."
-                rows={5}
-              />
-
-              <div className="pt-2">
-                <ImageUploader
-                  images={answers.q23_oneLastThing.images}
-                  onChange={(imgs) =>
-                    setAnswers((prev) => ({
-                      ...prev,
-                      q23_oneLastThing: {
-                        ...prev.q23_oneLastThing,
-                        images: imgs,
-                      },
                     }))
                   }
-                  maxImages={4}
-                  uploadCategory="last_thing"
-                  label="Optional photos or mood references"
-                  buttonLabel="Add photos"
+                  placeholder="Any special details, surprises planned for each other, or anything we didn't ask..."
+                  rows={5}
                 />
+
+                <div className="pt-2">
+                  <ImageUploader
+                    images={q27Val.images || []}
+                    onChange={(imgs) =>
+                      writeOverlayField(27, "q23_oneLastThing", (prevLast) => ({
+                        notes: prevLast?.notes ?? "",
+                        images: imgs,
+                      }))
+                    }
+                    maxImages={4}
+                    uploadCategory="last_thing"
+                    label="Optional photos or mood references"
+                    buttonLabel="Add photos"
+                  />
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
 
         {/* Bottom Actions Bar (Continue & Skip) */}
         <div className="pt-8 pb-4 space-y-3">
           {(() => {
-            const stepValidation = validateQuestionStep(currentStep, answers);
+            const stepValidation = validateQuestionStepForContext(
+              currentStep,
+              answers,
+              activeFillMode,
+              activePartner
+            );
             const isIncomplete = !stepValidation.isComplete;
-            const step11Count = answers.q11_filmFeel.selected?.length || 0;
-            const step15Count = answers.q13_tone.selected?.length || 0;
+            const step11Val = readOverlayField(11, "q11_filmFeel");
+            const step15Val = readOverlayField(15, "q13_tone");
+            const step11Count = step11Val?.selected?.length || 0;
+            const step15Count = step15Val?.selected?.length || 0;
 
             return (
               <>
