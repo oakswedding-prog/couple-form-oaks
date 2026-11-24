@@ -34,6 +34,7 @@ import {
   mergeDecorEventMaps,
   setPartnerOverlayValue,
   setSameForBothForStep,
+  shouldShowLockedLinkScreen,
   validateQuestionStepForContext,
 } from "./splitModeHelpers.ts";
 import { mergeAdminMetaIntoSubmission } from "../lib/adminMeta.ts";
@@ -241,6 +242,12 @@ describe("Together or Separately Filling + Phase 0 Security Hardening Suite", ()
       "expired"
     );
     assert.equal(getDraftLinkInactiveReason(null, now), "revoked");
+  });
+
+  test("a successful submission keeps Thank You visible even after its resume link locks", () => {
+    assert.equal(shouldShowLockedLinkScreen(true, 28), true);
+    assert.equal(shouldShowLockedLinkScreen(true, 29), false);
+    assert.equal(shouldShowLockedLinkScreen(false, 29), false);
   });
 
   test("5. Per-person overlay answers isolate Partner A and Partner B without overwriting + Same-for-both toggle seeds cleanly", () => {

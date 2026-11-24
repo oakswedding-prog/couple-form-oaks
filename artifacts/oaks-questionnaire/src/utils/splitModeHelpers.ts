@@ -58,6 +58,14 @@ export function getOtherPartnerSlot(slot: PartnerSlot): PartnerSlot {
   return slot === "partnerA" ? "partnerB" : "partnerA";
 }
 
+/** A completed submission has its resume link locked, but must still show Thank You. */
+export function shouldShowLockedLinkScreen(
+  isLinkLocked: boolean,
+  currentStep: number
+): boolean {
+  return isLinkLocked && currentStep !== 29;
+}
+
 /**
  * In Together mode, returns whether a per-person overlay step (Q11, Q15–Q24, Q27)
  * uses a single shared answer for both partners. Defaults to `true` (legacy behavior).

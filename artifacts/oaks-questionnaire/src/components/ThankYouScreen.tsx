@@ -145,6 +145,9 @@ export const ThankYouScreen: React.FC<ThankYouScreenProps> = ({
                 and your vision with us. Our team will review everything carefully
                 as we prepare to document your celebration.
               </p>
+              <p className="text-sm sm:text-base text-[#7A756D] max-w-lg mx-auto leading-relaxed">
+                Thank you from both of you. OAKS Studio has everything and can&apos;t wait to be part of your wedding story.
+              </p>
             </div>
 
             {/* Honest completion badge: ONLY says "All done" when every photo has finished uploading */}

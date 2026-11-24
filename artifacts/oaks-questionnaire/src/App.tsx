@@ -78,6 +78,7 @@ import {
   setPartnerOverlayValue,
   setSameForBothForStep,
   syncDecorMapAndArray,
+  shouldShowLockedLinkScreen,
   validateQuestionStepForContext,
 } from "./utils/splitModeHelpers.ts";
 import {
@@ -1507,7 +1508,10 @@ export default function App() {
   }
 
   // Phase 0: Locked, revoked, or expired resume link shows ONLY the neutral message & zero answers
-  if (isLinkLocked) {
+  // Successful submission locks the share link in Firestore. Keep the Thank You
+  // screen visible for that completed session instead of replacing it with the
+  // inactive-link screen when the live draft listener observes the lock.
+  if (shouldShowLockedLinkScreen(isLinkLocked, currentStep)) {
     return <LockedLinkScreen />;
   }
 
