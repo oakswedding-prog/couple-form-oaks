@@ -166,6 +166,9 @@ importers:
 
   .:
     dependencies:
+      '@google/genai':
+        specifier: ^3.6.1
+        version: 3.6.1
       '@replit/connectors-sdk':
         specifier: ^0.7.0
         version: 0.7.0
@@ -5810,7 +5813,7 @@ snapshots:
 
   '@types/connect@3.4.38':
     dependencies:
-      '@types/node': 25.9.9
+      '@types/node': 26.6.6
 
   '@types/cookie-parser@1.4.10(@types/express@5.0.6)':
     dependencies:
@@ -5894,7 +5897,7 @@ snapshots:
 
   '@types/send@1.2.1':
     dependencies:
-      '@types/node': 25.9.9
+      '@types/node': 26.6.6
 
   '@types/serve-static@2.2.0':
     dependencies:
