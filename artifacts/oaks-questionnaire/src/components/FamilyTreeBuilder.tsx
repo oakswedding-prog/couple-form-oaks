@@ -49,7 +49,7 @@ interface FamilyTreeBuilderProps {
   splitModeEnabled?: boolean;
   fillMode?: FillMode;
   activePartner?: PartnerSlot;
-  /** New drafts: 5 saved people with photos per side; Save Person needs a photo; Separate shows only your own side. */
+  /** Require 5 saved people with photos per side; Separate shows only your own side. */
   requireMinimums?: boolean;
 }
 
@@ -1003,7 +1003,9 @@ const FamilySideSection: React.FC<FamilySideSectionProps> = ({
               {/* Optional Reference Photo Upload */}
               <div className="space-y-2">
                 <span className="block text-xs sm:text-sm text-[#5F5F5F]">
-                  Optional reference photo (helps us recognise them in the crowd)
+                  {requireMinimums
+                    ? "Required photo of this person (helps us recognise them in the crowd)"
+                    : "Optional reference photo (helps us recognise them in the crowd)"}
                 </span>
 
                 {vipPhotoError && (

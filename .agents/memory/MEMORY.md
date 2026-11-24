@@ -1,1 +1,1 @@
-- [Requirements gating](requirements-gating.md) — new minimums apply only to drafts stamped requirementsVersion=2; old drafts keep old rules
+- [Requirements gating](requirements-gating.md) — minimums are version-gated except Q10: five named people with photos per partner also applies to existing drafts

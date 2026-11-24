@@ -4,7 +4,6 @@
  */
 
 import type { QuestionnaireAnswers } from "../types/questionnaire.ts";
-import { getGroupedQ10People } from "./familyPeople.ts";
 import { getGroupedWardrobe } from "./wardrobe.ts";
 import { getGroupedDecorEvents } from "./decorEvents.ts";
 import { usesNewRequirements } from "../config/questionnaireRequirements.ts";
@@ -148,35 +147,15 @@ export function validateQuestionStep(
       };
     }
     case 10: {
-      if (usesNewRequirements(answers)) {
-        const both = combineChecks(
-          checkVipSide(answers, "partnerA"),
-          checkVipSide(answers, "partnerB")
-        );
-        return {
-          isMandatory: true,
-          isComplete: both.complete,
-          missingMessage: both.message,
-          progress: both.progress,
-        };
-      }
-      const grouped = getGroupedQ10People(answers.q10_people);
-      const ok = grouped.hasBrideEntry && grouped.hasGroomEntry;
-      let missingMessage: string | null = null;
-      if (!grouped.hasBrideEntry && !grouped.hasGroomEntry) {
-        missingMessage =
-          "Add at least one photo, VIP person, or note for both Bride's Side and Groom's Side to continue";
-      } else if (!grouped.hasBrideEntry) {
-        missingMessage =
-          "Add at least one photo, VIP person, or note for Bride's Side to continue";
-      } else if (!grouped.hasGroomEntry) {
-        missingMessage =
-          "Add at least one photo, VIP person, or note for Groom's Side to continue";
-      }
+      const both = combineChecks(
+        checkVipSide(answers, "partnerA"),
+        checkVipSide(answers, "partnerB")
+      );
       return {
         isMandatory: true,
-        isComplete: ok,
-        missingMessage,
+        isComplete: both.complete,
+        missingMessage: both.message,
+        progress: both.progress,
       };
     }
     case 11: {

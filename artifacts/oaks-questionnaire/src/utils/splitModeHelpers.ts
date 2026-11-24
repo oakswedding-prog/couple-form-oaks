@@ -418,24 +418,12 @@ export function validateQuestionStepForContext(
       };
     }
     case 10: {
-      if (usesNewRequirements(answers)) {
-        const own = checkVipSide(answers, activePartner);
-        return {
-          isMandatory: true,
-          isComplete: own.complete,
-          missingMessage: own.message,
-          progress: own.progress,
-        };
-      }
-      const grouped = getGroupedQ10People(answers.q10_people);
-      const ok =
-        activePartner === "partnerA" ? grouped.hasBrideEntry : grouped.hasGroomEntry;
+      const own = checkVipSide(answers, activePartner);
       return {
         isMandatory: true,
-        isComplete: ok,
-        missingMessage: ok
-          ? null
-          : `Add at least one photo, VIP person, or note for ${partnerName}'s Side to continue`,
+        isComplete: own.complete,
+        missingMessage: own.message,
+        progress: own.progress,
       };
     }
     case 13: {
@@ -587,7 +575,7 @@ export function buildMissingSummaryForPartner(
           : answers.q1_calls?.bCallsA?.trim();
       if (!nick) parts.push("nickname");
       parts.push("couple photo");
-    } else if (detailed && step === 10) {
+    } else if (step === 10) {
       const g = getGroupedQ10People(answers.q10_people);
       const members = slot === "partnerA" ? g.bride.members : g.groom.members;
       const done = members.filter(

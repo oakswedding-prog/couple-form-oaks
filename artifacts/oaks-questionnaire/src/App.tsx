@@ -2284,7 +2284,7 @@ export default function App() {
             <div className="space-y-6">
               <QuestionHeader
                 title="Who are the most important people you want us to capture?"
-                helper={usesNewRequirements(answers) ? "Add at least 5 important people for each side. Every person needs a name, a relationship and a photo." : "Add important people, upload family tree photos, or write notes separately for the Bride's Side and Groom's Side."}
+                helper="Add at least 5 important people for each partner. Add and save each person individually with their name, relationship and one photo."
                 required
               />
               <React.Suspense fallback={<ScreenSkeleton />}>
@@ -2295,7 +2295,7 @@ export default function App() {
                   splitModeEnabled={splitModeEnabled}
                   fillMode={fillMode}
                   activePartner={activePartner}
-                  requireMinimums={usesNewRequirements(answers)}
+                  requireMinimums
                   onChange={(nextQ10) =>
                     setAnswers((prev) => ({
                       ...prev,
