@@ -1151,7 +1151,7 @@ test("mandatory step validation checks required partner pairs, optional couple p
   answers.q6_activities = { selected: [], other: "Late night drives" };
   answers.q7_loveMost = { partnerA: "Warmth", partnerB: "Calmness" };
 
-  // Q10 requires at least one entry on BOTH Bride's Side and Groom's Side
+  // Q10 now requires five named people with individual photos on both sides.
   answers.q10_people = {
     familyMembers: [],
     brideSide: {
@@ -1180,6 +1180,13 @@ test("mandatory step validation checks required partner pairs, optional couple p
     groomSide: { photos: [], notes: "Groom's parents & sister" },
     treeNotes: "",
   };
+  assert.equal(validateQuestionStep(10, answers).isComplete, false);
+  answers.q10_people.familyMembers = (["bride", "groom"] as const).flatMap(side =>
+    Array.from({ length: 5 }, (_, i) => ({
+      id: `${side}-${i}`, name: `Person ${i + 1}`, relationship: "Close friend", side,
+      mustCapture: false, photoUrl: `https://example.com/${side}-${i}.jpg`,
+    }))
+  );
   assert.equal(validateQuestionStep(10, answers).isComplete, true);
 
   // Q11 requires exact 3
@@ -1423,7 +1430,8 @@ test("Q10 helpers, brief summary, and cheat sheet group Bride's Side and Groom's
     ],
     treeNotes: "",
   };
-  assert.equal(validateQuestionStep(10, vipOnlyAnswers).isComplete, true);
+  // A legacy list of two VIPs still renders, but no longer satisfies the five-per-partner rule.
+  assert.equal(validateQuestionStep(10, vipOnlyAnswers).isComplete, false);
 
   const answers = createBlankAnswers();
   answers.partner1 = "Anjali";

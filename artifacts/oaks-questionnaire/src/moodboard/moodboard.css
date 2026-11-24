@@ -1,0 +1,11 @@
+/* Local, bundled fonts keep the live page and PDF metrics consistent, including accented names. */
+@font-face {
+  font-family: "OAKS Moodboard Serif";
+  src: url("../../public/fonts/OAKS-Serif.ttf") format("truetype");
+  font-display: swap;
+}
+@font-face {
+  font-family: "OAKS Moodboard Sans";
+  src: url("../../public/fonts/OAKS-Sans.ttf") format("truetype");
+  font-display: swap;
+}

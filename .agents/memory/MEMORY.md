@@ -1,1 +1,2 @@
 - [Requirements gating](requirements-gating.md) — minimums are version-gated except Q10: five named people with photos per partner also applies to existing drafts
+- [Wedding moodboard intent](wedding-moodboard-intent.md) — retain the supplied visual sequence, not the alternate design or long discussion-summary prose

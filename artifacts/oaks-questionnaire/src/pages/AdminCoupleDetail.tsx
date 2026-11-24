@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, Suspense, lazy } from "react";
 import {
   ArrowLeft,
   Printer,
@@ -78,6 +78,8 @@ import {
   ReferenceLinksList,
 } from "../components/MediaGallery.tsx";
 
+const MoodboardView = lazy(() => import("../moodboard/MoodboardView.tsx").then(m => ({ default: m.MoodboardView })));
+
 interface AdminCoupleDetailProps {
   submissionId: string;
   onBack: () => void;
@@ -87,7 +89,7 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
   submissionId,
   onBack,
 }) => {
-  type DetailTab = "letter" | "brief" | "cheatsheet" | "interview" | "full" | "all";
+  type DetailTab = "letter" | "brief" | "cheatsheet" | "interview" | "moodboard" | "full" | "all";
   const initialCached = useMemo(
     () => getCachedSubmissionById(submissionId),
     [submissionId]
@@ -122,11 +124,12 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
           prev.has("brief") &&
           prev.has("interview") &&
           prev.has("cheatsheet") &&
-          prev.has("full")
+          prev.has("full") &&
+          prev.has("moodboard")
         ) {
           return prev;
         }
-        return new Set(["letter", "brief", "interview", "cheatsheet", "full"]);
+        return new Set(["letter", "brief", "interview", "cheatsheet", "moodboard", "full"]);
       }
       if (prev.has(tab)) return prev;
       const next = new Set(prev);
@@ -985,6 +988,20 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
 
           <button
             type="button"
+            onClick={() => selectTab("moodboard")}
+            data-testid="tab-moodboard"
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-medium transition-all cursor-pointer whitespace-nowrap ${
+              activeTab === "moodboard"
+                ? "bg-[#1A1A1A] text-white shadow-xs"
+                : "text-[#5F5F5F] hover:text-[#1A1A1A] hover:bg-[#F2ECE4]"
+            }`}
+          >
+            <ImageIcon className="w-4 h-4 text-[#B08D57]" />
+            <span>Wedding Moodboard</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => selectTab("full")}
             className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-medium transition-all cursor-pointer whitespace-nowrap ${
               activeTab === "full"
@@ -1207,6 +1224,14 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
             className="w-full p-3.5 text-sm bg-[#FAF8F5] border border-[#E8DFD3] rounded-xl focus:outline-hidden focus:border-[#1A1A1A] focus:ring-1 focus:ring-[#B08D57] leading-relaxed"
           />
         </section>
+
+        {(visitedTabs.has("moodboard") || activeTab === "moodboard" || activeTab === "all") && (
+          <div className={activeTab === "moodboard" || activeTab === "all" ? "print:hidden" : "hidden print:hidden"}>
+            <Suspense fallback={<div className="aspect-video rounded-2xl bg-[#EFE8DC] animate-pulse" />}>
+              <MoodboardView submission={submission} />
+            </Suspense>
+          </div>
+        )}
 
         {/* 3. FULL ANSWERS GROUPED BY CHAPTER */}
         {(visitedTabs.has("full") || activeTab === "full" || activeTab === "all") && (
