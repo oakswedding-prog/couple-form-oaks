@@ -25,6 +25,8 @@ import {
   Link2,
   Check,
   Info,
+  Lock,
+  RotateCcw,
 } from "lucide-react";
 import {
   DraftRecord,
@@ -45,7 +47,16 @@ import {
   sortSubmissionsNewestFirst,
   recoverDraftAsSubmission,
 } from "../lib/submissions.ts";
-import { getAllAdminDrafts, deleteAdminDraft } from "../lib/drafts.ts";
+import {
+  getAllAdminDrafts,
+  deleteAdminDraft,
+  lockDraftLinkNow,
+  resetDraftResumeLink,
+} from "../lib/drafts.ts";
+import {
+  describeDraftPartnerStatus,
+  getDraftLinkInactiveReason,
+} from "../utils/splitModeHelpers.ts";
 import { getSubmissionErrors } from "../lib/errorLogger.ts";
 import { buildResumeUrl, isPrivatePreviewOrigin } from "../lib/coupleSession.ts";
 import { exportToPdf, exportToDocx } from "../utils/exportBrief.ts";
@@ -120,6 +131,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [draftsError, setDraftsError] = useState<string | null>(null);
   const [recoveringDraftId, setRecoveringDraftId] = useState<string | null>(null);
   const [deletingDraftId, setDeletingDraftId] = useState<string | null>(null);
+  const [lockingDraftId, setLockingDraftId] = useState<string | null>(null);
+  const [resettingDraftId, setResettingDraftId] = useState<string | null>(null);
 
   // "Needs attention" click/hover reasons popover & admin Copy Resume Link feedback
   const [openReasonsId, setOpenReasonsId] = useState<string | null>(null);
@@ -329,6 +342,63 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     window.setTimeout(() => {
       setCopiedResumeId((cur) => (cur === draft.id ? null : cur));
     }, 2800);
+  };
+
+  // Admin-only: immediately lock an unfinished draft's resume link
+  const handleLockDraftLink = async (draft: DraftRecord) => {
+    setLockingDraftId(draft.id);
+    setDraftsError(null);
+    try {
+      await lockDraftLinkNow(draft.id);
+      setDrafts((prev) =>
+        prev.map((d) =>
+          d.id === draft.id ? { ...d, linkLocked: true } : d
+        )
+      );
+      setAllDrafts((prev) =>
+        prev.map((d) =>
+          d.id === draft.id ? { ...d, linkLocked: true } : d
+        )
+      );
+      const coupleTitle =
+        draft.partner1 || draft.partner2
+          ? `${draft.partner1 || "Partner 1"} & ${draft.partner2 || "Partner 2"}`
+          : "this draft";
+      setRecoveryNotice(`Locked resume link for ${coupleTitle}. The old link will no longer open.`);
+    } catch (err: any) {
+      setDraftsError(err?.message || "Could not lock this draft link.");
+    } finally {
+      setLockingDraftId(null);
+    }
+  };
+
+  // Admin-only: revoke old draft link and create + copy a fresh 7-day link
+  const handleResetDraftLink = async (draft: DraftRecord) => {
+    setResettingDraftId(draft.id);
+    setDraftsError(null);
+    try {
+      const { token: newToken, url } = await resetDraftResumeLink(draft);
+      await copyTextToClipboard(url);
+      await loadDrafts();
+      setCopiedResumeId(newToken);
+      const coupleTitle =
+        draft.partner1 || draft.partner2
+          ? `${draft.partner1 || "Partner 1"} & ${draft.partner2 || "Partner 2"}`
+          : "this draft";
+      const isPrivatePreview = isPrivatePreviewOrigin(url);
+      setRecoveryNotice(
+        isPrivatePreview
+          ? `Reset link for ${coupleTitle} and copied new link. Old link is disabled. Tip: Open your live Vercel dashboard to copy a public client URL.`
+          : `Reset link for ${coupleTitle} — the old link is now disabled and the new 7-day link is copied to your clipboard.`
+      );
+      window.setTimeout(() => {
+        setCopiedResumeId((cur) => (cur === newToken ? null : cur));
+      }, 2800);
+    } catch (err: any) {
+      setDraftsError(err?.message || "Could not reset this draft link.");
+    } finally {
+      setResettingDraftId(null);
+    }
   };
 
   // Permanently delete a submission after user confirmation
@@ -836,6 +906,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                   {deliveryBadge.label}
                                 </span>
                               )}
+                              {couple.submittedIncompletePartner && (
+                                <span className="text-[10px] font-medium px-2 py-0.5 rounded-full border bg-[#F4F2EE] text-[#6B655D] border-[#E2DDD5]">
+                                  Sent without {couple.submittedIncompletePartner}&apos;s part
+                                </span>
+                              )}
                             </div>
                             <div className="text-xs text-[#7A756D] flex flex-wrap items-center gap-2 mt-0.5">
                               <span className="inline-flex items-center gap-1">
@@ -1109,6 +1184,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     draft.partner1 || draft.partner2
                       ? `${draft.partner1 || "Partner 1"} & ${draft.partner2 || "Partner 2"}`
                       : "Unnamed couple";
+                  const partnerStatusText = describeDraftPartnerStatus(draft);
+                  const inactiveReason = getDraftLinkInactiveReason(draft);
+                  const isLockedOrExpired = inactiveReason !== null;
 
                   return (
                     <div
@@ -1124,6 +1202,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-[#FAF7F2] text-[#7A756D] border-[#E5DDD2]">
                             Draft
                           </span>
+                          {draft.fillMode === "separate" && (
+                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-[#FAF7F2] text-[#8C7043] border-[#E8DFD3]">
+                              Separately
+                            </span>
+                          )}
+                          {isLockedOrExpired && (
+                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-[#F4F2EE] text-[#6B655D] border-[#E2DDD5]">
+                              {inactiveReason === "expired" ? "Link expired" : "Link locked"}
+                            </span>
+                          )}
                           {isAllAnswered && (
                             <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
                               All questions answered · Never tapped Send
@@ -1135,9 +1223,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         </div>
 
                         <div className="text-xs text-[#6A655D] flex flex-wrap items-center gap-x-3 gap-y-1">
-                          <span>
-                            Progress: Step {Math.max(1, draft.currentStep || 1)} of 27
-                          </span>
+                          {partnerStatusText ? (
+                            <span className="font-medium text-[#4A453E]">
+                              {partnerStatusText}
+                            </span>
+                          ) : (
+                            <span>
+                              Progress: Step {Math.max(1, draft.currentStep || 1)} of 27
+                            </span>
+                          )}
                           <span>· Last saved {formatDateTimeShort(draft.updatedAt)}</span>
                           {draft.weddingDate && <span>· Wedding: {draft.weddingDate}</span>}
                           {draft.phone && <span>· 📞 {draft.phone}</span>}
@@ -1163,6 +1257,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                               <span>Copy resume link</span>
                             </>
                           )}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isLockedOrExpired || lockingDraftId === draft.id}
+                          onClick={() => void handleLockDraftLink(draft)}
+                          className="inline-flex items-center justify-center gap-1 px-2.5 py-2 rounded-xl text-xs font-medium text-[#5F5F5F] bg-white hover:bg-[#FAF7F2] border border-[#E5DDD2] transition-colors cursor-pointer disabled:opacity-50"
+                          title={isLockedOrExpired ? "Link is already inactive" : "Lock this resume link immediately"}
+                        >
+                          <Lock className="w-3.5 h-3.5 text-[#8C7043]" />
+                          <span>{lockingDraftId === draft.id ? "Locking…" : "Lock now"}</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={resettingDraftId === draft.id}
+                          onClick={() => void handleResetDraftLink(draft)}
+                          className="inline-flex items-center justify-center gap-1 px-2.5 py-2 rounded-xl text-xs font-medium text-[#5F5F5F] bg-white hover:bg-[#FAF7F2] border border-[#E5DDD2] transition-colors cursor-pointer disabled:opacity-50"
+                          title="Disable old link and create a brand-new 7-day link"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5 text-[#8C7043]" />
+                          <span>{resettingDraftId === draft.id ? "Resetting…" : "Reset link"}</span>
                         </button>
                         <button
                           type="button"

@@ -285,6 +285,12 @@ function extractUploadedFromAnswers(
   answers.q23_oneLastThing?.images?.forEach((img) =>
     pushIfUploaded(img, "last_thing")
   );
+  answers.partnerAnswers?.partnerA?.q23_oneLastThing?.images?.forEach((img) =>
+    pushIfUploaded(img, "last_thing")
+  );
+  answers.partnerAnswers?.partnerB?.q23_oneLastThing?.images?.forEach((img) =>
+    pushIfUploaded(img, "last_thing")
+  );
 
   return found;
 }

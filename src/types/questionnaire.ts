@@ -41,6 +41,70 @@ export interface DecorEventBoard {
   notes: string;
 }
 
+export type FillMode = "together" | "separate";
+
+export type PartnerSlot = "partnerA" | "partnerB";
+
+export interface PartnerSpecificAnswers {
+  q11_filmFeel?: { selected: string[]; other: string };
+  q13_tone?: { selected: string[]; other: string };
+  q14_moments?: { selected: string[]; other: string };
+  q15_captureAvoid?: { definitelyCapture: string; pleaseAvoid: string };
+  q16_nonNegotiables?: string;
+  q17_emotional?: string;
+  q18_cameraVersatility?: string;
+  choosingOaks?: string;
+  q20_guidanceComfort?: string;
+  q21_comfortTips?: { selected: string[]; notes: string };
+  q22_futureFeeling?: string;
+  q23_oneLastThing?: { notes: string; images: string[] };
+}
+
+export interface PartnerAnswersMap {
+  partnerA?: PartnerSpecificAnswers;
+  partnerB?: PartnerSpecificAnswers;
+  /** In Together mode, tracks whether a perPerson overlay step uses one shared answer (defaults to true). */
+  sameForBoth?: Record<string, boolean>;
+}
+
+export interface DecorEventMapEntry {
+  id: string;
+  name: string;
+  order: number;
+  isLocked?: boolean;
+  notes: string;
+  linksById: Record<string, string>;
+  imagesById: Record<string, string>;
+  deleted?: boolean;
+  updatedAt?: string;
+  updatedBy?: PartnerSlot;
+}
+
+export interface FieldEditMeta {
+  updatedAt: string;
+  updatedBy: PartnerSlot;
+  updatedByUid?: string;
+}
+
+export interface PartnerProgressEntry {
+  done: boolean;
+  doneAt?: string;
+  answeredCount: number;
+  lastStep?: number;
+}
+
+export interface PartnerProgressMap {
+  partnerA: PartnerProgressEntry;
+  partnerB: PartnerProgressEntry;
+}
+
+export interface AdminMetaRecord {
+  privateNotes?: string;
+  status?: SubmissionStatus;
+  updatedAt: string;
+  updatedByEmail?: string;
+}
+
 export interface QuestionnaireAnswers {
   partner1: string;
   partner2: string;
@@ -81,6 +145,7 @@ export interface QuestionnaireAnswers {
     notes: string;
   };
   decorEvents?: DecorEventBoard[];
+  decorEventsMap?: Record<string, DecorEventMapEntry>;
   decorMoodBoard?: {
     links: string[];
     images: string[];
@@ -107,6 +172,10 @@ export interface QuestionnaireAnswers {
   };
   loveStoryNarrative?: string;
   q23_oneLastThing: { notes: string; images: string[] };
+  /** Additive split-mode overlay for per-person answers (optional; absent on legacy records). */
+  fillMode?: FillMode;
+  partnerAnswers?: PartnerAnswersMap;
+  fieldMeta?: Record<string, FieldEditMeta>;
 }
 
 export type SubmissionStatus = "new" | "reviewed" | "shared";
@@ -135,7 +204,16 @@ export interface DraftRecord {
   id: string; // resumeToken (unguessable 192-bit doc ID)
   submissionId: string;
   ownerUid: string;
+  participantUids?: string[];
   status: "draft" | "submitted";
+  fillMode?: FillMode;
+  partnerProgress?: PartnerProgressMap;
+  fieldMeta?: Record<string, FieldEditMeta>;
+  linkLocked?: boolean;
+  revoked?: boolean;
+  /** Firestore Timestamp (enforced server-side by request.time < linkExpiresAt) or ISO string in tests. */
+  linkExpiresAt?: unknown;
+  linkExpiresAtIso?: string;
   currentStep: number;
   furthestStep: number;
   partner1: string;
@@ -254,7 +332,12 @@ export interface SubmissionRecord {
   updatedAt?: string;
   status?: SubmissionStatus;
   ownerUid?: string;
+  participantUids?: string[];
   resumeToken?: string;
+  linkLocked?: boolean;
+  fillMode?: FillMode;
+  partnerProgress?: PartnerProgressMap;
+  submittedIncompletePartner?: string | null;
   emailNotificationStatus?: "sent" | "failed";
   finalized?: boolean;
   submissionState?: SubmissionDeliveryState;

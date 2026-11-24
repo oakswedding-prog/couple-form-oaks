@@ -16,6 +16,7 @@ import {
   runTransaction,
   serverTimestamp,
   onSnapshot,
+  Timestamp,
 } from "firebase/firestore";
 import { ref, getDownloadURL, listAll } from "firebase/storage";
 import { db, storage, auth } from "./firebase.ts";
@@ -33,6 +34,8 @@ import {
   EventSubmissionRecord,
   ChecklistItemStatus,
   FileDetailEntry,
+  FillMode,
+  PartnerProgressMap,
 } from "../types/questionnaire.ts";
 import {
   buildCustomEventDeleteChecklistData,
@@ -70,6 +73,14 @@ import {
 import { logSubmissionError } from "./errorLogger.ts";
 import { markDraftSubmitted } from "./drafts.ts";
 import { buildNormalizedPhotoReport } from "../utils/photoStatusSummary.ts";
+import { LINK_EXPIRY_MS } from "../config/splitMode.ts";
+import {
+  hydrateSubmissionsWithAdminMeta,
+  loadAdminMetaForSubmission,
+  mergeAdminMetaIntoSubmission,
+  saveAdminMetaNotes,
+  saveAdminMetaStatus,
+} from "./adminMeta.ts";
 
 /**
  * In-memory + sessionStorage cache for resolved Firebase Storage download URLs
@@ -202,6 +213,8 @@ export function hasUnresolvedMediaPaths(record: SubmissionRecord | null | undefi
   if (ans.decorEvents?.some((ev) => ev?.images?.some((img) => isPending(img)))) return true;
   if (ans.decorMoodBoard?.images?.some((img) => isPending(img))) return true;
   if (ans.q23_oneLastThing?.images?.some((img) => isPending(img))) return true;
+  if (ans.partnerAnswers?.partnerA?.q23_oneLastThing?.images?.some((img) => isPending(img))) return true;
+  if (ans.partnerAnswers?.partnerB?.q23_oneLastThing?.images?.some((img) => isPending(img))) return true;
   return false;
 }
 
@@ -290,6 +303,16 @@ export async function resolveSubmissionMedia(record: SubmissionRecord): Promise<
     Array.isArray(ans.q23_oneLastThing?.images)
       ? resolveMediaListParallel(ans.q23_oneLastThing.images).then((res) => {
           ans.q23_oneLastThing.images = res;
+        })
+      : Promise.resolve(),
+    Array.isArray(ans.partnerAnswers?.partnerA?.q23_oneLastThing?.images)
+      ? resolveMediaListParallel(ans.partnerAnswers!.partnerA!.q23_oneLastThing!.images).then((res) => {
+          ans.partnerAnswers!.partnerA!.q23_oneLastThing!.images = res;
+        })
+      : Promise.resolve(),
+    Array.isArray(ans.partnerAnswers?.partnerB?.q23_oneLastThing?.images)
+      ? resolveMediaListParallel(ans.partnerAnswers!.partnerB!.q23_oneLastThing!.images).then((res) => {
+          ans.partnerAnswers!.partnerB!.q23_oneLastThing!.images = res;
         })
       : Promise.resolve(),
   ]);
@@ -444,6 +467,7 @@ export async function ensureResumeLinkForSubmission(
 ): Promise<{ token: string; url: string }> {
   const existingToken = findResumeTokenForSubmission(record, existingDrafts);
   const now = new Date().toISOString();
+  const expiresAtMs = Date.now() + LINK_EXPIRY_MS;
   const sanitized = sanitizeAnswersForFirestore(record.answers);
   const token = existingToken || generateResumeToken();
   const adminUid = auth.currentUser?.uid || "admin";
@@ -453,7 +477,13 @@ export async function ensureResumeLinkForSubmission(
     id: token,
     submissionId: record.id,
     ownerUid: adminUid,
+    participantUids: record.participantUids || [adminUid],
     status: "draft" as const,
+    linkLocked: false,
+    revoked: false,
+    linkExpiresAtIso: new Date(expiresAtMs).toISOString(),
+    ...(record.fillMode ? { fillMode: record.fillMode } : {}),
+    ...(record.partnerProgress ? { partnerProgress: record.partnerProgress } : {}),
     currentStep: 28,
     furthestStep: 28,
     partner1: record.partner1 || "",
@@ -469,11 +499,15 @@ export async function ensureResumeLinkForSubmission(
     updatedAt: now,
   });
 
-  await setDoc(draftRef, draftPayload);
+  await setDoc(draftRef, {
+    ...draftPayload,
+    linkExpiresAt: Timestamp.fromMillis(expiresAtMs),
+  });
 
   await updateDoc(doc(db, "submissions", record.id), {
     resumeToken: token,
     finalized: false,
+    linkLocked: false,
     updatedAt: now,
   });
 
@@ -481,10 +515,125 @@ export async function ensureResumeLinkForSubmission(
     ...rec,
     resumeToken: token,
     finalized: false,
+    linkLocked: false,
     updatedAt: now,
   }));
 
   return { token, url: buildResumeUrl(token) };
+}
+
+/**
+ * Admin-only helper: Locks a submission's resume link immediately so anyone opening
+ * the old link sees only "This link is no longer active. Please contact the studio."
+ */
+export async function lockSubmissionLinkNow(
+  record: SubmissionRecord,
+  existingDrafts?: DraftRecord[]
+): Promise<void> {
+  const now = new Date().toISOString();
+  const existingToken = findResumeTokenForSubmission(record, existingDrafts);
+
+  if (existingToken) {
+    try {
+      await updateDoc(doc(db, "drafts", existingToken), {
+        linkLocked: true,
+        updatedAt: now,
+      });
+    } catch {
+      // draft may not exist for older records
+    }
+  }
+
+  await updateDoc(doc(db, "submissions", record.id), {
+    linkLocked: true,
+    finalized: true,
+    updatedAt: now,
+  });
+
+  updateLocalCacheRecord(record.id, (rec) => ({
+    ...rec,
+    linkLocked: true,
+    finalized: true,
+    updatedAt: now,
+  }));
+}
+
+/**
+ * Admin-only helper: Permanently kills the old resume link (`revoked: true, linkLocked: true`)
+ * and creates a brand-new 192-bit resume link valid for 7 days.
+ */
+export async function resetSubmissionResumeLink(
+  record: SubmissionRecord,
+  existingDrafts?: DraftRecord[]
+): Promise<{ token: string; url: string }> {
+  const now = new Date().toISOString();
+  const expiresAtMs = Date.now() + LINK_EXPIRY_MS;
+  const oldToken = findResumeTokenForSubmission(record, existingDrafts);
+  const newToken = generateResumeToken();
+  const adminUid = auth.currentUser?.uid || "admin";
+  const sanitized = sanitizeAnswersForFirestore(record.answers);
+
+  // Create the fresh active draft first
+  const newDraftPayload = stripUndefinedDeep({
+    id: newToken,
+    submissionId: record.id,
+    ownerUid: adminUid,
+    participantUids: [adminUid],
+    status: "draft" as const,
+    linkLocked: false,
+    revoked: false,
+    linkExpiresAtIso: new Date(expiresAtMs).toISOString(),
+    ...(record.fillMode ? { fillMode: record.fillMode } : {}),
+    ...(record.partnerProgress ? { partnerProgress: record.partnerProgress } : {}),
+    currentStep: 28,
+    furthestStep: 28,
+    partner1: record.partner1 || "",
+    partner2: record.partner2 || "",
+    weddingDate: record.weddingDate || "",
+    phone: record.phone || "",
+    email: record.email || "",
+    answers: sanitized.answers,
+    photoStatuses: record.photoStatuses || sanitized.photoStatuses,
+    answeredCount: 27,
+    mandatoryRemaining: 0,
+    createdAt: record.submittedAt || now,
+    updatedAt: now,
+  });
+
+  await setDoc(doc(db, "drafts", newToken), {
+    ...newDraftPayload,
+    linkExpiresAt: Timestamp.fromMillis(expiresAtMs),
+  });
+
+  // Kill the old link permanently
+  if (oldToken && oldToken !== newToken) {
+    try {
+      await updateDoc(doc(db, "drafts", oldToken), {
+        revoked: true,
+        linkLocked: true,
+        updatedAt: now,
+      });
+    } catch {
+      // old draft may not exist
+    }
+  }
+
+  await updateDoc(doc(db, "submissions", record.id), {
+    resumeToken: newToken,
+    finalized: false,
+    linkLocked: false,
+    updatedAt: now,
+  });
+
+  updateLocalCacheRecord(record.id, (rec) => ({
+    ...rec,
+    resumeToken: newToken,
+    finalized: false,
+    linkLocked: false,
+    updatedAt: now,
+  }));
+
+  return { token: newToken, url: buildResumeUrl(newToken) };
 }
 
 /**
@@ -599,10 +748,24 @@ export async function executeBulletproofSubmit(
     ownerUid: string;
     answers: QuestionnaireAnswers;
     existingDisplayId?: string;
+    fillMode?: FillMode;
+    partnerProgress?: PartnerProgressMap;
+    participantUids?: string[];
+    submittedIncompletePartner?: string;
   },
   deps: CoreSubmitDeps
 ): Promise<SubmissionResult> {
-  const { submissionId, resumeToken, ownerUid, answers, existingDisplayId } = params;
+  const {
+    submissionId,
+    resumeToken,
+    ownerUid,
+    answers,
+    existingDisplayId,
+    fillMode,
+    partnerProgress,
+    participantUids,
+    submittedIncompletePartner,
+  } = params;
   const sanitized = sanitizeAnswersForFirestore(answers);
   assertNoBase64Images(sanitized.answers);
 
@@ -613,11 +776,18 @@ export async function executeBulletproofSubmit(
   const cheatSheet = synthesizeCheatSheet(sanitized.answers);
   const coupleLetter = synthesizeCoupleLetter(sanitized.answers);
 
+  // Note: `privateNotes` is intentionally omitted from couple-written submission docs so
+  // studio notes stay isolated in admin-only `submissions/{id}/adminMeta/main`.
   const submissionData: SubmissionRecord = stripUndefinedDeep({
     id: submissionId,
     ownerUid,
+    ...(participantUids && participantUids.length > 0 ? { participantUids } : {}),
     ...(resumeToken ? { resumeToken } : {}),
+    ...(fillMode ? { fillMode } : {}),
+    ...(partnerProgress ? { partnerProgress } : {}),
+    ...(submittedIncompletePartner ? { submittedIncompletePartner } : {}),
     finalized: false, // Flipped to true after post-save numbering & any pending photo sync finish
+    linkLocked: false, // Locked automatically on draft markDraftSubmitted + after post-submit sync
     submissionState:
       photoReport.failedCount > 0
         ? "needs_attention"
@@ -639,7 +809,6 @@ export async function executeBulletproofSubmit(
     editorialBrief,
     interviewQuestions,
     cheatSheet,
-    privateNotes: "",
   });
 
   const retryDelays = deps.retryDelaysMs ?? [1000, 2200];
@@ -866,8 +1035,16 @@ async function assignSequentialDisplayNumber(
  * - Fires studio + couple emails right away (validating full JSON response & logging Resend errors)
  * - Resets couple session once fully finished so a second submission in the same browser never reuses old IDs/photoStatuses
  */
+export interface CreateSubmissionOptions {
+  fillMode?: FillMode;
+  partnerProgress?: PartnerProgressMap;
+  participantUids?: string[];
+  submittedIncompletePartner?: string;
+}
+
 export async function createSubmission(
-  answers: QuestionnaireAnswers
+  answers: QuestionnaireAnswers,
+  options?: CreateSubmissionOptions
 ): Promise<SubmissionResult> {
   const session = getOrCreateCoupleSession();
   const authRes = await ensureCoupleAnonymousAuth();
@@ -893,7 +1070,7 @@ export async function createSubmission(
   const hasPendingOrFailed =
     sanitizedPreview.pendingCount > 0 || sanitizedPreview.failedCount > 0;
 
-  // Check if this submission already exists (e.g., couple reopened resume link to re-add missing photos)
+  // Check if this submission already exists (e.g., couple reopened resume link OR partner just auto-sent at the same second)
   const docRef = doc(db, "submissions", session.submissionId);
   let existingDocSnap: Awaited<ReturnType<typeof getDoc>> | null = null;
   try {
@@ -908,14 +1085,31 @@ export async function createSubmission(
     existingSubmissionData &&
       typeof existingSubmissionData.sequenceNumber === "number"
   );
+  // Guard against duplicate studio email when both partners finish at the exact same second
+  const submittedWithinLastMinute = Boolean(
+    existingSubmissionData?.submittedAt &&
+      Math.abs(Date.now() - Date.parse(existingSubmissionData.submittedAt)) < 60_000
+  );
+
+  const mergedParticipants = Array.from(
+    new Set([
+      ...(existingSubmissionData?.participantUids || []),
+      ...(options?.participantUids || []),
+      authRes.uid,
+    ].filter(Boolean))
+  ).slice(0, 4);
 
   const result = await executeBulletproofSubmit(
     {
       submissionId: session.submissionId,
       resumeToken: session.resumeToken,
-      ownerUid: authRes.uid,
+      ownerUid: existingSubmissionData?.ownerUid || authRes.uid,
       answers,
       existingDisplayId: existingSubmissionData?.displayId,
+      fillMode: options?.fillMode || answers.fillMode,
+      partnerProgress: options?.partnerProgress,
+      participantUids: mergedParticipants,
+      submittedIncompletePartner: options?.submittedIncompletePartner,
     },
     {
       writeSubmissionDoc: async (id, payload) => {
@@ -923,7 +1117,7 @@ export async function createSubmission(
         if (existingSubmissionData) {
           // Explicitly replace answers & photoStatuses via updateDoc so stale "failed" entries are wiped cleanly,
           // while preserving admin-managed fields (displayId, sequenceNumber, status, privateNotes, original submittedAt).
-          const { createdAt: _ignoredCreatedAt, ...updateFields } = payload;
+          const { createdAt: _ignoredCreatedAt, privateNotes: _ignoredNotes, ...updateFields } = payload;
           await updateDoc(targetRef, {
             ...updateFields,
             ...(existingSubmissionData.displayId
@@ -935,9 +1129,6 @@ export async function createSubmission(
             ...(existingSubmissionData.status
               ? { status: existingSubmissionData.status }
               : {}),
-            ...(typeof existingSubmissionData.privateNotes === "string"
-              ? { privateNotes: existingSubmissionData.privateNotes }
-              : {}),
             ...(existingSubmissionData.submittedAt
               ? { submittedAt: existingSubmissionData.submittedAt }
               : {}),
@@ -945,6 +1136,7 @@ export async function createSubmission(
               ? { resumeToken: existingSubmissionData.resumeToken }
               : {}),
             finalized: !hasPendingOrFailed,
+            linkLocked: !hasPendingOrFailed,
           });
         } else {
           // Brand new document — full overwrite (NO { merge: true } that could inherit old photoStatuses)
@@ -957,14 +1149,16 @@ export async function createSubmission(
       markDraftDone: async (token, id, submittedAt) => {
         await markDraftSubmitted(token, id, submittedAt);
       },
-      notifyStudioAndCouple: async (body) => {
-        const res = await fetch("/api/notify", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        await parseNotifyApiResponse(res);
-      },
+      notifyStudioAndCouple: submittedWithinLastMinute
+        ? undefined
+        : async (body) => {
+            const res = await fetch("/api/notify", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            });
+            await parseNotifyApiResponse(res);
+          },
       updateEmailStatus: async (id, emailNotificationStatus) => {
         await updateDoc(doc(db, "submissions", id), {
           emailNotificationStatus,
@@ -1049,7 +1243,8 @@ async function fetchSubmissionsFromServer(): Promise<SubmissionRecord[]> {
       id: docSnapshot.id,
     });
   });
-  return sortSubmissionsNewestFirst(results);
+  const hydrated = await hydrateSubmissionsWithAdminMeta(results);
+  return sortSubmissionsNewestFirst(hydrated);
 }
 
 /**
@@ -1366,7 +1561,10 @@ export async function getSubmissionRecordFast(id: string): Promise<SubmissionRec
   const snapshot = await getDoc(submissionRef);
   if (!snapshot.exists()) return null;
 
-  const record = { ...(snapshot.data() as SubmissionRecord), id: snapshot.id };
+  const rawRecord = { ...(snapshot.data() as SubmissionRecord), id: snapshot.id };
+  const adminMeta = await loadAdminMetaForSubmission(id);
+  const record = mergeAdminMetaIntoSubmission(rawRecord, adminMeta);
+
   if (memorySubmissionsCache) {
     const idx = memorySubmissionsCache.findIndex((r) => r.id === id);
     if (idx >= 0) memorySubmissionsCache[idx] = record;
@@ -1389,26 +1587,28 @@ export async function getSubmissionById(id: string): Promise<SubmissionRecord | 
 
 /**
  * Admin: Update submission review status ('new' | 'reviewed' | 'shared').
+ * Stored in admin-only subcollection `submissions/{id}/adminMeta/main` so link holders
+ * can never read or modify internal status.
  */
 export async function updateSubmissionStatus(
   id: string,
   status: SubmissionStatus
 ): Promise<void> {
   updateLocalCacheRecord(id, (rec) => ({ ...rec, status }));
-  const submissionRef = doc(db, "submissions", id);
-  await updateDoc(submissionRef, { status });
+  await saveAdminMetaStatus(id, status);
 }
 
 /**
  * Admin: Update private team notes for a couple.
+ * Stored exclusively in admin-only subcollection `submissions/{id}/adminMeta/main` so
+ * couples and resume-link holders can NEVER read private team notes.
  */
 export async function updateSubmissionNotes(
   id: string,
   privateNotes: string
 ): Promise<void> {
   updateLocalCacheRecord(id, (rec) => ({ ...rec, privateNotes }));
-  const submissionRef = doc(db, "submissions", id);
-  await updateDoc(submissionRef, { privateNotes });
+  await saveAdminMetaNotes(id, privateNotes);
 }
 
 /**

@@ -8,6 +8,11 @@ import { cleanSentenceText } from "./textCleaner.ts";
 import { getGroupedQ10People } from "./familyPeople.ts";
 import { getGroupedWardrobe } from "./wardrobe.ts";
 import { getGroupedDecorEvents } from "./decorEvents.ts";
+import {
+  getLabelledOverlayDisplay,
+  hasSplitOverlayAnswers,
+  OverlayFieldKey,
+} from "./splitModeHelpers.ts";
 
 export const OAKS_BRIEF_SYSTEM_PROMPT = `
 # OAKS WEDDING — EDITORIAL CREATIVE BRIEF GENERATOR
@@ -330,6 +335,20 @@ export function synthesizeEditorialBrief(answers: QuestionnaireAnswers): string 
   lines.push("EDITORIAL CREATIVE BRIEF — ALL 27 QUESTIONS");
   lines.push("");
 
+  const buildSplitOrLegacyBullets = (
+    key: OverlayFieldKey,
+    legacyBullets: string[]
+  ): string[] => {
+    const disp = getLabelledOverlayDisplay(answers, key);
+    if (!disp.isSplit) return legacyBullets;
+    return formatPartnerPairSummary(
+      disp.partnerALabel,
+      disp.partnerAValue,
+      disp.partnerBLabel,
+      disp.partnerBValue
+    );
+  };
+
   // CHAPTER 1: YOUR STORY (Q1–Q9)
   lines.push(CHAPTER_DIVIDER);
   lines.push("CHAPTER 1 — YOUR STORY (Q1–Q9)");
@@ -510,7 +529,10 @@ export function synthesizeEditorialBrief(answers: QuestionnaireAnswers): string 
     lines,
     "Q11",
     "How do you want your wedding photographs and films to feel?",
-    summarizeSelectionsAndNotes(answers.q11_filmFeel?.selected, answers.q11_filmFeel?.other, "Note")
+    buildSplitOrLegacyBullets(
+      "q11_filmFeel",
+      summarizeSelectionsAndNotes(answers.q11_filmFeel?.selected, answers.q11_filmFeel?.other, "Note")
+    )
   );
 
   // Q12
@@ -589,7 +611,10 @@ export function synthesizeEditorialBrief(answers: QuestionnaireAnswers): string 
     lines,
     "Q15",
     "What tone are you expecting to set for your wedding day?",
-    summarizeSelectionsAndNotes(answers.q13_tone?.selected, answers.q13_tone?.other, "Note")
+    buildSplitOrLegacyBullets(
+      "q13_tone",
+      summarizeSelectionsAndNotes(answers.q13_tone?.selected, answers.q13_tone?.other, "Note")
+    )
   );
 
   // CHAPTER 4: YOUR DAY (Q16–Q19)
@@ -603,21 +628,41 @@ export function synthesizeEditorialBrief(answers: QuestionnaireAnswers): string 
     lines,
     "Q16",
     "What are the moments you are most looking forward to?",
-    summarizeSelectionsAndNotes(answers.q14_moments?.selected, answers.q14_moments?.other, "Custom")
+    buildSplitOrLegacyBullets(
+      "q14_moments",
+      summarizeSelectionsAndNotes(answers.q14_moments?.selected, answers.q14_moments?.other, "Custom")
+    )
   );
 
   // Q17
   const q17Bullets: string[] = [];
-  const capPts = summarizeToPoints(answers.q15_captureAvoid?.definitelyCapture, {
-    maxBullets: 2,
-    maxWordsPerBullet: 24,
-  });
-  const avoidPts = summarizeToPoints(answers.q15_captureAvoid?.pleaseAvoid, {
-    maxBullets: 2,
-    maxWordsPerBullet: 24,
-  });
-  for (const c of capPts) q17Bullets.push(`Definitely capture: ${c}`);
-  for (const a of avoidPts) q17Bullets.push(`Please avoid: ${a}`);
+  if (hasSplitOverlayAnswers(answers, "q15_captureAvoid")) {
+    const a = answers.partnerAnswers?.partnerA?.q15_captureAvoid;
+    const b = answers.partnerAnswers?.partnerB?.q15_captureAvoid;
+    for (const c of summarizeToPoints(a?.definitelyCapture, { maxBullets: 2, maxWordsPerBullet: 24 })) {
+      q17Bullets.push(`${p1} — Definitely capture: ${c}`);
+    }
+    for (const c of summarizeToPoints(b?.definitelyCapture, { maxBullets: 2, maxWordsPerBullet: 24 })) {
+      q17Bullets.push(`${p2} — Definitely capture: ${c}`);
+    }
+    for (const av of summarizeToPoints(a?.pleaseAvoid, { maxBullets: 2, maxWordsPerBullet: 24 })) {
+      q17Bullets.push(`${p1} — Please avoid: ${av}`);
+    }
+    for (const av of summarizeToPoints(b?.pleaseAvoid, { maxBullets: 2, maxWordsPerBullet: 24 })) {
+      q17Bullets.push(`${p2} — Please avoid: ${av}`);
+    }
+  } else {
+    const capPts = summarizeToPoints(answers.q15_captureAvoid?.definitelyCapture, {
+      maxBullets: 2,
+      maxWordsPerBullet: 24,
+    });
+    const avoidPts = summarizeToPoints(answers.q15_captureAvoid?.pleaseAvoid, {
+      maxBullets: 2,
+      maxWordsPerBullet: 24,
+    });
+    for (const c of capPts) q17Bullets.push(`Definitely capture: ${c}`);
+    for (const a of avoidPts) q17Bullets.push(`Please avoid: ${a}`);
+  }
   pushQuestion(
     lines,
     "Q17",
@@ -630,7 +675,10 @@ export function synthesizeEditorialBrief(answers: QuestionnaireAnswers): string 
     lines,
     "Q18",
     "What are your non-negotiables in your films and photographs?",
-    summarizeToPoints(answers.q16_nonNegotiables, { maxBullets: 4, maxWordsPerBullet: 24 })
+    buildSplitOrLegacyBullets(
+      "q16_nonNegotiables",
+      summarizeToPoints(answers.q16_nonNegotiables, { maxBullets: 4, maxWordsPerBullet: 24 })
+    )
   );
 
   // Q19
@@ -638,7 +686,10 @@ export function synthesizeEditorialBrief(answers: QuestionnaireAnswers): string 
     lines,
     "Q19",
     "Who do you think is going to be more emotional during the wedding?",
-    summarizeToPoints(answers.q17_emotional, { maxBullets: 2, maxWordsPerBullet: 20 })
+    buildSplitOrLegacyBullets(
+      "q17_emotional",
+      summarizeToPoints(answers.q17_emotional, { maxBullets: 2, maxWordsPerBullet: 20 })
+    )
   );
 
   // CHAPTER 5: WORKING TOGETHER (Q20–Q25)
@@ -652,7 +703,10 @@ export function synthesizeEditorialBrief(answers: QuestionnaireAnswers): string 
     lines,
     "Q20",
     "How versatile are you with the camera?",
-    summarizeToPoints(answers.q18_cameraVersatility, { maxBullets: 2, maxWordsPerBullet: 20 })
+    buildSplitOrLegacyBullets(
+      "q18_cameraVersatility",
+      summarizeToPoints(answers.q18_cameraVersatility, { maxBullets: 2, maxWordsPerBullet: 20 })
+    )
   );
 
   // Q21
@@ -660,7 +714,10 @@ export function synthesizeEditorialBrief(answers: QuestionnaireAnswers): string 
     lines,
     "Q21",
     "What mattered most when choosing OAKS Wedding?",
-    summarizeToPoints(answers.choosingOaks, { maxBullets: 4, maxWordsPerBullet: 24 })
+    buildSplitOrLegacyBullets(
+      "choosingOaks",
+      summarizeToPoints(answers.choosingOaks, { maxBullets: 4, maxWordsPerBullet: 24 })
+    )
   );
 
   // Q22
@@ -668,7 +725,10 @@ export function synthesizeEditorialBrief(answers: QuestionnaireAnswers): string 
     lines,
     "Q22",
     "How comfortable are you with being guided or directed during portraits and filming?",
-    summarizeToPoints(answers.q20_guidanceComfort, { maxBullets: 2, maxWordsPerBullet: 20 })
+    buildSplitOrLegacyBullets(
+      "q20_guidanceComfort",
+      summarizeToPoints(answers.q20_guidanceComfort, { maxBullets: 2, maxWordsPerBullet: 20 })
+    )
   );
 
   // Q23
@@ -676,10 +736,13 @@ export function synthesizeEditorialBrief(answers: QuestionnaireAnswers): string 
     lines,
     "Q23",
     "Is there anything that would help you feel more comfortable in front of the camera?",
-    summarizeSelectionsAndNotes(
-      answers.q21_comfortTips?.selected,
-      answers.q21_comfortTips?.notes,
-      "Note"
+    buildSplitOrLegacyBullets(
+      "q21_comfortTips",
+      summarizeSelectionsAndNotes(
+        answers.q21_comfortTips?.selected,
+        answers.q21_comfortTips?.notes,
+        "Note"
+      )
     )
   );
 
@@ -688,7 +751,10 @@ export function synthesizeEditorialBrief(answers: QuestionnaireAnswers): string 
     lines,
     "Q24",
     "What do you hope to feel when you watch your wedding film years from now?",
-    summarizeToPoints(answers.q22_futureFeeling, { maxBullets: 3, maxWordsPerBullet: 24 })
+    buildSplitOrLegacyBullets(
+      "q22_futureFeeling",
+      summarizeToPoints(answers.q22_futureFeeling, { maxBullets: 3, maxWordsPerBullet: 24 })
+    )
   );
 
   // Q25
@@ -726,13 +792,28 @@ export function synthesizeEditorialBrief(answers: QuestionnaireAnswers): string 
   );
 
   // Q27
-  const q27Bullets = summarizeToPoints(answers.q23_oneLastThing?.notes, {
-    maxBullets: 4,
-    maxWordsPerBullet: 24,
-  });
-  const q27Images = (answers.q23_oneLastThing?.images || []).filter(Boolean);
-  if (q27Images.length > 0) {
-    q27Bullets.push(`Uploaded parting image${q27Images.length > 1 ? "s" : ""}: ${q27Images.length}`);
+  let q27Bullets: string[];
+  if (hasSplitOverlayAnswers(answers, "q23_oneLastThing")) {
+    const a = answers.partnerAnswers?.partnerA?.q23_oneLastThing;
+    const b = answers.partnerAnswers?.partnerB?.q23_oneLastThing;
+    q27Bullets = formatPartnerPairSummary(p1, a?.notes, p2, b?.notes);
+    const aImgs = (a?.images || []).filter(Boolean);
+    const bImgs = (b?.images || []).filter(Boolean);
+    if (aImgs.length > 0) {
+      q27Bullets.push(`${p1}: ${aImgs.length} parting image${aImgs.length > 1 ? "s" : ""} uploaded`);
+    }
+    if (bImgs.length > 0) {
+      q27Bullets.push(`${p2}: ${bImgs.length} parting image${bImgs.length > 1 ? "s" : ""} uploaded`);
+    }
+  } else {
+    q27Bullets = summarizeToPoints(answers.q23_oneLastThing?.notes, {
+      maxBullets: 4,
+      maxWordsPerBullet: 24,
+    });
+    const q27Images = (answers.q23_oneLastThing?.images || []).filter(Boolean);
+    if (q27Images.length > 0) {
+      q27Bullets.push(`Uploaded parting image${q27Images.length > 1 ? "s" : ""}: ${q27Images.length}`);
+    }
   }
   pushQuestion(
     lines,

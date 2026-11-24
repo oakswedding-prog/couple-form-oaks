@@ -18,8 +18,14 @@ import {
   Check,
   MessageCircle,
   Mail,
+  CheckCircle2,
 } from "lucide-react";
-import { QuestionnaireAnswers } from "../types/questionnaire.ts";
+import type {
+  FillMode,
+  PartnerProgressMap,
+  PartnerSlot,
+  QuestionnaireAnswers,
+} from "../types/questionnaire.ts";
 import { STUDIO_NAME, ACCENT_COLOR, STORAGE_KEY } from "../constants.ts";
 import { createSubmission, SubmissionResult } from "../lib/submissions.ts";
 import { extractShortErrorCode } from "../lib/errorLogger.ts";
@@ -34,6 +40,14 @@ import {
   usePhotoUploadStatus,
 } from "../lib/photoUploadManager.ts";
 import { ResumeLinkButton } from "./ResumeLinkButton.tsx";
+import { InvitePartnerButton } from "./SplitModeUI.tsx";
+import {
+  getLabelledOverlayDisplay,
+  getMissingMandatoryQuestionsForPartner,
+  getOtherPartnerSlot,
+  getOverlayFieldKeyForStep,
+  getPartnerDisplayName,
+} from "../utils/splitModeHelpers.ts";
 
 interface ReviewScreenProps {
   answers: QuestionnaireAnswers;
@@ -41,6 +55,14 @@ interface ReviewScreenProps {
   onEditQuestion: (stepNumber: number) => void;
   onBack: () => void;
   onSubmitted: (result: SubmissionResult) => void;
+  splitModeEnabled?: boolean;
+  fillMode?: FillMode;
+  activePartner?: PartnerSlot;
+  partnerProgress?: PartnerProgressMap;
+  participantUids?: string[];
+  invitedAlready?: boolean;
+  onPartnerInvited?: () => void;
+  onMarkMyPartDone?: (slot: PartnerSlot) => Promise<{ bothDone: boolean; nextProgress: PartnerProgressMap }>;
 }
 
 
@@ -50,8 +72,18 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
   onEditQuestion,
   onBack,
   onSubmitted,
+  splitModeEnabled = false,
+  fillMode = "together",
+  activePartner = "partnerA",
+  partnerProgress,
+  participantUids,
+  invitedAlready = false,
+  onPartnerInvited,
+  onMarkMyPartDone,
 }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSavingMyPart, setIsSavingMyPart] = useState(false);
+  const [confirmSendIncomplete, setConfirmSendIncomplete] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [failureCode, setFailureCode] = useState<string | null>(null);
   const [showShareBackup, setShowShareBackup] = useState(false);
@@ -59,8 +91,45 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
 
   const p1 = answers.partner1 || "Partner 1";
   const p2 = answers.partner2 || "Partner 2";
-  const missingMandatorySteps = getMissingMandatoryQuestions(answers);
+  const isSeparateMode = splitModeEnabled && fillMode === "separate";
+  const otherPartnerSlot = getOtherPartnerSlot(activePartner);
+  const myName = getPartnerDisplayName(answers, activePartner);
+  const otherName = getPartnerDisplayName(answers, otherPartnerSlot);
+  const myDone = Boolean(partnerProgress?.[activePartner]?.done);
+  const otherDone = Boolean(partnerProgress?.[otherPartnerSlot]?.done);
+
+  const missingMandatorySteps = isSeparateMode
+    ? getMissingMandatoryQuestionsForPartner(answers, activePartner)
+    : getMissingMandatoryQuestions(answers);
   const hasMissingMandatory = missingMandatorySteps.length > 0;
+
+  const renderOverlayAnswer = (
+    step: number,
+    fallback: React.ReactNode
+  ): React.ReactNode => {
+    if (!splitModeEnabled) return fallback;
+    const fieldKey = getOverlayFieldKeyForStep(step);
+    if (!fieldKey) return fallback;
+    const display = getLabelledOverlayDisplay(answers, fieldKey);
+    if (isSeparateMode) {
+      const ownVal =
+        activePartner === "partnerA" ? display.partnerAValue : display.partnerBValue;
+      return <span>{ownVal || "—"}</span>;
+    }
+    if (!display.isSplit) return fallback;
+    return (
+      <div className="space-y-1.5">
+        <div>
+          <span className="font-semibold text-[#1A1A1A]">{p1}:</span>{" "}
+          <span>{display.partnerAValue || "—"}</span>
+        </div>
+        <div>
+          <span className="font-semibold text-[#1A1A1A]">{p2}:</span>{" "}
+          <span>{display.partnerBValue || "—"}</span>
+        </div>
+      </div>
+    );
+  };
 
   const buildBackupText = () => generateBriefSummary(STUDIO_NAME, answers);
 
@@ -88,8 +157,13 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
     }
   };
 
-  const handleSend = async () => {
-    if (hasMissingMandatory) {
+  const handleSend = async (
+    overrideOptions?: {
+      submittedIncompletePartner?: string;
+      nextProgress?: PartnerProgressMap;
+    }
+  ) => {
+    if (!overrideOptions?.submittedIncompletePartner && hasMissingMandatory) {
       setErrorMessage(
         "Please complete the highlighted required questions above before sending your story."
       );
@@ -101,7 +175,17 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
     setFailureCode(null);
 
     try {
-      const result = await createSubmission(answers);
+      const result = await createSubmission(
+        answers,
+        splitModeEnabled
+          ? {
+              fillMode,
+              partnerProgress: overrideOptions?.nextProgress || partnerProgress,
+              participantUids,
+              submittedIncompletePartner: overrideOptions?.submittedIncompletePartner,
+            }
+          : undefined
+      );
 
       // Main record is confirmed saved! Clear local draft quietly (never blocks Thank You screen)
       try {
@@ -133,6 +217,36 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
     }
   };
 
+  const handleDoneWithMyPart = async () => {
+    if (hasMissingMandatory) {
+      setErrorMessage(
+        "Please complete your highlighted required questions above before marking your part done."
+      );
+      setFailureCode(null);
+      return;
+    }
+    setIsSavingMyPart(true);
+    setErrorMessage(null);
+    setFailureCode(null);
+    try {
+      if (onMarkMyPartDone) {
+        const res = await onMarkMyPartDone(activePartner);
+        setIsSavingMyPart(false);
+        if (res.bothDone) {
+          // Both partners have finished — send the complete combined submission automatically!
+          await handleSend({ nextProgress: res.nextProgress });
+        }
+      } else {
+        setIsSavingMyPart(false);
+        await handleSend();
+      }
+    } catch (err: any) {
+      setIsSavingMyPart(false);
+      setFailureCode(extractShortErrorCode(err, "save/failed"));
+      setErrorMessage("We couldn't save your completion right now. Please try again.");
+    }
+  };
+
   const backupTextSummary = showShareBackup ? buildBackupText() : "";
   const compactShareSnippet = backupTextSummary.slice(0, 3500);
   const whatsappShareUrl = `https://wa.me/?text=${encodeURIComponent(compactShareSnippet)}`;
@@ -153,13 +267,25 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
           <span>Back</span>
         </button>
         <div className="flex items-center gap-2">
-          <ResumeLinkButton
-            resumeToken={resumeToken}
-            partner1={answers.partner1}
-            partner2={answers.partner2}
-            email={answers.email}
-            compact
-          />
+          {isSeparateMode && resumeToken ? (
+            <InvitePartnerButton
+              resumeToken={resumeToken}
+              partner1={p1}
+              partner2={p2}
+              activePartner={activePartner}
+              invitedAlready={invitedAlready}
+              onShared={onPartnerInvited}
+              compact
+            />
+          ) : (
+            <ResumeLinkButton
+              resumeToken={resumeToken}
+              partner1={answers.partner1}
+              partner2={answers.partner2}
+              email={answers.email}
+              compact
+            />
+          )}
           <span className="text-xs uppercase tracking-widest font-semibold text-[#5F5F5F] hidden sm:inline">
             Review &amp; Confirm
           </span>
@@ -401,9 +527,10 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
         <ReviewItem
           num={11}
           question="How do you want your wedding photographs and films to feel?"
-          answer={
+          answer={renderOverlayAnswer(
+            11,
             Array.isArray(answers.q11_filmFeel?.selected) &&
-            answers.q11_filmFeel.selected.length > 0 ? (
+              answers.q11_filmFeel.selected.length > 0 ? (
               <div className="space-y-1">
                 <div className="font-medium text-[#1A1A1A]">
                   {answers.q11_filmFeel.selected.join(" · ")}
@@ -419,7 +546,7 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
             ) : (
               "Skipped"
             )
-          }
+          )}
           onEdit={() => onEditQuestion(11)}
         />
 
@@ -597,9 +724,10 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
         <ReviewItem
           num={15}
           question="What tone are you expecting to set for your wedding day"
-          answer={
+          answer={renderOverlayAnswer(
+            15,
             Array.isArray(answers.q13_tone?.selected) &&
-            answers.q13_tone.selected.length > 0 ? (
+              answers.q13_tone.selected.length > 0 ? (
               <div className="space-y-1">
                 <div className="font-medium text-[#1A1A1A]">
                   {answers.q13_tone.selected.join(" · ")}
@@ -615,7 +743,7 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
             ) : (
               "Skipped"
             )
-          }
+          )}
           onEdit={() => onEditQuestion(15)}
         />
       </section>
@@ -626,7 +754,8 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
         <ReviewItem
           num={16}
           question="What are the moments you are most looking forward to during your wedding?"
-          answer={
+          answer={renderOverlayAnswer(
+            16,
             [
               ...(answers.q14_moments.selected || []),
               answers.q14_moments.other
@@ -635,25 +764,28 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
             ]
               .filter(Boolean)
               .join(", ") || "Skipped"
-          }
+          )}
           onEdit={() => onEditQuestion(16)}
         />
         <ReviewItem
           num={17}
           question="Is there anything you definitely want us to capture or avoid?"
-          answer={`Definitely capture: ${answers.q15_captureAvoid.definitelyCapture || "—"}\nPlease avoid: ${answers.q15_captureAvoid.pleaseAvoid || "—"}`}
+          answer={renderOverlayAnswer(
+            17,
+            `Definitely capture: ${answers.q15_captureAvoid.definitelyCapture || "—"}\nPlease avoid: ${answers.q15_captureAvoid.pleaseAvoid || "—"}`
+          )}
           onEdit={() => onEditQuestion(17)}
         />
         <ReviewItem
           num={18}
           question="Please mention your non negotiables in your films and photographs?"
-          answer={answers.q16_nonNegotiables || "Skipped"}
+          answer={renderOverlayAnswer(18, answers.q16_nonNegotiables || "Skipped")}
           onEdit={() => onEditQuestion(18)}
         />
         <ReviewItem
           num={19}
           question="Who do you think is going to be more emotional during wedding?"
-          answer={answers.q17_emotional || "Skipped"}
+          answer={renderOverlayAnswer(19, answers.q17_emotional || "Skipped")}
           onEdit={() => onEditQuestion(19)}
         />
       </section>
@@ -664,25 +796,26 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
         <ReviewItem
           num={20}
           question="How versatile are you with the camera?"
-          answer={answers.q18_cameraVersatility || "Skipped"}
+          answer={renderOverlayAnswer(20, answers.q18_cameraVersatility || "Skipped")}
           onEdit={() => onEditQuestion(20)}
         />
         <ReviewItem
           num={21}
           question="What mattered most to you when choosing OAKS Wedding to capture your wedding?"
-          answer={answers.choosingOaks || "Skipped"}
+          answer={renderOverlayAnswer(21, answers.choosingOaks || "Skipped")}
           onEdit={() => onEditQuestion(21)}
         />
         <ReviewItem
           num={22}
           question="How comfortable are you with being guided or directed during portraits and filming?"
-          answer={answers.q20_guidanceComfort || "Skipped"}
+          answer={renderOverlayAnswer(22, answers.q20_guidanceComfort || "Skipped")}
           onEdit={() => onEditQuestion(22)}
         />
         <ReviewItem
           num={23}
           question="Is there anything that would help you feel more comfortable in front of the camera?"
-          answer={
+          answer={renderOverlayAnswer(
+            23,
             [
               ...(answers.q21_comfortTips.selected || []),
               answers.q21_comfortTips.notes
@@ -691,13 +824,13 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
             ]
               .filter(Boolean)
               .join(", ") || "Skipped"
-          }
+          )}
           onEdit={() => onEditQuestion(23)}
         />
         <ReviewItem
           num={24}
           question="What do you hope to feel when you watch your wedding film years from now?"
-          answer={answers.q22_futureFeeling || "Skipped"}
+          answer={renderOverlayAnswer(24, answers.q22_futureFeeling || "Skipped")}
           onEdit={() => onEditQuestion(24)}
         />
         <ReviewItem
@@ -747,27 +880,64 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
         <ReviewItem
           num={27}
           question="Is there anything else you'd like to let us know?"
-          answer={
-            <div>
-              <p>{answers.q23_oneLastThing.notes || "Skipped"}</p>
-              {answers.q23_oneLastThing.images?.length > 0 && (
-                <div className="space-y-1.5 mt-1.5">
-                  <p className="text-sm text-[#B08D57] font-medium">
-                    ✓ {answers.q23_oneLastThing.images.length} photos attached
+          answer={(() => {
+            const overlay = splitModeEnabled
+              ? getLabelledOverlayDisplay(answers, "q23_oneLastThing")
+              : null;
+            const allImages = isSeparateMode
+              ? Array.from(
+                  new Set([
+                    ...(answers.partnerAnswers?.[activePartner]?.q23_oneLastThing?.images || []),
+                  ])
+                )
+              : Array.from(
+                  new Set([
+                    ...(answers.q23_oneLastThing.images || []),
+                    ...(answers.partnerAnswers?.partnerA?.q23_oneLastThing?.images || []),
+                    ...(answers.partnerAnswers?.partnerB?.q23_oneLastThing?.images || []),
+                  ])
+                );
+            return (
+              <div>
+                {isSeparateMode && overlay ? (
+                  <p>
+                    {(activePartner === "partnerA"
+                      ? overlay.partnerAValue
+                      : overlay.partnerBValue) || "Skipped"}
                   </p>
-                  <div className="grid grid-cols-3 gap-2">
-                    {answers.q23_oneLastThing.images.slice(0, 6).map((img, i) => (
-                      <ReviewThumb
-                        key={`${img}_${i}`}
-                        src={img}
-                        alt={`Additional photo ${i + 1}`}
-                      />
-                    ))}
+                ) : overlay?.isSplit ? (
+                  <div className="space-y-1.5">
+                    <div>
+                      <span className="font-semibold text-[#1A1A1A]">{p1}:</span>{" "}
+                      <span>{overlay.partnerAValue || "—"}</span>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-[#1A1A1A]">{p2}:</span>{" "}
+                      <span>{overlay.partnerBValue || "—"}</span>
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
-          }
+                ) : (
+                  <p>{answers.q23_oneLastThing.notes || "Skipped"}</p>
+                )}
+                {allImages.length > 0 && (
+                  <div className="space-y-1.5 mt-1.5">
+                    <p className="text-sm text-[#B08D57] font-medium">
+                      ✓ {allImages.length} photos attached
+                    </p>
+                    <div className="grid grid-cols-3 gap-2">
+                      {allImages.slice(0, 6).map((img, i) => (
+                        <ReviewThumb
+                          key={`${img}_${i}`}
+                          src={img}
+                          alt={`Additional photo ${i + 1}`}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           onEdit={() => onEditQuestion(27)}
         />
       </section>
@@ -829,7 +999,7 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
                 <button
                   type="button"
                   disabled={isSubmitting}
-                  onClick={handleSend}
+                  onClick={() => void handleSend()}
                   className="flex-1 min-h-[44px] px-4 py-2.5 rounded-xl bg-[#1A1A1A] hover:bg-[#333333] text-white text-sm font-medium inline-flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-60"
                 >
                   <RotateCcw className="w-4 h-4 text-[#E5C687]" />
@@ -901,30 +1071,145 @@ export const ReviewScreen: React.FC<ReviewScreenProps> = ({
 
       {/* Bottom Send Action */}
       <div className="sticky bottom-4 z-20 pt-8 pb-4 bg-white/95 backdrop-blur-xs">
-        <button
-          type="button"
-          disabled={isSubmitting || hasMissingMandatory}
-          onClick={handleSend}
-          className={`w-full min-h-[58px] py-4 px-6 rounded-2xl font-medium text-[19px] shadow-lg transition-all flex items-center justify-center gap-3 ${
-            isSubmitting || hasMissingMandatory
-              ? "bg-[#E8E8E8] text-[#7A756D] cursor-not-allowed"
-              : "bg-[#1A1A1A] hover:bg-[#333333] active:scale-[0.99] text-white cursor-pointer"
-          }`}
-        >
-          {isSubmitting ? (
-            <>
-              <Loader2 className="w-5 h-5 animate-spin text-[#B08D57]" />
-              <span>Sending your story to {STUDIO_NAME}...</span>
-            </>
-          ) : hasMissingMandatory ? (
-            <span>Complete required questions to send</span>
+        {isSeparateMode ? (
+          myDone && !otherDone ? (
+            <div className="p-5 rounded-2xl bg-[#FAF8F5] border border-[#E8DFD3] space-y-4">
+              <div className="flex items-start gap-3">
+                <CheckCircle2 className="w-5 h-5 text-emerald-700 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="text-base font-semibold text-[#1A1A1A]">
+                    Your part is saved, {myName}!
+                  </p>
+                  <p className="text-sm text-[#5F5F5F] leading-relaxed">
+                    Waiting for {otherName} to finish their part. Once they tap done,
+                    your combined story will be sent to {STUDIO_NAME} automatically.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2.5">
+                <InvitePartnerButton
+                  resumeToken={resumeToken}
+                  partner1={p1}
+                  partner2={p2}
+                  activePartner={activePartner}
+                  invitedAlready={true}
+                  onShared={onPartnerInvited}
+                />
+
+                {!confirmSendIncomplete ? (
+                  <button
+                    type="button"
+                    disabled={isSubmitting}
+                    onClick={() => setConfirmSendIncomplete(true)}
+                    className="min-h-[44px] px-4 py-2.5 rounded-xl bg-white border border-[#DFD4C3] hover:border-[#1A1A1A] text-sm font-medium text-[#5F5F5F] hover:text-[#1A1A1A] transition-colors cursor-pointer"
+                  >
+                    Send now anyway
+                  </button>
+                ) : (
+                  <div className="w-full p-3.5 rounded-xl bg-white border border-amber-200 space-y-2.5">
+                    <p className="text-sm font-medium text-[#1A1A1A]">
+                      {otherName} hasn&apos;t finished. Send anyway?
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={isSubmitting}
+                        onClick={() =>
+                          void handleSend({ submittedIncompletePartner: otherName })
+                        }
+                        className="px-4 py-2 rounded-xl bg-[#1A1A1A] text-white text-xs font-medium hover:bg-[#333333] cursor-pointer inline-flex items-center gap-1.5"
+                      >
+                        {isSubmitting ? (
+                          <>
+                            <Loader2 className="w-3.5 h-3.5 animate-spin text-[#B08D57]" />
+                            <span>Sending...</span>
+                          </>
+                        ) : (
+                          <span>Yes, send now</span>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmSendIncomplete(false)}
+                        className="px-3.5 py-2 rounded-xl bg-[#FAF8F5] border border-[#E8E8E8] text-xs font-medium text-[#4A453E] cursor-pointer"
+                      >
+                        Keep waiting
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           ) : (
-            <>
-              <Send className="w-5 h-5 text-[#B08D57]" />
-              <span>Send to {STUDIO_NAME}</span>
-            </>
-          )}
-        </button>
+            <div className="space-y-2.5">
+              <button
+                type="button"
+                disabled={isSubmitting || isSavingMyPart || hasMissingMandatory}
+                onClick={() => void handleDoneWithMyPart()}
+                className={`w-full min-h-[58px] py-4 px-6 rounded-2xl font-medium text-[19px] shadow-lg transition-all flex items-center justify-center gap-3 ${
+                  isSubmitting || isSavingMyPart || hasMissingMandatory
+                    ? "bg-[#E8E8E8] text-[#7A756D] cursor-not-allowed"
+                    : "bg-[#1A1A1A] hover:bg-[#333333] active:scale-[0.99] text-white cursor-pointer"
+                }`}
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin text-[#B08D57]" />
+                    <span>Sending your story to {STUDIO_NAME}...</span>
+                  </>
+                ) : isSavingMyPart ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin text-[#B08D57]" />
+                    <span>Saving your part...</span>
+                  </>
+                ) : hasMissingMandatory ? (
+                  <span>Complete your required questions</span>
+                ) : otherDone ? (
+                  <>
+                    <Send className="w-5 h-5 text-[#B08D57]" />
+                    <span>I&apos;m done · Send to {STUDIO_NAME}</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-5 h-5 text-[#B08D57]" />
+                    <span>I&apos;m done with my part</span>
+                  </>
+                )}
+              </button>
+              {!otherDone && (
+                <p className="text-center text-xs text-[#7A756D]">
+                  Once {otherName} finishes their part too, your combined answers send automatically.
+                </p>
+              )}
+            </div>
+          )
+        ) : (
+          <button
+            type="button"
+            disabled={isSubmitting || hasMissingMandatory}
+            onClick={() => void handleSend()}
+            className={`w-full min-h-[58px] py-4 px-6 rounded-2xl font-medium text-[19px] shadow-lg transition-all flex items-center justify-center gap-3 ${
+              isSubmitting || hasMissingMandatory
+                ? "bg-[#E8E8E8] text-[#7A756D] cursor-not-allowed"
+                : "bg-[#1A1A1A] hover:bg-[#333333] active:scale-[0.99] text-white cursor-pointer"
+            }`}
+          >
+            {isSubmitting ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin text-[#B08D57]" />
+                <span>Sending your story to {STUDIO_NAME}...</span>
+              </>
+            ) : hasMissingMandatory ? (
+              <span>Complete required questions to send</span>
+            ) : (
+              <>
+                <Send className="w-5 h-5 text-[#B08D57]" />
+                <span>Send to {STUDIO_NAME}</span>
+              </>
+            )}
+          </button>
+        )}
       </div>
     </div>
   );

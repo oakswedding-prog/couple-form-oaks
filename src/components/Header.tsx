@@ -6,8 +6,9 @@
 import React from "react";
 import { ArrowLeft, Check, Loader2, RefreshCw } from "lucide-react";
 import { ACCENT_COLOR } from "../constants.ts";
-import type { AutoSaveStatus } from "../types/questionnaire.ts";
+import type { AutoSaveStatus, FillMode, PartnerSlot } from "../types/questionnaire.ts";
 import { ResumeLinkButton } from "./ResumeLinkButton.tsx";
+import { InvitePartnerButton, ModeSwitcherMenu } from "./SplitModeUI.tsx";
 
 interface HeaderProps {
   currentStep: number;
@@ -22,6 +23,15 @@ interface HeaderProps {
   partner1?: string;
   partner2?: string;
   email?: string;
+  splitModeEnabled?: boolean;
+  fillMode?: FillMode;
+  activePartner?: PartnerSlot;
+  partnerACount?: number;
+  partnerBCount?: number;
+  invitedAlready?: boolean;
+  onChangeFillMode?: (mode: FillMode) => void;
+  onChangeActivePartner?: (slot: PartnerSlot) => void;
+  onPartnerInvited?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -37,6 +47,15 @@ export const Header: React.FC<HeaderProps> = ({
   partner1,
   partner2,
   email,
+  splitModeEnabled = false,
+  fillMode = "together",
+  activePartner = "partnerA",
+  partnerACount,
+  partnerBCount,
+  invitedAlready = false,
+  onChangeFillMode,
+  onChangeActivePartner,
+  onPartnerInvited,
 }) => {
   const progressPercent =
     currentStep > 0 && currentStep <= totalSteps
@@ -123,7 +142,30 @@ export const Header: React.FC<HeaderProps> = ({
                 </span>
               )}
 
-              {resumeToken && (
+              {splitModeEnabled && fillMode === "separate" && resumeToken && (
+                <InvitePartnerButton
+                  resumeToken={resumeToken}
+                  partner1={partner1 || "Partner 1"}
+                  partner2={partner2 || "Partner 2"}
+                  activePartner={activePartner}
+                  invitedAlready={invitedAlready}
+                  onShared={onPartnerInvited}
+                  compact
+                />
+              )}
+
+              {splitModeEnabled && onChangeFillMode && onChangeActivePartner && (
+                <ModeSwitcherMenu
+                  fillMode={fillMode}
+                  activePartner={activePartner}
+                  partner1={partner1 || "Partner 1"}
+                  partner2={partner2 || "Partner 2"}
+                  onChangeMode={onChangeFillMode}
+                  onChangePartner={onChangeActivePartner}
+                />
+              )}
+
+              {resumeToken && (!splitModeEnabled || fillMode !== "separate") && (
                 <ResumeLinkButton
                   resumeToken={resumeToken}
                   partner1={partner1}
@@ -136,6 +178,28 @@ export const Header: React.FC<HeaderProps> = ({
           )
         )}
       </div>
+
+      {/* Per-partner live progress strip (ONLY shown when ENABLE_SPLIT_MODE is ON and fillMode === "separate") */}
+      {splitModeEnabled &&
+        fillMode === "separate" &&
+        currentStep > 0 &&
+        currentStep <= totalSteps &&
+        typeof partnerACount === "number" &&
+        typeof partnerBCount === "number" && (
+          <div className="bg-[#FAF8F5] border-t border-[#EFECE6] px-4 py-1.5">
+            <div className="max-w-[680px] mx-auto flex items-center justify-between gap-2 text-[11px] sm:text-xs text-[#5F5F5F] tabular-nums">
+              <span className="truncate">
+                <strong className={activePartner === "partnerA" ? "text-[#1A1A1A]" : "font-medium"}>
+                  {(partner1 || "Partner 1").trim()}: {partnerACount} of {totalSteps}
+                </strong>
+                <span className="mx-1.5 text-[#C4A474]">·</span>
+                <strong className={activePartner === "partnerB" ? "text-[#1A1A1A]" : "font-medium"}>
+                  {(partner2 || "Partner 2").trim()}: {partnerBCount} of {totalSteps}
+                </strong>
+              </span>
+            </div>
+          </div>
+        )}
     </header>
   );
 };

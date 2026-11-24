@@ -1,0 +1,300 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper: Any signed-in user (including silent Anonymous couple sessions)
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Helper: Checks if the signed-in couple is resuming this exact submission via its
+    // unguessable 192-bit resumeToken (verified against the matching drafts/{resumeToken} doc).
+    function isResumedSubmissionOwner(submissionId, data) {
+      return isSignedIn()
+        && ('resumeToken' in data)
+        && (data.resumeToken is string)
+        && data.resumeToken.size() >= 22
+        && exists(/databases/$(database)/documents/drafts/$(data.resumeToken))
+        && get(/databases/$(database)/documents/drafts/$(data.resumeToken)).data.submissionId == submissionId
+        && get(/databases/$(database)/documents/drafts/$(data.resumeToken)).data.ownerUid == request.auth.uid;
+    }
+
+    // Helper: Checks if the user is an authenticated, NON-ANONYMOUS studio admin
+    // authorized via verified team email or an active document in the 'admins' collection.
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && request.auth.token.email != null
+        && (
+          (
+            request.auth.token.email_verified == true
+            && request.auth.token.email.lower() in [
+              'rahulratna88@gmail.com',
+              'mywedding@oakswedding.com',
+              'oaksoperations@gmail.com'
+            ]
+          )
+          || (
+            exists(/databases/$(database)/documents/admins/$(request.auth.token.email.lower()))
+            && get(/databases/$(database)/documents/admins/$(request.auth.token.email.lower())).data.get('active', true) != false
+          )
+        );
+    }
+
+    // Helper: Checks whether an immutable event submission receipt exists for this eventId
+    function isEventArchived(submissionId, eventId) {
+      return exists(/databases/$(database)/documents/submissions/$(submissionId)/eventSubmissions/$(eventId));
+    }
+
+    // Helper: Checks whether a standard event ('sangeet', 'wedding', 'reception') is marked submitted
+    function isStandardEventSubmitted(data, eventKey) {
+      return ('productionChecklist' in data)
+        && (data.productionChecklist is map)
+        && ('events' in data.productionChecklist)
+        && (data.productionChecklist.events is map)
+        && (eventKey in data.productionChecklist.events)
+        && (data.productionChecklist.events[eventKey] is map)
+        && (
+          data.productionChecklist.events[eventKey].get('submitted', false) == true
+          || ('submission' in data.productionChecklist.events[eventKey] && data.productionChecklist.events[eventKey].submission != null)
+        );
+    }
+
+    // Helper: Ensures once a standard event is submitted/archived, its entire map stays byte-for-byte unchanged
+    function standardEventPreserved(oldData, newData, eventKey) {
+      return ('productionChecklist' in oldData)
+        && (oldData.productionChecklist is map)
+        && ('events' in oldData.productionChecklist)
+        && (oldData.productionChecklist.events is map)
+        && (eventKey in oldData.productionChecklist.events)
+        ? (
+            ('productionChecklist' in newData)
+            && (newData.productionChecklist is map)
+            && ('events' in newData.productionChecklist)
+            && (newData.productionChecklist.events is map)
+            && (eventKey in newData.productionChecklist.events)
+            && newData.productionChecklist.events[eventKey] == oldData.productionChecklist.events[eventKey]
+          )
+        : (
+            !('productionChecklist' in newData)
+            || !('events' in newData.productionChecklist)
+            || !(eventKey in newData.productionChecklist.events)
+            || newData.productionChecklist.events[eventKey].get('submitted', false) == true
+          );
+    }
+
+    // Helper: Protects legacy top-level wedding checklist mirrors once 'wedding' is submitted
+    function weddingLegacyMirrorsPreserved(oldData, newData) {
+      return (
+        !('productionChecklist' in oldData)
+        || !(oldData.productionChecklist is map)
+        || !('items' in oldData.productionChecklist)
+        || (
+          ('productionChecklist' in newData)
+          && (newData.productionChecklist is map)
+          && ('items' in newData.productionChecklist)
+          && newData.productionChecklist.items == oldData.productionChecklist.items
+        )
+      ) && (
+        !('productionChecklist' in oldData)
+        || !(oldData.productionChecklist is map)
+        || !('fileDetails' in oldData.productionChecklist)
+        || (
+          ('productionChecklist' in newData)
+          && (newData.productionChecklist is map)
+          && ('fileDetails' in newData.productionChecklist)
+          && newData.productionChecklist.fileDetails == oldData.productionChecklist.fileDetails
+        )
+      );
+    }
+
+    // Helper: Validates required permanent submission metadata on lock transition
+    function hasValidSubmissionPayload(containerMap, eventId) {
+      return ('submission' in containerMap)
+        && (containerMap.submission is map)
+        && containerMap.submission.eventId == eventId
+        && containerMap.submission.eventName is string
+        && containerMap.submission.eventName.size() > 0
+        && containerMap.submission.eventName.size() <= 100
+        && containerMap.submission.submittedBy is string
+        && containerMap.submission.submittedBy.size() > 0
+        && containerMap.submission.submittedBy.size() <= 120
+        && containerMap.submission.submissionDate is string
+        && containerMap.submission.submissionDate.size() > 0
+        && containerMap.submission.submissionTime is string
+        && containerMap.submission.submissionTime.size() > 0
+        && containerMap.submission.submittedAt is string
+        && containerMap.submission.submittedAt.size() > 0
+        && (containerMap.submission.items is map)
+        && (containerMap.submission.fileDetails is list);
+    }
+
+    // Helper: Validates transition/immutability of a single standard event key
+    function standardEventTransitionValid(oldData, newData, submissionId, eventKey) {
+      let wasLocked = isStandardEventSubmitted(oldData, eventKey) || isEventArchived(submissionId, eventKey);
+      let isNowSubmitted = isStandardEventSubmitted(newData, eventKey);
+      return (!wasLocked || standardEventPreserved(oldData, newData, eventKey))
+        && (!isNowSubmitted || hasValidSubmissionPayload(newData.productionChecklist.events[eventKey], eventKey));
+    }
+
+    // Helper: Validates immutable archive document schema in eventSubmissions subcollection
+    function isValidEventSubmissionRecord(data, eventId) {
+      return data.keys().hasAll([
+          'eventId', 'eventName', 'isCustom', 'submittedBy',
+          'submissionDate', 'submissionTime', 'submittedAt', 'items', 'fileDetails'
+        ])
+        && data.eventId == eventId
+        && data.eventName is string && data.eventName.size() > 0 && data.eventName.size() <= 100
+        && data.isCustom is bool
+        && data.submittedBy is string && data.submittedBy.size() > 0 && data.submittedBy.size() <= 120
+        && data.submissionDate is string && data.submissionDate.size() > 0
+        && data.submissionTime is string && data.submissionTime.size() > 0
+        && data.submittedAt is string && data.submittedAt.size() > 0
+        && data.items is map
+        && data.fileDetails is list;
+    }
+
+    // Helper: Validates custom event document structure in productionEvents subcollection
+    function isValidCustomProductionEvent(data, eventId) {
+      return data.keys().hasAll(['id', 'name', 'isCustom', 'items', 'fileDetails', 'submitted', 'createdAt', 'updatedAt'])
+        && data.id == eventId
+        && data.isCustom == true
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.items is map
+        && data.fileDetails is list
+        && data.submitted is bool
+        && data.createdAt is string && data.createdAt.size() > 0
+        && data.updatedAt is string && data.updatedAt.size() > 0;
+    }
+
+    // Admin Allow-List:
+    // Non-anonymous signed-in users can check their own admin doc; only admins can write.
+    match /admins/{adminEmail} {
+      allow read: if request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous';
+      allow write: if isAdmin();
+    }
+
+    // Sequential Counter:
+    // Used by post-save transactions to assign sequential submission numbers (#001, #002...)
+    match /counters/{counterId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // Online Drafts (document ID = 192-bit unguessable resume token):
+    // - Listing is strictly admin-only (non-admins can NEVER browse or list drafts).
+    // - A signed-in couple can get a single draft ONLY if they possess its unguessable token (>= 22 chars).
+    // - Couples can create their own draft (ownerUid == auth.uid) and update their own draft
+    //   (or re-link it to a new anonymous uid when resuming via the unguessable token while keeping submissionId fixed).
+    match /drafts/{draftId} {
+      allow list: if isAdmin();
+      allow get: if isAdmin() || (isSignedIn() && draftId.size() >= 22);
+      allow create: if isSignedIn()
+        && draftId.size() >= 22
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.submissionId is string;
+      allow update: if isAdmin()
+        || (
+          isSignedIn()
+          && draftId.size() >= 22
+          && request.resource.data.ownerUid == request.auth.uid
+          && request.resource.data.submissionId == resource.data.submissionId
+          && (
+            resource.data.ownerUid == request.auth.uid
+            || resource.data.get('status', 'draft') != 'submitted'
+          )
+        );
+      allow delete: if isAdmin();
+    }
+
+    // Error Diagnostics Log:
+    // - Signed-in couples can ONLY create error logs (no personal answers, no resume token).
+    // - Only verified studio admins can read; nobody can update or delete.
+    match /submissionErrors/{errorId} {
+      allow create: if isSignedIn()
+        && !('answers' in request.resource.data)
+        && !('resumeToken' in request.resource.data);
+      allow read: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    // Submissions:
+    // - Listing is strictly admin-only (blocks listing of any couple data by non-admins).
+    // - Couples can create and update ONLY their own record (ownerUid == auth.uid) BEFORE it is finalized,
+    //   OR update it from any phone/browser after claiming the submission's unguessable 192-bit resumeToken
+    //   while finalized != true.
+    // - Only verified studio admins keep full read/update/delete access, and locked checklist events stay immutable.
+    match /submissions/{submissionId} {
+      allow list: if isAdmin();
+      allow get: if isAdmin()
+        || (isSignedIn() && resource.data.ownerUid == request.auth.uid)
+        || isResumedSubmissionOwner(submissionId, resource.data);
+      allow create: if isSignedIn()
+        && request.resource.data.ownerUid == request.auth.uid;
+      allow update: if (
+          isAdmin()
+          && standardEventTransitionValid(resource.data, request.resource.data, submissionId, 'sangeet')
+          && standardEventTransitionValid(resource.data, request.resource.data, submissionId, 'wedding')
+          && standardEventTransitionValid(resource.data, request.resource.data, submissionId, 'reception')
+          && (
+            (!isStandardEventSubmitted(resource.data, 'wedding') && !isEventArchived(submissionId, 'wedding'))
+            || weddingLegacyMirrorsPreserved(resource.data, request.resource.data)
+          )
+        )
+        || (
+          isSignedIn()
+          && resource.data.get('finalized', false) != true
+          && (
+            (
+              resource.data.ownerUid == request.auth.uid
+              && request.resource.data.ownerUid == resource.data.ownerUid
+            )
+            || (
+              isResumedSubmissionOwner(submissionId, resource.data)
+              && request.resource.data.ownerUid == request.auth.uid
+              && request.resource.data.resumeToken == resource.data.resumeToken
+            )
+          )
+        );
+      allow delete: if isAdmin();
+
+      // Custom Production Events:
+      // - Editable & deletable ONLY before submission
+      // - Permanently read-only & non-deletable once submitted == true or archived
+      match /productionEvents/{eventId} {
+        allow read: if isAdmin();
+        allow create: if isAdmin()
+          && !isEventArchived(submissionId, eventId)
+          && isValidCustomProductionEvent(request.resource.data, eventId)
+          && request.resource.data.submitted == false
+          && !('submission' in request.resource.data);
+        allow update: if isAdmin()
+          && resource.data.get('submitted', false) != true
+          && !('submission' in resource.data && resource.data.submission != null)
+          && !isEventArchived(submissionId, eventId)
+          && isValidCustomProductionEvent(request.resource.data, eventId)
+          && request.resource.data.id == resource.data.id
+          && request.resource.data.createdAt == resource.data.createdAt
+          && (
+            request.resource.data.submitted != true
+            || hasValidSubmissionPayload(request.resource.data, eventId)
+          );
+        allow delete: if isAdmin()
+          && resource.data.get('submitted', false) != true
+          && !('submission' in resource.data && resource.data.submission != null)
+          && !isEventArchived(submissionId, eventId);
+      }
+
+      // Immutable Event Submission Receipts (write-once permanent archive):
+      // - Stores Event Name, Submitted By, Submission Date, Submission Time,
+      //   Final Checklist Data, and Final File Details for both standard and custom events.
+      match /eventSubmissions/{eventId} {
+        allow read: if isAdmin();
+        allow create: if isAdmin()
+          && !exists(/databases/$(database)/documents/submissions/$(submissionId)/eventSubmissions/$(eventId))
+          && isValidEventSubmissionRecord(request.resource.data, eventId);
+        allow update, delete: if false;
+      }
+    }
+  }
+}

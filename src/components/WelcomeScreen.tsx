@@ -4,8 +4,9 @@
  */
 
 import React from "react";
-import { ArrowRight, Lock } from "lucide-react";
+import { ArrowRight, Lock, Smartphone, Users } from "lucide-react";
 import { STUDIO_NAME, STUDIO_LOGO_URL } from "../constants.ts";
+import type { FillMode, PartnerSlot } from "../types/questionnaire.ts";
 
 interface WelcomeScreenProps {
   partner1: string;
@@ -23,6 +24,11 @@ interface WelcomeScreenProps {
   hasSavedProgress: boolean;
   savedStep: number;
   onResume: () => void;
+  splitModeEnabled?: boolean;
+  fillMode?: FillMode;
+  activePartner?: PartnerSlot;
+  onFillModeChange?: (mode: FillMode) => void;
+  onActivePartnerChange?: (slot: PartnerSlot) => void;
 }
 
 export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
@@ -41,6 +47,11 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   hasSavedProgress,
   savedStep,
   onResume,
+  splitModeEnabled = false,
+  fillMode = "together",
+  activePartner = "partnerA",
+  onFillModeChange,
+  onActivePartnerChange,
 }) => {
   const hasNames = partner1.trim().length > 0 && partner2.trim().length > 0;
   const hasWeddingDate = weddingDate.trim().length > 0;
@@ -302,6 +313,91 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
           <p className="text-[11px] text-[#7A756D] font-sans -mt-1">
             * Please provide at least one contact method so our team can reach you.
           </p>
+
+          {/* Optional Together vs Separately mode selector (only shown when ENABLE_SPLIT_MODE is ON) */}
+          {splitModeEnabled && onFillModeChange && (
+            <div className="pt-2 space-y-3">
+              <span className="block font-cormorant tracking-[0.2em] text-xs font-medium text-[#4A453E] uppercase">
+                HOW WOULD YOU LIKE TO FILL THIS?
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => onFillModeChange("together")}
+                  className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex items-start gap-2.5 ${
+                    fillMode === "together"
+                      ? "bg-[#FAF7F2] border-[#1A1A1A] ring-1 ring-[#B08D57]/30"
+                      : "bg-white border-[#E5DDD2] hover:border-[#B08D57]"
+                  }`}
+                >
+                  <Users className="w-4 h-4 text-[#9A7B4F] shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <span className="block text-sm font-medium text-[#1A1A1A] leading-snug">
+                      Together, on one phone
+                    </span>
+                    <span className="block text-[11px] text-[#7A756D] leading-relaxed">
+                      Pass the phone between you.
+                    </span>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onFillModeChange("separate")}
+                  className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex items-start gap-2.5 ${
+                    fillMode === "separate"
+                      ? "bg-[#FAF7F2] border-[#1A1A1A] ring-1 ring-[#B08D57]/30"
+                      : "bg-white border-[#E5DDD2] hover:border-[#B08D57]"
+                  }`}
+                >
+                  <Smartphone className="w-4 h-4 text-[#9A7B4F] shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <span className="block text-sm font-medium text-[#1A1A1A] leading-snug">
+                      Separately, each on our own
+                    </span>
+                    <span className="block text-[11px] text-[#7A756D] leading-relaxed">
+                      Each of you answers in your own time, on your own phone. We&apos;ll give you a link to send your partner.
+                    </span>
+                  </div>
+                </button>
+              </div>
+              <p className="text-[11px] text-[#7A756D] font-sans">
+                You can change this any time.
+              </p>
+
+              {fillMode === "separate" && onActivePartnerChange && (
+                <div className="p-3.5 rounded-2xl bg-[#FAF8F5] border border-[#E8DFD3] space-y-2">
+                  <span className="block text-xs font-medium text-[#4A453E]">
+                    Who&apos;s starting right now?
+                  </span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onActivePartnerChange("partnerA")}
+                      className={`min-h-[42px] px-3 py-2 rounded-xl text-sm font-medium transition-colors cursor-pointer truncate ${
+                        activePartner === "partnerA"
+                          ? "bg-[#1A1A1A] text-white"
+                          : "bg-white border border-[#E5DDD2] text-[#1A1A1A] hover:border-[#1A1A1A]"
+                      }`}
+                    >
+                      I&apos;m {partner1.trim() || "Partner 1"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onActivePartnerChange("partnerB")}
+                      className={`min-h-[42px] px-3 py-2 rounded-xl text-sm font-medium transition-colors cursor-pointer truncate ${
+                        activePartner === "partnerB"
+                          ? "bg-[#1A1A1A] text-white"
+                          : "bg-white border border-[#E5DDD2] text-[#1A1A1A] hover:border-[#1A1A1A]"
+                      }`}
+                    >
+                      I&apos;m {partner2.trim() || "Partner 2"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Action Buttons */}
           <div className="pt-3 space-y-3">

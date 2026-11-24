@@ -25,6 +25,7 @@ import {
   Image as ImageIcon,
   AlertCircle,
   CircleDashed,
+  RotateCcw,
 } from "lucide-react";
 import {
   DraftRecord,
@@ -47,11 +48,19 @@ import {
   getSubmissionDeliveryState,
   getSubmissionAttentionReasons,
   ensureResumeLinkForSubmission,
+  lockSubmissionLinkNow,
+  resetSubmissionResumeLink,
 } from "../lib/submissions.ts";
 import { getSubmissionErrors } from "../lib/errorLogger.ts";
 import { getAllAdminDrafts } from "../lib/drafts.ts";
 import { isPrivatePreviewOrigin } from "../lib/coupleSession.ts";
 import { buildNormalizedPhotoReport } from "../utils/photoStatusSummary.ts";
+import {
+  getDraftLinkInactiveReason,
+  getLabelledOverlayDisplay,
+  hasSplitOverlayAnswers,
+  OverlayFieldKey,
+} from "../utils/splitModeHelpers.ts";
 import { ShootDayCheatSheet } from "../components/ShootDayCheatSheet.tsx";
 import { EditorialBriefView } from "../components/EditorialBriefView.tsx";
 import { CoupleInterviewView } from "../components/CoupleInterviewView.tsx";
@@ -147,6 +156,8 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
   const [allDrafts, setAllDrafts] = useState<DraftRecord[]>([]);
   const [copyingResume, setCopyingResume] = useState<boolean>(false);
   const [copiedResume, setCopiedResume] = useState<boolean>(false);
+  const [lockingLink, setLockingLink] = useState<boolean>(false);
+  const [resettingLink, setResettingLink] = useState<boolean>(false);
   const [resumeCopyNotice, setResumeCopyNotice] = useState<string | null>(null);
   const [showAllPhotoStatuses, setShowAllPhotoStatuses] = useState<boolean>(true);
 
@@ -301,36 +312,88 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
     }
   };
 
+  const copyTextToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+  };
+
   // Admin-only: copy working resume link for this couple (works on any phone/browser, no login required)
   const handleCopyResumeLink = async () => {
     if (!submission) return;
     setCopyingResume(true);
     try {
       const { token, url } = await ensureResumeLinkForSubmission(submission, allDrafts);
-      setSubmission((prev) => (prev ? { ...prev, resumeToken: token, finalized: false } : prev));
-      try {
-        await navigator.clipboard.writeText(url);
-      } catch {
-        const ta = document.createElement("textarea");
-        ta.value = url;
-        ta.style.position = "fixed";
-        ta.style.opacity = "0";
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
-      }
+      setSubmission((prev) =>
+        prev ? { ...prev, resumeToken: token, finalized: false, linkLocked: false } : prev
+      );
+      getAllAdminDrafts().then(setAllDrafts).catch(() => {});
+      await copyTextToClipboard(url);
       setCopiedResume(true);
       setResumeCopyNotice(
         isPrivatePreviewOrigin(url)
-          ? "Link copied. Tip: Copy from your live Vercel dashboard when sharing with clients (AI Studio preview URLs only open for your Google account)."
-          : "Resume link copied — this couple can open it on any phone or browser with no email login needed to edit answers or add photos."
+          ? "Link copied (valid for 7 days). Tip: Copy from your live Vercel dashboard when sharing with clients (AI Studio preview URLs only open for your Google account)."
+          : "Resume link copied (valid for 7 days) — this couple can open it on any phone or browser with no email login needed to edit answers or add photos. It locks again once they resend."
       );
       window.setTimeout(() => setCopiedResume(false), 2800);
     } catch (err) {
       console.error("Could not copy resume link:", err);
     } finally {
       setCopyingResume(false);
+    }
+  };
+
+  // Admin-only: lock resume link immediately so the couple can no longer reopen it
+  const handleLockResumeLink = async () => {
+    if (!submission) return;
+    setLockingLink(true);
+    try {
+      await lockSubmissionLinkNow(submission, allDrafts);
+      setSubmission((prev) =>
+        prev ? { ...prev, linkLocked: true, finalized: true } : prev
+      );
+      getAllAdminDrafts().then(setAllDrafts).catch(() => {});
+      setResumeCopyNotice(
+        "Resume link locked — anyone opening the old link will now see that it is no longer active."
+      );
+    } catch (err) {
+      console.error("Could not lock resume link:", err);
+    } finally {
+      setLockingLink(false);
+    }
+  };
+
+  // Admin-only: permanently revoke old resume link and copy a brand-new 7-day link
+  const handleResetResumeLink = async () => {
+    if (!submission) return;
+    setResettingLink(true);
+    try {
+      const { token, url } = await resetSubmissionResumeLink(submission, allDrafts);
+      setSubmission((prev) =>
+        prev ? { ...prev, resumeToken: token, finalized: false, linkLocked: false } : prev
+      );
+      getAllAdminDrafts().then(setAllDrafts).catch(() => {});
+      await copyTextToClipboard(url);
+      setCopiedResume(true);
+      setResumeCopyNotice(
+        isPrivatePreviewOrigin(url)
+          ? "Old link disabled and brand-new 7-day link copied. Tip: Copy from your live Vercel dashboard when sharing with clients."
+          : "Old link disabled permanently and brand-new 7-day resume link copied to your clipboard."
+      );
+      window.setTimeout(() => setCopiedResume(false), 2800);
+    } catch (err) {
+      console.error("Could not reset resume link:", err);
+    } finally {
+      setResettingLink(false);
     }
   };
 
@@ -405,6 +468,51 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
   const p2 = submission.partner2 || "Partner 2";
   const deliveryState = getSubmissionDeliveryState(submission, errorLogs);
   const attentionReasons = getSubmissionAttentionReasons(submission, errorLogs);
+  const linkedDraft = submission.resumeToken
+    ? allDrafts.find((d) => d.id === submission.resumeToken)
+    : allDrafts.find((d) => d.submissionId === submission.id);
+  const linkInactiveReason = linkedDraft
+    ? getDraftLinkInactiveReason(linkedDraft)
+    : submission.linkLocked || submission.finalized !== false
+    ? "locked"
+    : null;
+  const isResumeLinkActive = linkInactiveReason === null && submission.finalized === false;
+
+  const renderSplitOverlayText = (
+    key: OverlayFieldKey,
+    fallbackNode: React.ReactNode,
+    highlightDifference = false
+  ): React.ReactNode => {
+    const display = getLabelledOverlayDisplay(ans, key);
+    if (!display.isSplit) return fallbackNode;
+    return (
+      <div className="space-y-2">
+        {highlightDifference && display.hasDifference && (
+          <p className="text-[11px] font-medium text-[#8C7043]">
+            Different partner preferences — review both before shoot day
+          </p>
+        )}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+          <div className="bg-[#FAF8F5] p-3 rounded-xl border border-[#E8DFD3]">
+            <span className="text-xs text-[#7A756D] font-medium block mb-1">
+              {display.partnerALabel}:
+            </span>
+            <p className="text-[#1A1A1A] leading-relaxed whitespace-pre-wrap">
+              {display.partnerAValue || <NotAnswered />}
+            </p>
+          </div>
+          <div className="bg-[#FAF8F5] p-3 rounded-xl border border-[#E8DFD3]">
+            <span className="text-xs text-[#7A756D] font-medium block mb-1">
+              {display.partnerBLabel}:
+            </span>
+            <p className="text-[#1A1A1A] leading-relaxed whitespace-pre-wrap">
+              {display.partnerBValue || <NotAnswered />}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-[100dvh] bg-[#FAF8F5] text-[#1A1A1A] safe-bottom pb-16">
@@ -678,6 +786,85 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
             </button>
           </div>
         )}
+
+        {/* Quiet neutral note if one partner sent before the other finished */}
+        {submission.submittedIncompletePartner && (
+          <div className="bg-[#FAF7F2] border border-[#E5DDD2] rounded-2xl p-3.5 sm:px-5 flex flex-wrap items-center justify-between gap-3 text-xs text-[#5F5F5F] print:hidden">
+            <span>
+              Sent before <strong className="text-[#1A1A1A]">{submission.submittedIncompletePartner}</strong> finished their part.
+            </span>
+            <button
+              type="button"
+              disabled={copyingResume}
+              onClick={() => void handleCopyResumeLink()}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium text-[#5C492A] bg-white hover:bg-[#F2ECE1] border border-[#E5DDD2] cursor-pointer disabled:opacity-60"
+            >
+              <Link2 className="w-3.5 h-3.5 text-[#8C7043]" />
+              <span>Copy resume link</span>
+            </button>
+          </div>
+        )}
+
+        {/* Resume Link Access Controls (7-day expiry, auto-lock on resend, Lock now, Reset link) */}
+        <div className="bg-white border border-[#E5DDD2] rounded-2xl px-4 py-3 sm:px-5 flex flex-wrap items-center justify-between gap-3 text-xs print:hidden">
+          <div className="flex flex-wrap items-center gap-2 text-[#5F5F5F]">
+            <Link2 className="w-3.5 h-3.5 text-[#8C7043] shrink-0" />
+            <span className="font-medium text-[#1A1A1A]">Couple resume link:</span>
+            <span
+              className={`px-2 py-0.5 rounded-full text-[11px] font-semibold border ${
+                isResumeLinkActive
+                  ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                  : "bg-[#F4F2EE] text-[#6B655D] border-[#E2DDD5]"
+              }`}
+            >
+              {isResumeLinkActive
+                ? "Active (7-day window)"
+                : linkInactiveReason === "expired"
+                ? "Expired"
+                : "Locked"}
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={copyingResume}
+              onClick={() => void handleCopyResumeLink()}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-medium text-[#5C492A] bg-[#FAF7F2] hover:bg-[#F2ECE1] border border-[#E5DDD2] transition-colors cursor-pointer disabled:opacity-60"
+            >
+              {copiedResume ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-600" />
+                  <span className="text-emerald-700">Copied</span>
+                </>
+              ) : (
+                <>
+                  <Link2 className="w-3.5 h-3.5 text-[#8C7043]" />
+                  <span>{isResumeLinkActive ? "Copy link" : "Unlock & copy link"}</span>
+                </>
+              )}
+            </button>
+            <button
+              type="button"
+              disabled={!isResumeLinkActive || lockingLink}
+              onClick={() => void handleLockResumeLink()}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl font-medium text-[#5F5F5F] bg-white hover:bg-[#FAF7F2] border border-[#E5DDD2] transition-colors cursor-pointer disabled:opacity-50"
+              title={isResumeLinkActive ? "Lock link immediately" : "Link is already locked"}
+            >
+              <Lock className="w-3.5 h-3.5 text-[#8C7043]" />
+              <span>{lockingLink ? "Locking…" : "Lock now"}</span>
+            </button>
+            <button
+              type="button"
+              disabled={resettingLink}
+              onClick={() => void handleResetResumeLink()}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl font-medium text-[#5F5F5F] bg-white hover:bg-[#FAF7F2] border border-[#E5DDD2] transition-colors cursor-pointer disabled:opacity-50"
+              title="Disable old link permanently and create a fresh 7-day link"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-[#8C7043]" />
+              <span>{resettingLink ? "Resetting…" : "Reset link"}</span>
+            </button>
+          </div>
+        </div>
 
         {/* Needs Attention / Pending Photos Diagnostic Banner */}
         {deliveryState === "needs_attention" && attentionReasons.length > 0 && (
@@ -1486,9 +1673,10 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
             <AnswerBlock
               num={11}
               question="How do you want your wedding photographs and films to feel?"
-              content={
+              content={renderSplitOverlayText(
+                "q11_filmFeel",
                 Array.isArray((ans.q11_filmFeel as any)?.selected) &&
-                (ans.q11_filmFeel as any).selected.length > 0 ? (
+                  (ans.q11_filmFeel as any).selected.length > 0 ? (
                   <div className="space-y-2">
                     <ChipList items={(ans.q11_filmFeel as any).selected} />
                     {(ans.q11_filmFeel as any).other && (
@@ -1502,8 +1690,9 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
                   <TextAnswer text={ans.q11_filmFeel} />
                 ) : (
                   <NotAnswered />
-                )
-              }
+                ),
+                true
+              )}
             />
 
 
@@ -1713,9 +1902,10 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
             <AnswerBlock
               num={15}
               question="What tone are you expecting to set for your wedding day"
-              content={
+              content={renderSplitOverlayText(
+                "q13_tone",
                 Array.isArray((ans.q13_tone as any)?.selected) &&
-                (ans.q13_tone as any).selected.length > 0 ? (
+                  (ans.q13_tone as any).selected.length > 0 ? (
                   <div className="space-y-2">
                     <ChipList items={(ans.q13_tone as any).selected} />
                     {(ans.q13_tone as any).other && (
@@ -1729,8 +1919,9 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
                   <TextAnswer text={ans.q13_tone} />
                 ) : (
                   <NotAnswered />
-                )
-              }
+                ),
+                true
+              )}
             />
           </ChapterSection>
 
@@ -1744,7 +1935,8 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
             <AnswerBlock
               num={16}
               question="What are the moments you are most looking forward to during your wedding?"
-              content={
+              content={renderSplitOverlayText(
+                "q14_moments",
                 <div className="space-y-2">
                   <ChipList items={ans.q14_moments?.selected || []} />
                   {ans.q14_moments?.other && (
@@ -1754,7 +1946,7 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
                     </p>
                   )}
                 </div>
-              }
+              )}
             />
 
             {/* Q17 (previously Q15) */}
@@ -1762,24 +1954,58 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
               num={17}
               question="Is there anything you definitely want us to capture or avoid?"
               content={
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-                  <div className="bg-[#FAF8F5] p-3 rounded-xl border border-[#E8DFD3]">
-                    <span className="text-xs text-[#059669] font-semibold block mb-0.5">
-                      ✓ Definitely Capture:
-                    </span>
-                    <p className="text-[#1A1A1A]">
-                      {ans.q15_captureAvoid?.definitelyCapture || <NotAnswered />}
-                    </p>
+                hasSplitOverlayAnswers(ans, "q15_captureAvoid") ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                    {([
+                      { label: p1, data: ans.partnerAnswers?.partnerA?.q15_captureAvoid },
+                      { label: p2, data: ans.partnerAnswers?.partnerB?.q15_captureAvoid },
+                    ] as const).map((entry) => (
+                      <div
+                        key={entry.label}
+                        className="bg-[#FAF8F5] p-3.5 rounded-xl border border-[#E8DFD3] space-y-2"
+                      >
+                        <span className="text-xs font-semibold text-[#8C7043] block">
+                          {entry.label}
+                        </span>
+                        <div>
+                          <span className="text-[11px] text-[#059669] font-semibold block">
+                            ✓ Definitely Capture:
+                          </span>
+                          <p className="text-[#1A1A1A] whitespace-pre-wrap">
+                            {entry.data?.definitelyCapture?.trim() || <NotAnswered />}
+                          </p>
+                        </div>
+                        <div>
+                          <span className="text-[11px] text-red-600 font-semibold block">
+                            ✗ Please Avoid:
+                          </span>
+                          <p className="text-[#1A1A1A] whitespace-pre-wrap">
+                            {entry.data?.pleaseAvoid?.trim() || <NotAnswered />}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                  <div className="bg-[#FAF8F5] p-3 rounded-xl border border-[#E8DFD3]">
-                    <span className="text-xs text-red-600 font-semibold block mb-0.5">
-                      ✗ Please Avoid:
-                    </span>
-                    <p className="text-[#1A1A1A]">
-                      {ans.q15_captureAvoid?.pleaseAvoid || <NotAnswered />}
-                    </p>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                    <div className="bg-[#FAF8F5] p-3 rounded-xl border border-[#E8DFD3]">
+                      <span className="text-xs text-[#059669] font-semibold block mb-0.5">
+                        ✓ Definitely Capture:
+                      </span>
+                      <p className="text-[#1A1A1A]">
+                        {ans.q15_captureAvoid?.definitelyCapture || <NotAnswered />}
+                      </p>
+                    </div>
+                    <div className="bg-[#FAF8F5] p-3 rounded-xl border border-[#E8DFD3]">
+                      <span className="text-xs text-red-600 font-semibold block mb-0.5">
+                        ✗ Please Avoid:
+                      </span>
+                      <p className="text-[#1A1A1A]">
+                        {ans.q15_captureAvoid?.pleaseAvoid || <NotAnswered />}
+                      </p>
+                    </div>
                   </div>
-                </div>
+                )
               }
             />
 
@@ -1787,14 +2013,20 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
             <AnswerBlock
               num={18}
               question="Please mention your non negotiables in your films and photographs?"
-              content={<TextAnswer text={ans.q16_nonNegotiables} />}
+              content={renderSplitOverlayText(
+                "q16_nonNegotiables",
+                <TextAnswer text={ans.q16_nonNegotiables} />
+              )}
             />
 
             {/* Q19 (previously Q17) */}
             <AnswerBlock
               num={19}
               question="Who do you think is going to be more emotional during wedding?"
-              content={<TextAnswer text={ans.q17_emotional} />}
+              content={renderSplitOverlayText(
+                "q17_emotional",
+                <TextAnswer text={ans.q17_emotional} />
+              )}
             />
           </ChapterSection>
 
@@ -1808,28 +2040,40 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
             <AnswerBlock
               num={20}
               question="How versatile are you with the camera?"
-              content={<TextAnswer text={ans.q18_cameraVersatility} />}
+              content={renderSplitOverlayText(
+                "q18_cameraVersatility",
+                <TextAnswer text={ans.q18_cameraVersatility} />,
+                true
+              )}
             />
 
             {/* Q21 (previously Q19) */}
             <AnswerBlock
               num={21}
               question="What mattered most to you when choosing OAKS Wedding to capture your wedding?"
-              content={<TextAnswer text={ans.choosingOaks} />}
+              content={renderSplitOverlayText(
+                "choosingOaks",
+                <TextAnswer text={ans.choosingOaks} />
+              )}
             />
 
             {/* Q22 (previously Q23) */}
             <AnswerBlock
               num={22}
               question="How comfortable are you with being guided or directed during portraits and filming?"
-              content={<TextAnswer text={ans.q20_guidanceComfort} />}
+              content={renderSplitOverlayText(
+                "q20_guidanceComfort",
+                <TextAnswer text={ans.q20_guidanceComfort} />,
+                true
+              )}
             />
 
             {/* Q23 (previously Q24) */}
             <AnswerBlock
               num={23}
               question="Is there anything that would help you feel more comfortable in front of the camera?"
-              content={
+              content={renderSplitOverlayText(
+                "q21_comfortTips",
                 <div className="space-y-2">
                   <ChipList items={ans.q21_comfortTips?.selected || []} />
                   {ans.q21_comfortTips?.notes && (
@@ -1839,14 +2083,17 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
                     </p>
                   )}
                 </div>
-              }
+              )}
             />
 
             {/* Q24 (previously Q25) */}
             <AnswerBlock
               num={24}
               question="What do you hope to feel when you watch your wedding film years from now?"
-              content={<TextAnswer text={ans.q22_futureFeeling} />}
+              content={renderSplitOverlayText(
+                "q22_futureFeeling",
+                <TextAnswer text={ans.q22_futureFeeling} />
+              )}
             />
 
             {/* Q25 (previously Q26): YOUR PRIMARY POINT OF CONTACT */}
@@ -1907,29 +2154,71 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
               num={27}
               question="Is there anything else you'd like to let us know?"
               content={
-                <div className="space-y-4">
-                  {ans.q23_oneLastThing?.notes && (
-                    <TextAnswer text={ans.q23_oneLastThing.notes} />
-                  )}
-
-                  {/* Attached Photos */}
-                  <ThumbnailGallery
-                    images={ans.q23_oneLastThing?.images || []}
-                    titlePrefix="Attached Photo"
-                    categoryLabel="Attached Photos"
-                    emptyLabel="No additional photos attached."
-                    onOpenImage={(idx) => {
-                      const list: LightboxImage[] = (ans.q23_oneLastThing?.images || []).map(
-                        (img, i) => ({
-                          url: img,
-                          title: `Attached Photo ${i + 1}`,
-                          subtitle: `Shared by ${p1} & ${p2}`,
-                        })
+                hasSplitOverlayAnswers(ans, "q23_oneLastThing") ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {([
+                      { label: p1, data: ans.partnerAnswers?.partnerA?.q23_oneLastThing },
+                      { label: p2, data: ans.partnerAnswers?.partnerB?.q23_oneLastThing },
+                    ] as const).map((entry) => {
+                      const imgs = entry.data?.images || [];
+                      return (
+                        <div
+                          key={entry.label}
+                          className="bg-[#FAF8F5] p-3.5 rounded-xl border border-[#E8DFD3] space-y-3"
+                        >
+                          <span className="text-xs font-semibold text-[#8C7043] block">
+                            {entry.label}
+                          </span>
+                          {entry.data?.notes?.trim() ? (
+                            <TextAnswer text={entry.data.notes} />
+                          ) : imgs.length === 0 ? (
+                            <NotAnswered />
+                          ) : null}
+                          {imgs.length > 0 && (
+                            <ThumbnailGallery
+                              images={imgs}
+                              titlePrefix={`${entry.label} Photo`}
+                              categoryLabel={`${entry.label}'s Attached Photos`}
+                              emptyLabel="No photos attached."
+                              onOpenImage={(idx) => {
+                                const list: LightboxImage[] = imgs.map((img, i) => ({
+                                  url: img,
+                                  title: `${entry.label} — Attached Photo ${i + 1}`,
+                                  subtitle: `Shared by ${entry.label}`,
+                                }));
+                                openLightbox(list, idx);
+                              }}
+                            />
+                          )}
+                        </div>
                       );
-                      openLightbox(list, idx);
-                    }}
-                  />
-                </div>
+                    })}
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {ans.q23_oneLastThing?.notes && (
+                      <TextAnswer text={ans.q23_oneLastThing.notes} />
+                    )}
+
+                    {/* Attached Photos */}
+                    <ThumbnailGallery
+                      images={ans.q23_oneLastThing?.images || []}
+                      titlePrefix="Attached Photo"
+                      categoryLabel="Attached Photos"
+                      emptyLabel="No additional photos attached."
+                      onOpenImage={(idx) => {
+                        const list: LightboxImage[] = (ans.q23_oneLastThing?.images || []).map(
+                          (img, i) => ({
+                            url: img,
+                            title: `Attached Photo ${i + 1}`,
+                            subtitle: `Shared by ${p1} & ${p2}`,
+                          })
+                        );
+                        openLightbox(list, idx);
+                      }}
+                    />
+                  </div>
+                )
               }
             />
           </ChapterSection>

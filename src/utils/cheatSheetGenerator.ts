@@ -6,6 +6,11 @@
 import type { QuestionnaireAnswers } from "../types/questionnaire.ts";
 import { cleanSentenceText as cleanUserText } from "./textCleaner.ts";
 import { getGroupedQ10People } from "./familyPeople.ts";
+import {
+  getCombinedCrewPriorities,
+  getLabelledOverlayDisplay,
+  hasSplitOverlayAnswers,
+} from "./splitModeHelpers.ts";
 
 /**
  * Master system prompt for the Shoot Day Cheat Sheet Generator.
@@ -246,7 +251,14 @@ export function synthesizeCheatSheet(
   priorities.push(`Preserve the little interactions they may not notice themselves.`);
 
   // 3. Must-Capture Moments
+  const crewPriorities = getCombinedCrewPriorities(answers);
   const mustCapture: string[] = [];
+  if (hasSplitOverlayAnswers(answers, "q15_captureAvoid") && crewPriorities.mustCaptureEntries.length > 0) {
+    for (const entry of crewPriorities.mustCaptureEntries) {
+      const cleaned = cleanUserText(entry);
+      if (cleaned) mustCapture.push(cleaned.endsWith(".") ? cleaned : `${cleaned}.`);
+    }
+  }
   const rawDefinite = cleanUserText(answers.q15_captureAvoid?.definitelyCapture || "");
   const rawNotes = cleanUserText(answers.q23_oneLastThing?.notes || "");
   const rawProposal = answers.q9_proposal?.story ? cleanUserText(answers.q9_proposal.story) : "";
@@ -365,12 +377,21 @@ export function synthesizeCheatSheet(
 
   // 5. Please Avoid
   const avoidList: string[] = [];
-  const rawAvoid = cleanUserText(answers.q15_captureAvoid?.pleaseAvoid || "");
-  if (rawAvoid) {
-    // If the couple provided specific avoidances, clean and shorten to 1-2 bullets
-    const shortAvoid = rawAvoid.replace(/^(please avoid|avoid|do not|don't)\s*/i, "").trim();
-    if (shortAvoid.length > 0) {
-      avoidList.push(`* ${shortAvoid.charAt(0).toUpperCase() + shortAvoid.slice(1)}.`);
+  if (hasSplitOverlayAnswers(answers, "q15_captureAvoid") && crewPriorities.pleaseAvoidEntries.length > 0) {
+    for (const entry of crewPriorities.pleaseAvoidEntries) {
+      const cleaned = cleanUserText(entry);
+      if (cleaned) {
+        avoidList.push(`* ${cleaned.endsWith(".") ? cleaned : `${cleaned}.`}`);
+      }
+    }
+  } else {
+    const rawAvoid = cleanUserText(answers.q15_captureAvoid?.pleaseAvoid || "");
+    if (rawAvoid) {
+      // If the couple provided specific avoidances, clean and shorten to 1-2 bullets
+      const shortAvoid = rawAvoid.replace(/^(please avoid|avoid|do not|don't)\s*/i, "").trim();
+      if (shortAvoid.length > 0) {
+        avoidList.push(`* ${shortAvoid.charAt(0).toUpperCase() + shortAvoid.slice(1)}.`);
+      }
     }
   }
   avoidList.push("* Forced or repetitive poses.");
@@ -379,13 +400,20 @@ export function synthesizeCheatSheet(
   avoidList.push("* Unnecessary pauses or making the couple feel rushed.");
 
   // Deduplicate avoids
-  const uniqueAvoids = Array.from(new Set(avoidList)).slice(0, 4);
+  const uniqueAvoids = Array.from(new Set(avoidList)).slice(0, 5);
 
   // 6. Working with the Couple
-  const cameraComfort = answers.q18_cameraVersatility
+  const camDisplay = getLabelledOverlayDisplay(answers, "q18_cameraVersatility");
+  const cameraComfort = camDisplay.isSplit
+    ? `${camDisplay.partnerALabel}: ${cleanUserText(camDisplay.partnerAValue || "Not specified")} · ${camDisplay.partnerBLabel}: ${cleanUserText(camDisplay.partnerBValue || "Not specified")}`
+    : answers.q18_cameraVersatility
     ? cleanUserText(answers.q18_cameraVersatility)
     : "Pretty comfortable";
-  const direction = answers.q20_guidanceComfort
+
+  const dirDisplay = getLabelledOverlayDisplay(answers, "q20_guidanceComfort");
+  const direction = dirDisplay.isSplit
+    ? `${dirDisplay.partnerALabel}: ${cleanUserText(dirDisplay.partnerAValue || "Not specified")} · ${dirDisplay.partnerBLabel}: ${cleanUserText(dirDisplay.partnerBValue || "Not specified")}`
+    : answers.q20_guidanceComfort
     ? cleanUserText(answers.q20_guidanceComfort)
     : "Gentle guidance";
 
@@ -406,12 +434,16 @@ export function synthesizeCheatSheet(
   }
 
   // Technical Non-Negotiable
-  const rawNonNeg = cleanUserText(answers.q16_nonNegotiables || "");
   let technicalLine = "";
-  if (rawNonNeg) {
-    technicalLine = rawNonNeg;
+  if (hasSplitOverlayAnswers(answers, "q16_nonNegotiables") && crewPriorities.nonNegotiableEntries.length > 0) {
+    technicalLine = crewPriorities.nonNegotiableEntries.map((e) => cleanUserText(e)).filter(Boolean).join(" | ");
   } else {
-    technicalLine = "Ensure clear audio recordings of vows, speeches and toasts. Don't miss important family reactions.";
+    const rawNonNeg = cleanUserText(answers.q16_nonNegotiables || "");
+    if (rawNonNeg) {
+      technicalLine = rawNonNeg;
+    } else {
+      technicalLine = "Ensure clear audio recordings of vows, speeches and toasts. Don't miss important family reactions.";
+    }
   }
 
   const sections: string[] = [];
@@ -468,6 +500,9 @@ export function synthesizeCheatSheet(
   sections.push(`Direction: ${direction}`);
   sections.push(`Before portraits: ${beforePortraits}`);
   sections.push(`During the day: ${duringDay}`);
+  if (crewPriorities.partnerDifferences.length > 0) {
+    sections.push(`Partner differences: ${crewPriorities.partnerDifferences.join(" | ")}`);
+  }
   if (answers.primaryContact?.role && (answers.primaryContact.name || answers.primaryContact.phone)) {
     const pc = answers.primaryContact;
     const contactRoleExtra = pc.designation || pc.gender;

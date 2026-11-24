@@ -3,9 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Check, Link as LinkIcon, X } from "lucide-react";
-import type { QuestionnaireAnswers, WardrobeSideData } from "../types/questionnaire.ts";
+import type {
+  FillMode,
+  PartnerSlot,
+  QuestionnaireAnswers,
+  WardrobeSideData,
+} from "../types/questionnaire.ts";
 import {
   getGroupedWardrobe,
   hasWardrobeSideContent,
@@ -22,6 +27,11 @@ interface WardrobeQuestionProps {
     groom: WardrobeSideData;
   }) => void;
   onClearLegacy?: () => void;
+  partner1?: string;
+  partner2?: string;
+  splitModeEnabled?: boolean;
+  fillMode?: FillMode;
+  activePartner?: PartnerSlot;
 }
 
 export const WardrobeQuestion: React.FC<WardrobeQuestionProps> = ({
@@ -29,8 +39,33 @@ export const WardrobeQuestion: React.FC<WardrobeQuestionProps> = ({
   legacyWeddingOutfits,
   onChange,
   onClearLegacy,
+  partner1,
+  partner2,
+  splitModeEnabled = false,
+  fillMode = "together",
+  activePartner = "partnerA",
 }) => {
-  const [activeTab, setActiveTab] = useState<WardrobeSideKey>("bride");
+  const [activeTab, setActiveTab] = useState<WardrobeSideKey>(() =>
+    splitModeEnabled && fillMode === "separate" && activePartner === "partnerB"
+      ? "groom"
+      : "bride"
+  );
+
+  useEffect(() => {
+    if (splitModeEnabled && fillMode === "separate") {
+      setActiveTab(activePartner === "partnerB" ? "groom" : "bride");
+    }
+  }, [splitModeEnabled, fillMode, activePartner]);
+
+  const brideTabLabel =
+    splitModeEnabled && partner1?.trim() ? `${partner1.trim()}'s Wardrobe` : "Bride";
+  const groomTabLabel =
+    splitModeEnabled && partner2?.trim() ? `${partner2.trim()}'s Wardrobe` : "Groom";
+  const bridePossessive =
+    splitModeEnabled && partner1?.trim() ? `${partner1.trim()}'s` : "Bride's";
+  const groomPossessive =
+    splitModeEnabled && partner2?.trim() ? `${partner2.trim()}'s` : "Groom's";
+
   const [linkDraftBySide, setLinkDraftBySide] = useState<
     Record<WardrobeSideKey, string>
   >({
@@ -97,9 +132,9 @@ export const WardrobeQuestion: React.FC<WardrobeQuestionProps> = ({
   // Gentle non-blocking hint when one side has content and the other side is still empty
   const nonBlockingEmptyHint =
     brideHasAny && !groomHasAny
-      ? "Groom's side is still empty. You can add it now or later."
+      ? `${groomPossessive} side is still empty. You can add it now or later.`
       : groomHasAny && !brideHasAny
-      ? "Bride's side is still empty. You can add it now or later."
+      ? `${bridePossessive} side is still empty. You can add it now or later.`
       : null;
 
   return (
@@ -159,11 +194,11 @@ export const WardrobeQuestion: React.FC<WardrobeQuestionProps> = ({
                 : "text-[#5F5F5F] hover:text-[#1A1A1A] font-medium"
             }`}
           >
-            <span>Bride</span>
+            <span>{brideTabLabel}</span>
             {brideHasAny && (
               <Check
                 className="w-3.5 h-3.5 text-[#B08D57] shrink-0"
-                aria-label="Bride wardrobe has entries"
+                aria-label={`${brideTabLabel} has entries`}
               />
             )}
           </button>
@@ -179,11 +214,11 @@ export const WardrobeQuestion: React.FC<WardrobeQuestionProps> = ({
                 : "text-[#5F5F5F] hover:text-[#1A1A1A] font-medium"
             }`}
           >
-            <span>Groom</span>
+            <span>{groomTabLabel}</span>
             {groomHasAny && (
               <Check
                 className="w-3.5 h-3.5 text-[#B08D57] shrink-0"
-                aria-label="Groom wardrobe has entries"
+                aria-label={`${groomTabLabel} has entries`}
               />
             )}
           </button>
@@ -199,8 +234,8 @@ export const WardrobeQuestion: React.FC<WardrobeQuestionProps> = ({
             className="block text-sm font-semibold text-[#1A1A1A]"
           >
             {activeTab === "bride"
-              ? "Bride's outfit details, colours, designers, or styling notes"
-              : "Groom's outfit details, colours, designers, or styling notes"}
+              ? `${bridePossessive} outfit details, colours, designers, or styling notes`
+              : `${groomPossessive} outfit details, colours, designers, or styling notes`}
           </label>
           <VoiceTextarea
             id={`q13-wardrobe-notes-${activeTab}`}
