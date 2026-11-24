@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "OAKS Wedding — Our Story"
+description = "The OAKS Wedding couple questionnaire and studio dashboard, preserving the original editorial design, saved responses, photo uploads, and wedding planning flows."
+version = "1.0.0"
+id = "artifacts/oaks-questionnaire"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 21641
+
+[services.development]
+run = "pnpm --filter @workspace/oaks-questionnaire run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/oaks-questionnaire", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/oaks-questionnaire/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21641"
+BASE_PATH = "/"
