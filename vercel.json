@@ -1,8 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "framework": "vite",
-  "buildCommand": "npm run build",
-  "outputDirectory": "dist",
+  "installCommand": "pnpm install --frozen-lockfile",
+  "buildCommand": "pnpm --filter @workspace/oaks-questionnaire run build",
+  "outputDirectory": "artifacts/oaks-questionnaire/dist/public",
   "rewrites": [
     {
       "source": "/((?!api/).*)",

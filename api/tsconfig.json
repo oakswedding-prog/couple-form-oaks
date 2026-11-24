@@ -5,7 +5,9 @@
     "moduleResolution": "NodeNext",
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "strict": false
+    "strict": false,
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"]
   },
   "include": ["./**/*.ts"]
 }

@@ -1,0 +1,218 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: API specification
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+paths:
+  /live-token:
+    get:
+      operationId: getLiveToken
+      summary: Create a Gemini Live ephemeral token
+      responses:
+        "200":
+          description: Ephemeral token
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token]
+                properties:
+                  token: { type: string }
+        "500":
+          $ref: "#/components/responses/ServiceError"
+  /generate-brief:
+    post:
+      operationId: generateBrief
+      security: [{ FirebaseIdentity: [] }]
+      requestBody:
+        $ref: "#/components/requestBodies/Generation"
+      responses:
+        "200":
+          description: Editorial creative brief
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [brief]
+                properties:
+                  brief: { type: string }
+        "503":
+          $ref: "#/components/responses/ServiceError"
+  /generate-interview:
+    post:
+      operationId: generateInterview
+      security: [{ FirebaseIdentity: [] }]
+      requestBody:
+        $ref: "#/components/requestBodies/Generation"
+      responses:
+        "200":
+          description: Couple interview questions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [interview]
+                properties:
+                  interview: { type: string }
+        "503":
+          $ref: "#/components/responses/ServiceError"
+  /generate-cheatsheet:
+    post:
+      operationId: generateCheatSheet
+      security: [{ FirebaseIdentity: [] }]
+      requestBody:
+        $ref: "#/components/requestBodies/Generation"
+      responses:
+        "200":
+          description: Shoot-day production cues
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [cheatSheet]
+                properties:
+                  cheatSheet: { type: string }
+        "503":
+          $ref: "#/components/responses/ServiceError"
+  /generate-letter:
+    post:
+      operationId: generateLetter
+      security: [{ FirebaseIdentity: [] }]
+      requestBody:
+        $ref: "#/components/requestBodies/Generation"
+      responses:
+        "200":
+          description: Couple letter
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [letter]
+                properties:
+                  letter: { type: string }
+        "503":
+          $ref: "#/components/responses/ServiceError"
+  /notify:
+    post:
+      operationId: notifySubmission
+      summary: Send studio alert and couple receipt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationInput"
+      responses:
+        "200":
+          description: Notification delivery report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationReport"
+        "500":
+          description: Notification configuration missing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationReport"
+        "502":
+          description: Email provider failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationReport"
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+components:
+  securitySchemes:
+    FirebaseIdentity:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  requestBodies:
+    Generation:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/GenerationInput"
+  responses:
+    ServiceError:
+      description: Service unavailable or provider error
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error]
+            properties:
+              error: { type: string }
+  schemas:
+    GenerationInput:
+      type: object
+      required: [answers]
+      properties:
+        answers: { type: object, additionalProperties: true }
+        systemPrompt: { type: string, maxLength: 60000 }
+        eventType: { type: string, maxLength: 100 }
+    NotificationInput:
+      type: object
+      properties:
+        submissionId: { type: string }
+        displayId: { type: string }
+        partner1: { type: string }
+        partner2: { type: string }
+        weddingDate: { type: string }
+        phone: { type: string }
+        email: { type: string }
+        submittedAt: { type: string }
+        uploadedPhotoCount: { type: integer }
+        notAddedPhotoSlotCount: { type: integer }
+        failedPhotoCount: { type: integer }
+        uploadingPhotoCount: { type: integer }
+        pendingPhotoCount: { type: integer }
+    EmailAttempt:
+      type: object
+      required: [sent]
+      properties:
+        sent: { type: boolean }
+        skipped: { type: boolean }
+        status: { type: integer }
+        error: { type: string }
+    NotificationReport:
+      type: object
+      required: [success, notified, coupleReceiptSent, studio, couple, errors]
+      properties:
+        success: { type: boolean }
+        notified: { type: boolean }
+        coupleReceiptSent: { type: boolean }
+        studio: { $ref: "#/components/schemas/EmailAttempt" }
+        couple: { $ref: "#/components/schemas/EmailAttempt" }
+        errors:
+          type: array
+          items: { type: string }
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+
