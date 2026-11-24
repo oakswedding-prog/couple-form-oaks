@@ -911,6 +911,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                   Sent without {couple.submittedIncompletePartner}&apos;s part
                                 </span>
                               )}
+                              {couple.submittedIncompletePartner && couple.missingSummary && (
+                                <span
+                                  className="text-[10px] font-medium px-2 py-0.5 rounded-full border bg-[#FFF6E5] text-[#7A5A12] border-[#EBD9A8]"
+                                  title="Missing or unfinished"
+                                >
+                                  Missing or unfinished: {couple.missingSummary}
+                                </span>
+                              )}
                             </div>
                             <div className="text-xs text-[#7A756D] flex flex-wrap items-center gap-2 mt-0.5">
                               <span className="inline-flex items-center gap-1">

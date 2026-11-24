@@ -75,6 +75,10 @@ import { markDraftSubmitted } from "./drafts.ts";
 import { buildNormalizedPhotoReport } from "../utils/photoStatusSummary.ts";
 import { LINK_EXPIRY_MS } from "../config/splitMode.ts";
 import {
+  buildMissingSummaryForPartner,
+  getPartnerDisplayName,
+} from "../utils/splitModeHelpers.ts";
+import {
   hydrateSubmissionsWithAdminMeta,
   loadAdminMetaForSubmission,
   mergeAdminMetaIntoSubmission,
@@ -786,6 +790,18 @@ export async function executeBulletproofSubmit(
     ...(fillMode ? { fillMode } : {}),
     ...(partnerProgress ? { partnerProgress } : {}),
     ...(submittedIncompletePartner ? { submittedIncompletePartner } : {}),
+    ...(submittedIncompletePartner
+      ? (() => {
+          const slot = (["partnerA", "partnerB"] as const).find(
+            (sl) =>
+              getPartnerDisplayName(sanitized.answers, sl) === submittedIncompletePartner
+          );
+          const summary = slot
+            ? buildMissingSummaryForPartner(sanitized.answers, slot)
+            : null;
+          return summary ? { missingSummary: summary } : {};
+        })()
+      : {}),
     finalized: false, // Flipped to true after post-save numbering & any pending photo sync finish
     linkLocked: false, // Locked automatically on draft markDraftSubmitted + after post-submit sync
     submissionState:

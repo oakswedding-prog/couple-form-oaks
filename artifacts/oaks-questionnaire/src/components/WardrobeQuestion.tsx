@@ -16,6 +16,10 @@ import {
   hasWardrobeSideContent,
   type WardrobeSideKey,
 } from "../utils/wardrobe.ts";
+import {
+  MIN_WARDROBE_LINKS,
+  MIN_WARDROBE_PHOTOS,
+} from "../config/questionnaireRequirements.ts";
 import { VoiceTextarea } from "./VoiceTextarea.tsx";
 import { ImageUploader } from "./ImageUploader.tsx";
 
@@ -32,6 +36,8 @@ interface WardrobeQuestionProps {
   splitModeEnabled?: boolean;
   fillMode?: FillMode;
   activePartner?: PartnerSlot;
+  /** New drafts: links + photos are required (minimums) and the partner's tab is locked in Separate mode. */
+  requireMinimums?: boolean;
 }
 
 export const WardrobeQuestion: React.FC<WardrobeQuestionProps> = ({
@@ -44,6 +50,7 @@ export const WardrobeQuestion: React.FC<WardrobeQuestionProps> = ({
   splitModeEnabled = false,
   fillMode = "together",
   activePartner = "partnerA",
+  requireMinimums = false,
 }) => {
   const [activeTab, setActiveTab] = useState<WardrobeSideKey>(() =>
     splitModeEnabled && fillMode === "separate" && activePartner === "partnerB"
@@ -126,6 +133,17 @@ export const WardrobeQuestion: React.FC<WardrobeQuestionProps> = ({
     setActiveTab(targetSide);
   };
 
+  const isSeparate = splitModeEnabled && fillMode === "separate";
+  const ownTab: WardrobeSideKey = activePartner === "partnerB" ? "groom" : "bride";
+  const lockedOtherTab = requireMinimums && isSeparate && activeTab !== ownTab;
+  const otherName =
+    (activeTab === "bride" ? partner1 : partner2)?.trim() ||
+    (activeTab === "bride" ? "Partner 1" : "Partner 2");
+  const otherSideData = activeTab === "bride" ? currentBride : currentGroom;
+  const otherSideDone =
+    otherSideData.notes.trim().length > 0 &&
+    otherSideData.links.length >= MIN_WARDROBE_LINKS &&
+    otherSideData.photos.length >= MIN_WARDROBE_PHOTOS;
   const brideHasAny = hasWardrobeSideContent(currentBride);
   const groomHasAny = hasWardrobeSideContent(currentGroom);
 
@@ -141,8 +159,11 @@ export const WardrobeQuestion: React.FC<WardrobeQuestionProps> = ({
     <div className="space-y-4">
       {/* Short helper line directly under the question description */}
       <p className="text-sm text-[#6B655D] leading-relaxed">
-        Add ideas for both of you. Tap Bride or Groom to switch. Either of you
-        can fill in the other&apos;s side too.
+        {requireMinimums && isSeparate
+          ? "Add your own outfit notes, at least one inspiration link and at least three outfit photos. Your partner fills in their own tab."
+          : requireMinimums
+          ? "Both of you need outfit notes, at least one inspiration link and at least three outfit photos. Tap a name to switch."
+          : "Add ideas for both of you. Tap Bride or Groom to switch. Either of you can fill in the other's side too."}
       </p>
 
       {/* Legacy draft migration banner (only when opening an unsplit older draft) */}
@@ -225,8 +246,25 @@ export const WardrobeQuestion: React.FC<WardrobeQuestionProps> = ({
         </div>
       </div>
 
+      {lockedOtherTab && (
+        <div
+          role="tabpanel"
+          data-testid="wardrobe-partner-locked"
+          className="p-5 rounded-2xl border border-[#E8DFD3] bg-[#FAF8F5] text-sm text-[#5F5F5F] flex items-center gap-2"
+        >
+          {otherSideDone ? (
+            <>
+              <Check className="w-4 h-4 text-[#B08D57] shrink-0" />
+              <span>{otherName} has added their wardrobe.</span>
+            </>
+          ) : (
+            <span>{otherName} will fill this in.</span>
+          )}
+        </div>
+      )}
+
       {/* Active Tab Content: 3 Cards in the exact same order */}
-      <div role="tabpanel" className="space-y-6">
+      <div role="tabpanel" className={`space-y-6 ${lockedOtherTab ? "hidden" : ""}`}>
         {/* Card 1: Outfit Details & Styling Notes */}
         <div className="p-4 sm:p-5 bg-[#FAFAFA] border border-[#E8E8E8] rounded-2xl space-y-2">
           <label
@@ -261,7 +299,10 @@ export const WardrobeQuestion: React.FC<WardrobeQuestionProps> = ({
             htmlFor={`q13-wardrobe-link-${activeTab}`}
             className="block text-sm font-semibold text-[#1A1A1A]"
           >
-            Designer, Pinterest, or wardrobe inspiration links (optional)
+            Designer, Pinterest, or wardrobe inspiration links{" "}
+            {requireMinimums
+              ? `(required · at least ${MIN_WARDROBE_LINKS})`
+              : "(optional)"}
           </label>
           <div className="flex flex-col sm:flex-row gap-2">
             <input
@@ -337,7 +378,13 @@ export const WardrobeQuestion: React.FC<WardrobeQuestionProps> = ({
         {/* Card 3: Upload Outfit Photos (optional) */}
         <div className="p-4 sm:p-5 bg-[#FAFAFA] border border-[#E8E8E8] rounded-2xl space-y-2">
           <label className="block text-sm font-semibold text-[#1A1A1A]">
-            Upload outfit photos, sketches, or styling references (optional)
+            Upload outfit photos, sketches, or styling references{" "}
+            {requireMinimums
+              ? `(required · at least ${MIN_WARDROBE_PHOTOS} photos · ${Math.min(
+                  activeSideData.photos.length,
+                  MIN_WARDROBE_PHOTOS
+                )} of ${MIN_WARDROBE_PHOTOS} added)`
+              : "(optional)"}
           </label>
           <ImageUploader
             key={activeTab}

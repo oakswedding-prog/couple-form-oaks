@@ -792,6 +792,11 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
           <div className="bg-[#FAF7F2] border border-[#E5DDD2] rounded-2xl p-3.5 sm:px-5 flex flex-wrap items-center justify-between gap-3 text-xs text-[#5F5F5F] print:hidden">
             <span>
               Sent before <strong className="text-[#1A1A1A]">{submission.submittedIncompletePartner}</strong> finished their part.
+              {submission.missingSummary && (
+                <span className="block mt-1 font-medium text-[#7A5A12]" data-testid="missing-summary">
+                  {submission.missingSummary}
+                </span>
+              )}
             </span>
             <button
               type="button"

@@ -122,6 +122,12 @@ export function sanitizeDecorEvent(
         )
       : [],
     notes: typeof obj.notes === "string" ? obj.notes : "",
+    ...(typeof obj.splitGroupId === "string" && obj.splitGroupId
+      ? { splitGroupId: obj.splitGroupId }
+      : {}),
+    ...(obj.splitSide === "partnerA" || obj.splitSide === "partnerB"
+      ? { splitSide: obj.splitSide }
+      : {}),
   };
 }
 
@@ -332,4 +338,90 @@ export function getGroupedDecorEvents(
     hasAnyContent: populatedEvents.length > 0,
     totalImages,
   };
+}
+
+/** True when the board is one half of an event split "Separate for each side". */
+export function isSplitDecorEvent(
+  ev: Pick<DecorEventBoard, "splitGroupId"> | undefined | null
+): boolean {
+  return Boolean(ev?.splitGroupId);
+}
+
+/**
+ * Splits one shared (non-Wedding) event into two boards, one per partner, e.g.
+ * "Maya's Sangeet" and "Leo's Sangeet". Whatever was already on the shared event stays
+ * with the partner who is splitting it, so nothing is lost.
+ */
+export function splitDecorEventBySide(
+  events: readonly DecorEventBoard[],
+  eventId: string,
+  names: { partnerA: string; partnerB: string },
+  keepContentWith: "partnerA" | "partnerB" = "partnerA"
+): DecorEventBoard[] {
+  const idx = events.findIndex((ev) => ev.id === eventId);
+  const target = events[idx];
+  if (!target || target.isLocked || target.id === "wedding" || target.splitGroupId) {
+    return [...events];
+  }
+  if (events.length >= MAX_DECOR_EVENTS) return [...events];
+
+  const nameA = normalizeEventName(names.partnerA) || "Partner 1";
+  const nameB = normalizeEventName(names.partnerB) || "Partner 2";
+  const groupId = target.id;
+  const make = (slot: "partnerA" | "partnerB"): DecorEventBoard => {
+    const keeps = slot === keepContentWith;
+    return {
+      id: `${groupId}__${slot === "partnerA" ? "a" : "b"}`,
+      name: `${slot === "partnerA" ? nameA : nameB}'s ${target.name}`,
+      isLocked: false,
+      links: keeps ? [...target.links] : [],
+      images: keeps ? [...target.images] : [],
+      notes: keeps ? target.notes : "",
+      splitGroupId: groupId,
+      splitSide: slot,
+    };
+  };
+  const next = [...events];
+  next.splice(idx, 1, make("partnerA"), make("partnerB"));
+  return next;
+}
+
+/** Joins the two halves of a split event back into one shared event (content is combined, never dropped). */
+export function mergeSplitDecorEvent(
+  events: readonly DecorEventBoard[],
+  groupId: string,
+  baseName: string
+): DecorEventBoard[] {
+  const halves = events.filter((ev) => ev.splitGroupId === groupId);
+  if (halves.length === 0) return [...events];
+  const firstIdx = events.findIndex((ev) => ev.splitGroupId === groupId);
+  const uniq = (list: string[]) => Array.from(new Set(list));
+  const merged: DecorEventBoard = {
+    id: groupId,
+    name: baseName,
+    isLocked: false,
+    links: uniq(halves.flatMap((h) => h.links)),
+    images: uniq(halves.flatMap((h) => h.images)),
+    notes: halves.map((h) => h.notes.trim()).filter(Boolean).join("\n\n"),
+  };
+  const next: DecorEventBoard[] = [];
+  events.forEach((ev, i) => {
+    if (ev.splitGroupId === groupId) {
+      if (i === firstIdx) next.push(merged);
+      return;
+    }
+    next.push(ev);
+  });
+  return next;
+}
+
+/** The shared "Wedding" board (the only decor board with minimums). */
+export function getWeddingDecorEvent(
+  answers:
+    | Pick<QuestionnaireAnswers, "decorEvents" | "decorMoodBoard">
+    | undefined
+    | null
+): DecorEventBoard | undefined {
+  const grouped = getGroupedDecorEvents(answers);
+  return grouped.events.find((ev) => ev.id === "wedding" || ev.isLocked);
 }

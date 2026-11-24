@@ -39,6 +39,10 @@ export interface DecorEventBoard {
   links: string[];
   images: string[];
   notes: string;
+  /** Set when this board is one side of an event that was split "Separate for each side". */
+  splitGroupId?: string;
+  /** Which partner owns this board when it is one side of a split event. */
+  splitSide?: PartnerSlot;
 }
 
 export type FillMode = "together" | "separate";
@@ -72,6 +76,8 @@ export interface DecorEventMapEntry {
   name: string;
   order: number;
   isLocked?: boolean;
+  splitGroupId?: string;
+  splitSide?: PartnerSlot;
   notes: string;
   linksById: Record<string, string>;
   imagesById: Record<string, string>;
@@ -176,6 +182,8 @@ export interface QuestionnaireAnswers {
   fillMode?: FillMode;
   partnerAnswers?: PartnerAnswersMap;
   fieldMeta?: Record<string, FieldEditMeta>;
+  /** Stamped on new drafts; absent on older records, which keep the older (lighter) rules. */
+  requirementsVersion?: number;
 }
 
 export type SubmissionStatus = "new" | "reviewed" | "shared";
@@ -338,6 +346,8 @@ export interface SubmissionRecord {
   fillMode?: FillMode;
   partnerProgress?: PartnerProgressMap;
   submittedIncompletePartner?: string | null;
+  /** e.g. "Waiting for Leo: 3 more VIP people with photos, wardrobe photos" (early-sent couples only). */
+  missingSummary?: string | null;
   emailNotificationStatus?: "sent" | "failed";
   finalized?: boolean;
   submissionState?: SubmissionDeliveryState;

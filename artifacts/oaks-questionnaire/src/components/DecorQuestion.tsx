@@ -5,17 +5,23 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { Check, Link as LinkIcon, Pencil, Plus, X } from "lucide-react";
-import type { DecorEventBoard, QuestionnaireAnswers } from "../types/questionnaire.ts";
+import type { DecorEventBoard, FillMode, PartnerSlot, QuestionnaireAnswers } from "../types/questionnaire.ts";
 import {
   MAX_DECOR_EVENTS,
   SUGGESTED_DECOR_EVENTS,
   addDecorEventToList,
   hasDecorEventContent,
   isDuplicateDecorEventName,
+  mergeSplitDecorEvent,
+  splitDecorEventBySide,
   removeDecorEventFromList,
   renameDecorEventInList,
   sanitizeDecorEvents,
 } from "../utils/decorEvents.ts";
+import {
+  MIN_DECOR_IMAGES,
+  MIN_DECOR_LINKS,
+} from "../config/questionnaireRequirements.ts";
 import { ImageUploader } from "./ImageUploader.tsx";
 import { VoiceTextarea } from "./VoiceTextarea.tsx";
 
@@ -24,6 +30,12 @@ interface DecorQuestionProps {
   legacyDecorMoodBoard?: QuestionnaireAnswers["decorMoodBoard"];
   onChange: (nextEvents: DecorEventBoard[]) => void;
   onClearLegacy?: () => void;
+  partner1?: string;
+  partner2?: string;
+  fillMode?: FillMode;
+  activePartner?: PartnerSlot;
+  /** New drafts: Wedding event needs links + images; events can be split by side. */
+  requireMinimums?: boolean;
 }
 
 export const DecorQuestion: React.FC<DecorQuestionProps> = ({
@@ -31,6 +43,11 @@ export const DecorQuestion: React.FC<DecorQuestionProps> = ({
   legacyDecorMoodBoard,
   onChange,
   onClearLegacy,
+  partner1,
+  partner2,
+  fillMode = "together",
+  activePartner = "partnerA",
+  requireMinimums = false,
 }) => {
   const events = sanitizeDecorEvents(decorEvents, legacyDecorMoodBoard);
   const [activeEventId, setActiveEventId] = useState<string>(
@@ -196,6 +213,55 @@ export const DecorQuestion: React.FC<DecorQuestionProps> = ({
       [currentActiveId]: "",
     }));
   };
+
+  const isSeparate = fillMode === "separate";
+  const nameA = partner1?.trim() || "Partner 1";
+  const nameB = partner2?.trim() || "Partner 2";
+  const activeIsWedding = Boolean(
+    resolvedActiveEvent &&
+      (resolvedActiveEvent.id === "wedding" || resolvedActiveEvent.isLocked)
+  );
+  const activeSplit = resolvedActiveEvent?.splitGroupId
+    ? resolvedActiveEvent
+    : undefined;
+  const readOnlySplit = Boolean(
+    requireMinimums &&
+      isSeparate &&
+      activeSplit &&
+      activeSplit.splitSide &&
+      activeSplit.splitSide !== activePartner
+  );
+  const otherSideName = activeSplit?.splitSide === "partnerA" ? nameA : nameB;
+
+  const baseNameOf = (ev: DecorEventBoard) =>
+    ev.name.replace(/^.*?'s\s+/, "") || ev.name;
+
+  const handleToggleSplit = (split: boolean) => {
+    if (!resolvedActiveEvent) return;
+    if (split && !activeSplit) {
+      const next = splitDecorEventBySide(
+        events,
+        resolvedActiveEvent.id,
+        { partnerA: nameA, partnerB: nameB },
+        activePartner
+      );
+      commitEvents(next);
+      const mine = next.find(
+        (ev) =>
+          ev.splitGroupId === resolvedActiveEvent.id &&
+          ev.splitSide === activePartner
+      );
+      if (mine) setActiveEventId(mine.id);
+    } else if (!split && activeSplit?.splitGroupId) {
+      const groupId = activeSplit.splitGroupId;
+      const next = mergeSplitDecorEvent(events, groupId, baseNameOf(activeSplit));
+      commitEvents(next);
+      setActiveEventId(groupId);
+    }
+  };
+
+  const wedLinks = resolvedActiveEvent?.links.length ?? 0;
+  const wedImages = resolvedActiveEvent?.images.length ?? 0;
 
   const availableSuggestions = SUGGESTED_DECOR_EVENTS.filter(
     (suggestion) => !isDuplicateDecorEventName(suggestion, events)
@@ -395,8 +461,59 @@ export const DecorQuestion: React.FC<DecorQuestionProps> = ({
         another event with +.
       </p>
 
+      {requireMinimums && activeIsWedding && (
+        <p className="text-xs font-medium text-[#8C7043]" data-testid="decor-wedding-progress">
+          The Wedding event is required: at least {MIN_DECOR_LINKS} link and{" "}
+          {MIN_DECOR_IMAGES} images ({Math.min(wedLinks, MIN_DECOR_LINKS)} of{" "}
+          {MIN_DECOR_LINKS} link · {Math.min(wedImages, MIN_DECOR_IMAGES)} of{" "}
+          {MIN_DECOR_IMAGES} images). Other events are optional.
+        </p>
+      )}
+
+      {requireMinimums && resolvedActiveEvent && !activeIsWedding && !readOnlySplit && (
+        <div
+          role="group"
+          aria-label="Shared or separate event"
+          data-testid="decor-split-toggle"
+          className="grid grid-cols-2 gap-1 p-1 bg-[#F2EFE9] border border-[#E8E8E8] rounded-2xl"
+        >
+          <button
+            type="button"
+            aria-pressed={!activeSplit}
+            onClick={() => handleToggleSplit(false)}
+            className={`min-h-[40px] px-3 rounded-xl text-sm cursor-pointer ${
+              !activeSplit ? "bg-white font-semibold shadow-2xs" : "text-[#5F5F5F]"
+            }`}
+          >
+            One shared event
+          </button>
+          <button
+            type="button"
+            aria-pressed={Boolean(activeSplit)}
+            onClick={() => handleToggleSplit(true)}
+            className={`min-h-[40px] px-3 rounded-xl text-sm cursor-pointer ${
+              activeSplit ? "bg-white font-semibold shadow-2xs" : "text-[#5F5F5F]"
+            }`}
+          >
+            Separate for each side
+          </button>
+        </div>
+      )}
+
+      {readOnlySplit && (
+        <div
+          data-testid="decor-partner-locked"
+          className="p-5 rounded-2xl border border-[#E8DFD3] bg-[#FAF8F5] text-sm text-[#5F5F5F]"
+        >
+          {hasDecorEventContent(resolvedActiveEvent!)
+            ? `\u2713 ${otherSideName} has added ideas here.`
+            : `${otherSideName} will fill this in.`}{" "}
+          Tap your own tab to add yours.
+        </div>
+      )}
+
       {/* Active Event Tab Panel: 3 Cards in exact order */}
-      {resolvedActiveEvent && (
+      {resolvedActiveEvent && !readOnlySplit && (
         <div role="tabpanel" className="space-y-6">
           {/* Card 1: Decor Links */}
           <div className="space-y-2 p-4 sm:p-5 bg-[#FAFAFA] border border-[#E8E8E8] rounded-2xl">
@@ -405,7 +522,10 @@ export const DecorQuestion: React.FC<DecorQuestionProps> = ({
               className="block text-sm font-semibold text-[#1A1A1A]"
             >
               Pinterest boards or decor reference links for{" "}
-              {resolvedActiveEvent.name} (optional)
+              {resolvedActiveEvent.name}{" "}
+              {requireMinimums && activeIsWedding
+                ? `(required · at least ${MIN_DECOR_LINKS})`
+                : "(optional)"}
             </label>
             <div className="flex flex-col sm:flex-row gap-2">
               <input
@@ -482,7 +602,10 @@ export const DecorQuestion: React.FC<DecorQuestionProps> = ({
           <div className="p-4 sm:p-5 bg-[#FAFAFA] border border-[#E8E8E8] rounded-2xl space-y-2">
             <label className="block text-sm font-semibold text-[#1A1A1A]">
               Upload decor mood board images or colour palettes for{" "}
-              {resolvedActiveEvent.name} (optional)
+              {resolvedActiveEvent.name}{" "}
+              {requireMinimums && activeIsWedding
+                ? `(required · at least ${MIN_DECOR_IMAGES})`
+                : "(optional)"}
             </label>
             <ImageUploader
               key={resolvedActiveEvent.id}

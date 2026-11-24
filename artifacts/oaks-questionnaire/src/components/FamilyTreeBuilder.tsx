@@ -37,6 +37,8 @@ import {
   usePhotoUploadStatus,
 } from "../lib/photoUploadManager.ts";
 import { getGroupedQ10People } from "../utils/familyPeople.ts";
+import { MIN_VIP_PER_SIDE } from "../config/questionnaireRequirements.ts";
+import { checkVipSide, isVipMemberComplete } from "../utils/requirements.ts";
 import { VoiceTextarea } from "./VoiceTextarea.tsx";
 
 interface FamilyTreeBuilderProps {
@@ -47,6 +49,8 @@ interface FamilyTreeBuilderProps {
   splitModeEnabled?: boolean;
   fillMode?: FillMode;
   activePartner?: PartnerSlot;
+  /** New drafts: 5 saved people with photos per side; Save Person needs a photo; Separate shows only your own side. */
+  requireMinimums?: boolean;
 }
 
 const RELATIONSHIP_OPTIONS = [
@@ -72,8 +76,21 @@ export const FamilyTreeBuilder: React.FC<FamilyTreeBuilderProps> = ({
   splitModeEnabled = false,
   fillMode = "together",
   activePartner = "partnerA",
+  requireMinimums = false,
 }) => {
   const grouped = getGroupedQ10People(value);
+  const asAnswers = {
+    partner1,
+    partner2,
+    q10_people: value,
+  } as unknown as QuestionnaireAnswers;
+  const brideCheck = checkVipSide(asAnswers, "partnerA");
+  const groomCheck = checkVipSide(asAnswers, "partnerB");
+  const isSeparate = splitModeEnabled && fillMode === "separate";
+  const showBride = !(requireMinimums && isSeparate && activePartner === "partnerB");
+  const showGroom = !(requireMinimums && isSeparate && activePartner === "partnerA");
+  const brideDone = requireMinimums ? brideCheck.complete : grouped.hasBrideEntry;
+  const groomDone = requireMinimums ? groomCheck.complete : grouped.hasGroomEntry;
   const brideLabel =
     splitModeEnabled && partner1?.trim()
       ? `${partner1.trim()}'s Side`
@@ -176,35 +193,41 @@ export const FamilyTreeBuilder: React.FC<FamilyTreeBuilderProps> = ({
       {/* Clean unboxed readiness bar */}
       <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#E8E8E8] text-xs text-[#5F5F5F]">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          {showBride && (
           <span className="inline-flex items-center gap-1.5 font-medium text-[#1A1A1A]">
-            {grouped.hasBrideEntry ? (
+            {brideDone ? (
               <Check className="w-3.5 h-3.5 text-emerald-700" aria-hidden="true" />
             ) : (
               <span className="w-1.5 h-1.5 rounded-full bg-[#B08D57]" aria-hidden="true" />
             )}
             <span>
               {brideLabel}:{" "}
-              <span className={grouped.hasBrideEntry ? "text-emerald-800 font-semibold" : "text-[#8C7043]"}>
-                {grouped.hasBrideEntry ? "Added" : "Required"}
+              <span className={brideDone ? "text-emerald-800 font-semibold" : "text-[#8C7043]"}>
+                {requireMinimums ? brideCheck.progress : brideDone ? "Added" : "Required"}
               </span>
             </span>
           </span>
-          <span aria-hidden="true" className="text-[#CCCCCC]">
-            ·
-          </span>
+          )}
+          {showBride && showGroom && (
+            <span aria-hidden="true" className="text-[#CCCCCC]">
+              ·
+            </span>
+          )}
+          {showGroom && (
           <span className="inline-flex items-center gap-1.5 font-medium text-[#1A1A1A]">
-            {grouped.hasGroomEntry ? (
+            {groomDone ? (
               <Check className="w-3.5 h-3.5 text-emerald-700" aria-hidden="true" />
             ) : (
               <span className="w-1.5 h-1.5 rounded-full bg-[#B08D57]" aria-hidden="true" />
             )}
             <span>
               {groomLabel}:{" "}
-              <span className={grouped.hasGroomEntry ? "text-emerald-800 font-semibold" : "text-[#8C7043]"}>
-                {grouped.hasGroomEntry ? "Added" : "Required"}
+              <span className={groomDone ? "text-emerald-800 font-semibold" : "text-[#8C7043]"}>
+                {requireMinimums ? groomCheck.progress : groomDone ? "Added" : "Required"}
               </span>
             </span>
           </span>
+          )}
         </div>
         <span className="tabular-nums text-[#7A756D]">
           {grouped.totalMembers} VIP {grouped.totalMembers === 1 ? "person" : "people"} ·{" "}
@@ -288,16 +311,27 @@ export const FamilyTreeBuilder: React.FC<FamilyTreeBuilderProps> = ({
       )}
 
       {/* Side-by-side on desktop (lg:grid-cols-2), stacked on mobile — active partner's side surfaces first in Separate mode */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+      <div
+        className={`grid grid-cols-1 ${
+          showBride && showGroom ? "lg:grid-cols-2" : ""
+        } gap-5 items-start`}
+      >
+        {showBride && (
         <div className={isSeparatePartnerB ? "order-2 lg:order-1" : "order-1"}>
           <FamilySideSection
             side="bride"
             title={brideLabel}
-            subtitle={`Add important family & friends, upload a family tree, or write notes for ${brideLabel.toLowerCase()}.`}
+            subtitle={
+              requireMinimums
+                ? `Add at least ${MIN_VIP_PER_SIDE} important people for ${brideLabel.toLowerCase()}. Each needs a name, a relationship and a photo. Tree uploads and notes are optional extras.`
+                : `Add important family & friends, upload a family tree, or write notes for ${brideLabel.toLowerCase()}.`
+            }
             photos={grouped.bride.photos}
             members={grouped.bride.members}
             notes={grouped.bride.notes}
-            isComplete={grouped.hasBrideEntry}
+            isComplete={brideDone}
+            requireMinimums={requireMinimums}
+            progressText={brideCheck.progress}
             onPhotosChange={(photos) =>
               updateSideData("bride", (curr) => ({ ...curr, photos }))
             }
@@ -309,16 +343,24 @@ export const FamilyTreeBuilder: React.FC<FamilyTreeBuilderProps> = ({
             onRemoveMember={handleRemoveMember}
           />
         </div>
+        )}
 
+        {showGroom && (
         <div className={isSeparatePartnerB ? "order-1 lg:order-2" : "order-2"}>
           <FamilySideSection
             side="groom"
             title={groomLabel}
-            subtitle={`Add important family & friends, upload a family tree, or write notes for ${groomLabel.toLowerCase()}.`}
+            subtitle={
+              requireMinimums
+                ? `Add at least ${MIN_VIP_PER_SIDE} important people for ${groomLabel.toLowerCase()}. Each needs a name, a relationship and a photo. Tree uploads and notes are optional extras.`
+                : `Add important family & friends, upload a family tree, or write notes for ${groomLabel.toLowerCase()}.`
+            }
             photos={grouped.groom.photos}
             members={grouped.groom.members}
             notes={grouped.groom.notes}
-            isComplete={grouped.hasGroomEntry}
+            isComplete={groomDone}
+            requireMinimums={requireMinimums}
+            progressText={groomCheck.progress}
             onPhotosChange={(photos) =>
               updateSideData("groom", (curr) => ({ ...curr, photos }))
             }
@@ -330,6 +372,7 @@ export const FamilyTreeBuilder: React.FC<FamilyTreeBuilderProps> = ({
             onRemoveMember={handleRemoveMember}
           />
         </div>
+        )}
       </div>
     </div>
   );
@@ -535,6 +578,8 @@ interface FamilySideSectionProps {
   members: FamilyMember[];
   notes: string;
   isComplete: boolean;
+  requireMinimums?: boolean;
+  progressText?: string | null;
   onPhotosChange: (photos: SideFamilyPhoto[]) => void;
   onNotesChange: (notes: string) => void;
   onAddMember: (member: FamilyMember) => void;
@@ -550,6 +595,8 @@ const FamilySideSection: React.FC<FamilySideSectionProps> = ({
   members,
   notes,
   isComplete,
+  requireMinimums = false,
+  progressText = null,
   onPhotosChange,
   onNotesChange,
   onAddMember,
@@ -625,6 +672,7 @@ const FamilySideSection: React.FC<FamilySideSectionProps> = ({
 
   const handleSaveVip = () => {
     if (!vipName.trim() || vipPhotoProcessing) return;
+    if (requireMinimums && !vipPhotoUrl) return;
     onAddMember({
       id: `${side}_vip_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       name: vipName.trim(),
@@ -808,7 +856,11 @@ const FamilySideSection: React.FC<FamilySideSectionProps> = ({
             {title} <span className="text-[#B08D57]">*</span>
           </h3>
           <span className="text-xs font-medium text-[#7A756D] tabular-nums whitespace-nowrap shrink-0">
-            {isComplete ? sideCountSummary || "Ready" : "Add at least 1"}
+            {requireMinimums
+              ? progressText
+              : isComplete
+              ? sideCountSummary || "Ready"
+              : "Add at least 1"}
           </span>
         </div>
         <p className="text-xs sm:text-sm text-[#5F5F5F] leading-relaxed">
@@ -1088,6 +1140,22 @@ const FamilySideSection: React.FC<FamilySideSectionProps> = ({
                 )}
               </div>
 
+              {requireMinimums && (
+                <p
+                  className="text-xs text-[#8C7043] font-medium"
+                  data-testid="vip-save-reason"
+                  role="status"
+                >
+                  {!vipName.trim()
+                    ? "Add a name, a relationship and a photo to save this person."
+                    : vipPhotoProcessing
+                    ? "Adding photo…"
+                    : !vipPhotoUrl
+                    ? "Add a photo to save this person."
+                    : "Ready to save."}
+                </p>
+              )}
+
               {/* Cancel & Save Person Buttons */}
               <div className="grid grid-cols-2 gap-2.5 pt-1">
                 <button
@@ -1099,7 +1167,11 @@ const FamilySideSection: React.FC<FamilySideSectionProps> = ({
                 </button>
                 <button
                   type="button"
-                  disabled={!vipName.trim() || vipPhotoProcessing}
+                  disabled={
+                    !vipName.trim() ||
+                    vipPhotoProcessing ||
+                    (requireMinimums && !vipPhotoUrl)
+                  }
                   onClick={handleSaveVip}
                   className="min-h-[46px] py-2.5 px-4 rounded-xl bg-[#1A1A1A] hover:bg-[#333333] disabled:bg-[#9E9E9E] disabled:cursor-not-allowed text-white text-sm font-medium transition-colors cursor-pointer"
                 >
@@ -1123,6 +1195,9 @@ const FamilySideSection: React.FC<FamilySideSectionProps> = ({
             <div className="space-y-2.5 pt-1">
               <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#5F5F5F] tabular-nums">
                 {side === "bride" ? "Bride's Side" : "Groom's Side"} ({members.length})
+                {requireMinimums &&
+                  members.some((m) => !isVipMemberComplete(m)) &&
+                  ` · ${members.filter((m) => !isVipMemberComplete(m)).length} without a photo (doesn't count yet)`}
               </div>
               <div className="space-y-2">
                 {members.map((m) => (

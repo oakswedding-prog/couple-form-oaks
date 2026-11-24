@@ -7,6 +7,15 @@ import type { QuestionnaireAnswers } from "../types/questionnaire.ts";
 import { getGroupedQ10People } from "./familyPeople.ts";
 import { getGroupedWardrobe } from "./wardrobe.ts";
 import { getGroupedDecorEvents } from "./decorEvents.ts";
+import { usesNewRequirements } from "../config/questionnaireRequirements.ts";
+import {
+  checkCouplePhoto,
+  checkReferences,
+  checkVipSide,
+  checkWardrobeSide,
+  checkWeddingDecor,
+  combineChecks,
+} from "./requirements.ts";
 
 export const MANDATORY_QUESTION_STEPS: readonly number[] = [
   1, 2, 3, 6, 7, 10, 11, 12, 13, 14, 15, 16, 18, 20, 21, 22, 25, 26,
@@ -59,6 +68,8 @@ export interface StepValidationResult {
   isMandatory: boolean;
   isComplete: boolean;
   missingMessage: string | null;
+  /** Optional small counter shown under Continue, e.g. "2 of 5 people added". */
+  progress?: string | null;
 }
 
 export function validateQuestionStep(
@@ -75,6 +86,15 @@ export function validateQuestionStep(
       const ok = Boolean(
         answers.q1_calls?.aCallsB?.trim() && answers.q1_calls?.bCallsA?.trim()
       );
+      if (ok && usesNewRequirements(answers)) {
+        const photo = checkCouplePhoto(answers);
+        return {
+          isMandatory: true,
+          isComplete: photo.complete,
+          missingMessage: photo.message,
+          progress: photo.progress,
+        };
+      }
       return {
         isMandatory: true,
         isComplete: ok,
@@ -128,6 +148,18 @@ export function validateQuestionStep(
       };
     }
     case 10: {
+      if (usesNewRequirements(answers)) {
+        const both = combineChecks(
+          checkVipSide(answers, "partnerA"),
+          checkVipSide(answers, "partnerB")
+        );
+        return {
+          isMandatory: true,
+          isComplete: both.complete,
+          missingMessage: both.message,
+          progress: both.progress,
+        };
+      }
       const grouped = getGroupedQ10People(answers.q10_people);
       const ok = grouped.hasBrideEntry && grouped.hasGroomEntry;
       let missingMessage: string | null = null;
@@ -163,6 +195,15 @@ export function validateQuestionStep(
       };
     }
     case 12: {
+      if (usesNewRequirements(answers)) {
+        const refs = checkReferences(answers);
+        return {
+          isMandatory: true,
+          isComplete: refs.complete,
+          missingMessage: refs.message,
+          progress: refs.progress,
+        };
+      }
       const ok =
         (answers.q12_references?.links?.length || 0) > 0 ||
         (answers.q12_references?.images?.length || 0) > 0 ||
@@ -176,6 +217,18 @@ export function validateQuestionStep(
       };
     }
     case 13: {
+      if (usesNewRequirements(answers)) {
+        const both = combineChecks(
+          checkWardrobeSide(answers, "partnerA"),
+          checkWardrobeSide(answers, "partnerB")
+        );
+        return {
+          isMandatory: true,
+          isComplete: both.complete,
+          missingMessage: both.message,
+          progress: both.progress,
+        };
+      }
       const groupedWardrobe = getGroupedWardrobe(answers);
       const ok = groupedWardrobe.hasAnyNotes;
       return {
@@ -187,6 +240,15 @@ export function validateQuestionStep(
       };
     }
     case 14: {
+      if (usesNewRequirements(answers)) {
+        const decor = checkWeddingDecor(answers);
+        return {
+          isMandatory: true,
+          isComplete: decor.complete,
+          missingMessage: decor.message,
+          progress: decor.progress,
+        };
+      }
       const groupedDecor = getGroupedDecorEvents(answers);
       const ok = groupedDecor.hasAnyContent;
       return {

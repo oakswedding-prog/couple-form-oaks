@@ -32,6 +32,13 @@ import {
 import { getGroupedQ10People } from "./familyPeople.ts";
 import { getGroupedWardrobe } from "./wardrobe.ts";
 import { getGroupedDecorEvents } from "./decorEvents.ts";
+import {
+  MIN_VIP_PER_SIDE,
+  MIN_WARDROBE_LINKS,
+  MIN_WARDROBE_PHOTOS,
+  usesNewRequirements,
+} from "../config/questionnaireRequirements.ts";
+import { checkCouplePhoto, checkVipSide, checkWardrobeSide } from "./requirements.ts";
 
 export function getEffectiveFillMode(
   source?: { fillMode?: FillMode } | null
@@ -373,6 +380,15 @@ export function validateQuestionStepForContext(
         activePartner === "partnerA"
           ? Boolean(answers.q1_calls?.aCallsB?.trim())
           : Boolean(answers.q1_calls?.bCallsA?.trim());
+      if (ok && usesNewRequirements(answers)) {
+        const photo = checkCouplePhoto(answers);
+        return {
+          isMandatory: true,
+          isComplete: photo.complete,
+          missingMessage: photo.message,
+          progress: photo.progress,
+        };
+      }
       return {
         isMandatory: true,
         isComplete: ok,
@@ -402,6 +418,15 @@ export function validateQuestionStepForContext(
       };
     }
     case 10: {
+      if (usesNewRequirements(answers)) {
+        const own = checkVipSide(answers, activePartner);
+        return {
+          isMandatory: true,
+          isComplete: own.complete,
+          missingMessage: own.message,
+          progress: own.progress,
+        };
+      }
       const grouped = getGroupedQ10People(answers.q10_people);
       const ok =
         activePartner === "partnerA" ? grouped.hasBrideEntry : grouped.hasGroomEntry;
@@ -414,6 +439,15 @@ export function validateQuestionStepForContext(
       };
     }
     case 13: {
+      if (usesNewRequirements(answers)) {
+        const own = checkWardrobeSide(answers, activePartner);
+        return {
+          isMandatory: true,
+          isComplete: own.complete,
+          missingMessage: own.message,
+          progress: own.progress,
+        };
+      }
       const grouped = getGroupedWardrobe(answers);
       const side =
         activePartner === "partnerA" ? grouped.bride : grouped.groom;
@@ -526,6 +560,53 @@ export function getMissingMandatoryQuestionsForPartner(
       q.mandatory &&
       !validateQuestionStepForContext(q.number, answers, "separate", slot).isComplete
   ).map((q) => q.number);
+}
+
+/**
+ * Plain-words list of what one partner still owes, e.g.
+ * "Waiting for Leo: 3 more VIP people with photos, wardrobe photos".
+ * Returns null when that partner has nothing mandatory left.
+ */
+export function buildMissingSummaryForPartner(
+  answers: QuestionnaireAnswers,
+  slot: PartnerSlot
+): string | null {
+  const missingSteps = getMissingMandatoryQuestionsForPartner(answers, slot);
+  if (missingSteps.length === 0) return null;
+  const name = getPartnerDisplayName(answers, slot);
+  const parts: string[] = [];
+  let other = 0;
+  const detailed = usesNewRequirements(answers);
+  for (const step of missingSteps) {
+    if (detailed && step === 1 && answers.couplePhotoUrl?.trim()) {
+      other += 1;
+    } else if (detailed && step === 1) {
+      const nick =
+        slot === "partnerA"
+          ? answers.q1_calls?.aCallsB?.trim()
+          : answers.q1_calls?.bCallsA?.trim();
+      if (!nick) parts.push("nickname");
+      parts.push("couple photo");
+    } else if (detailed && step === 10) {
+      const g = getGroupedQ10People(answers.q10_people);
+      const members = slot === "partnerA" ? g.bride.members : g.groom.members;
+      const done = members.filter(
+        (m) => m.name?.trim() && m.relationship?.trim() && m.photoUrl?.trim()
+      ).length;
+      const need = Math.max(0, MIN_VIP_PER_SIDE - done);
+      parts.push(`${need} more VIP ${need === 1 ? "person" : "people"} with photos`);
+    } else if (detailed && step === 13) {
+      const w = getGroupedWardrobe(answers);
+      const side = slot === "partnerA" ? w.bride : w.groom;
+      if (side.photos.length < MIN_WARDROBE_PHOTOS) parts.push("wardrobe photos");
+      if (side.links.length < MIN_WARDROBE_LINKS) parts.push("wardrobe link");
+      if (!side.notes.trim()) parts.push("wardrobe notes");
+    } else {
+      other += 1;
+    }
+  }
+  if (other > 0) parts.push(`${other} other ${other === 1 ? "answer" : "answers"}`);
+  return `Waiting for ${name}: ${parts.join(", ")}`;
 }
 
 /**
@@ -656,6 +737,8 @@ export function decorEventsToMap(
       name: ev.name,
       order: idx,
       isLocked: Boolean(ev.isLocked || ev.id === "wedding"),
+      ...(ev.splitGroupId ? { splitGroupId: ev.splitGroupId } : {}),
+      ...(ev.splitSide ? { splitSide: ev.splitSide } : {}),
       notes: ev.notes || "",
       linksById,
       imagesById,
@@ -675,6 +758,8 @@ export function decorMapToEvents(
       id: entry.id,
       name: entry.name,
       isLocked: Boolean(entry.isLocked || entry.id === "wedding"),
+      ...(entry.splitGroupId ? { splitGroupId: entry.splitGroupId } : {}),
+      ...(entry.splitSide ? { splitSide: entry.splitSide } : {}),
       notes: entry.notes || "",
       links: Array.from(new Set(Object.values(entry.linksById || {}).filter(Boolean))),
       images: Array.from(new Set(Object.values(entry.imagesById || {}).filter(Boolean))),
@@ -709,6 +794,10 @@ export function mergeDecorEventMaps(
         name: bIsNewer ? b.name : a.name,
         order: Math.min(a.order ?? 99, b.order ?? 99),
         isLocked: Boolean(a.isLocked || b.isLocked || id === "wedding"),
+        ...((b.splitGroupId || a.splitGroupId)
+          ? { splitGroupId: b.splitGroupId || a.splitGroupId }
+          : {}),
+        ...((b.splitSide || a.splitSide) ? { splitSide: b.splitSide || a.splitSide } : {}),
         deleted: bIsNewer ? Boolean(b.deleted) : Boolean(a.deleted),
         notes: bIsNewer ? b.notes : a.notes,
         linksById: { ...(a.linksById || {}), ...(b.linksById || {}) },

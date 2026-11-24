@@ -59,6 +59,7 @@ import {
   subscribeOnlineDraft,
 } from "./lib/drafts.ts";
 import { isSplitModeEnabled, isPerPersonQuestion } from "./config/splitMode.ts";
+import { CURRENT_REQUIREMENTS_VERSION, usesNewRequirements } from "./config/questionnaireRequirements.ts";
 import {
   buildPartnerProgressSnapshot,
   decorEventsToMap,
@@ -137,6 +138,8 @@ const ScreenSkeleton: React.FC = () => (
 );
 
 const INITIAL_ANSWERS: QuestionnaireAnswers = {
+  // New drafts get the newer minimums (photos/links/people counts); older drafts have no stamp.
+  requirementsVersion: CURRENT_REQUIREMENTS_VERSION,
   partner1: "",
   partner2: "",
   weddingDate: "",
@@ -190,6 +193,24 @@ const INITIAL_ANSWERS: QuestionnaireAnswers = {
   loveStoryNarrative: "",
   q23_oneLastThing: { notes: "", images: [] },
 };
+
+const ACTIVE_PARTNER_STORAGE_KEY = "oaks_active_partner_v1";
+
+const PartnerWillFillBox: React.FC<{
+  label: string;
+  name: string;
+  answered: boolean;
+}> = ({ label, name, answered }) => (
+  <div
+    data-testid="partner-will-fill"
+    className="space-y-1 rounded-2xl border border-[#E8DFD3] bg-[#FAF8F5] px-5 py-4"
+  >
+    <p className="text-sm font-medium text-[#4A453E]">{label}</p>
+    <p className="text-sm text-[#7A756D]">
+      {answered ? `\u2713 ${name} has answered this.` : `${name} will fill this in.`}
+    </p>
+  </div>
+);
 
 function sanitizeAnswers(raw: any): QuestionnaireAnswers {
   if (!raw || typeof raw !== "object") return { ...INITIAL_ANSWERS };
@@ -339,6 +360,9 @@ function sanitizeAnswers(raw: any): QuestionnaireAnswers {
       notes: typeof raw.q23_oneLastThing?.notes === "string" ? raw.q23_oneLastThing.notes : "",
       images: Array.isArray(raw.q23_oneLastThing?.images) ? raw.q23_oneLastThing.images : [],
     },
+    ...(typeof raw.requirementsVersion === "number"
+      ? { requirementsVersion: raw.requirementsVersion }
+      : {}),
     ...(raw.fillMode === "separate" || raw.fillMode === "together"
       ? { fillMode: raw.fillMode }
       : {}),
@@ -765,6 +789,19 @@ export default function App() {
             const cleanLocal = sanitizeAnswers(parsed.answers);
             restoredAnswersForIdb = cleanLocal;
             setAnswers(cleanLocal);
+            // Restore the chosen filling mode (and which partner this phone is) too. Without this the
+            // screen reopened as "Together" and auto-save then overwrote the saved "Separately".
+            if (splitModeEnabled) {
+              setFillMode(getEffectiveFillMode(cleanLocal));
+              try {
+                const savedSlot = localStorage.getItem(ACTIVE_PARTNER_STORAGE_KEY);
+                if (savedSlot === "partnerA" || savedSlot === "partnerB") {
+                  setActivePartner(savedSlot);
+                }
+              } catch {
+                // ignore
+              }
+            }
           }
           if (typeof parsed.step === "number" && parsed.step > 0) {
             setSavedStepNotice(parsed.step);
@@ -825,6 +862,15 @@ export default function App() {
       }
     }
   }, [answers.partner1, answers.partner2, hasLoadedStorage, currentPath, resumeToken]);
+
+  useEffect(() => {
+    if (!hasLoadedStorage) return;
+    try {
+      localStorage.setItem(ACTIVE_PARTNER_STORAGE_KEY, activePartner);
+    } catch {
+      // ignore
+    }
+  }, [activePartner, hasLoadedStorage]);
 
   // Keep localStorage synced WITHOUT overwriting saved step > 0 with Step 0,
   // and debounce online Firestore draft auto-save (1.4s) with automatic retry on failure.
@@ -1041,6 +1087,13 @@ export default function App() {
 
   const p1 = answers.partner1 || "Partner 1";
   const p2 = answers.partner2 || "Partner 2";
+  // In Separate mode (new drafts) the other person's box is locked: "[Name] will fill this in".
+  const lockedSlot: PartnerSlot | null =
+    splitModeEnabled && fillMode === "separate" && usesNewRequirements(answers)
+      ? activePartner === "partnerA"
+        ? "partnerB"
+        : "partnerA"
+      : null;
 
   // Check if a question transition triggers a chapter card
   const navigateToStep = (targetStep: number, isForward = true) => {
@@ -1749,6 +1802,13 @@ export default function App() {
                 required
               />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {lockedSlot === "partnerA" ? (
+                  <PartnerWillFillBox
+                    label={`${p1} calls ${p2}`}
+                    name={p1}
+                    answered={Boolean(answers.q1_calls?.aCallsB?.trim())}
+                  />
+                ) : (
                 <div className="space-y-2">
                   <label htmlFor="q1-calls-a2b" className="block text-base font-medium text-[#1A1A1A] cursor-pointer">
                     {p1} calls {p2} <span className="text-[#B08D57]">*</span>
@@ -1773,6 +1833,14 @@ export default function App() {
                     className="w-full px-5 py-4 text-[18px] bg-white border border-[#E8E8E8] rounded-2xl focus:outline-hidden focus:border-[#1A1A1A] min-h-[58px]"
                   />
                 </div>
+                )}
+                {lockedSlot === "partnerB" ? (
+                  <PartnerWillFillBox
+                    label={`${p2} calls ${p1}`}
+                    name={p2}
+                    answered={Boolean(answers.q1_calls?.bCallsA?.trim())}
+                  />
+                ) : (
                 <div className="space-y-2">
                   <label htmlFor="q1-calls-b2a" className="block text-base font-medium text-[#1A1A1A] cursor-pointer">
                     {p2} calls {p1} <span className="text-[#B08D57]">*</span>
@@ -1797,13 +1865,16 @@ export default function App() {
                     className="w-full px-5 py-4 text-[18px] bg-white border border-[#E8E8E8] rounded-2xl focus:outline-hidden focus:border-[#1A1A1A] min-h-[58px]"
                   />
                 </div>
+                )}
               </div>
 
               {/* Optional Couple Photo Upload */}
               <div className="p-4 sm:p-5 bg-[#FAFAFA] border border-[#E8E8E8] rounded-2xl space-y-2">
                 <div className="space-y-0.5">
                   <label className="block text-sm font-semibold text-[#1A1A1A]">
-                    Upload a photo of the two of you (optional)
+                    {usesNewRequirements(answers)
+                      ? "Upload a photo of the two of you (required, one photo for the couple)"
+                      : "Upload a photo of the two of you (optional)"}
                   </label>
                   <p className="text-xs text-[#5F5F5F]">
                     Share a favourite photo together so our team can put faces to your story right away.
@@ -1834,6 +1905,13 @@ export default function App() {
                 required
               />
               <div className="space-y-6">
+                {lockedSlot === "partnerA" ? (
+                  <PartnerWillFillBox
+                    label={`${p1}'s work & passions *`}
+                    name={p1}
+                    answered={Boolean(answers.q2_workPassion?.partnerA?.trim())}
+                  />
+                ) : (
                 <VoiceTextarea
                   id="q2-work-partner1"
                   label={`${p1}'s work & passions *`}
@@ -1850,6 +1928,14 @@ export default function App() {
                   placeholder={`What does ${p1} do, and what lights them up outside of work?`}
                   rows={3}
                 />
+                )}
+                {lockedSlot === "partnerB" ? (
+                  <PartnerWillFillBox
+                    label={`${p2}'s work & passions *`}
+                    name={p2}
+                    answered={Boolean(answers.q2_workPassion?.partnerB?.trim())}
+                  />
+                ) : (
                 <VoiceTextarea
                   id="q2-work-partner2"
                   label={`${p2}'s work & passions *`}
@@ -1866,6 +1952,7 @@ export default function App() {
                   placeholder={`What does ${p2} do, and what lights them up outside of work?`}
                   rows={3}
                 />
+                )}
               </div>
             </div>
           )}
@@ -1898,6 +1985,13 @@ export default function App() {
                 helper="What ran through each of your minds that very first day?"
               />
               <div className="space-y-6">
+                {lockedSlot === "partnerA" ? (
+                  <PartnerWillFillBox
+                    label={`${p1}'s first impression of ${p2}`}
+                    name={p1}
+                    answered={Boolean(answers.q4_firstImpression?.partnerA?.trim())}
+                  />
+                ) : (
                 <VoiceTextarea
                   id="q4-impression-partner1"
                   label={`${p1}'s first impression of ${p2}`}
@@ -1914,6 +2008,14 @@ export default function App() {
                   placeholder={`What was the very first thought ${p1} had?`}
                   rows={3}
                 />
+                )}
+                {lockedSlot === "partnerB" ? (
+                  <PartnerWillFillBox
+                    label={`${p2}'s first impression of ${p1}`}
+                    name={p2}
+                    answered={Boolean(answers.q4_firstImpression?.partnerB?.trim())}
+                  />
+                ) : (
                 <VoiceTextarea
                   id="q4-impression-partner2"
                   label={`${p2}'s first impression of ${p1}`}
@@ -1930,6 +2032,7 @@ export default function App() {
                   placeholder={`What was the very first thought ${p2} had?`}
                   rows={3}
                 />
+                )}
               </div>
             </div>
           )}
@@ -2051,6 +2154,13 @@ export default function App() {
                 required
               />
               <div className="space-y-6">
+                {lockedSlot === "partnerA" ? (
+                  <PartnerWillFillBox
+                    label={`What ${p1} loves most about ${p2} *`}
+                    name={p1}
+                    answered={Boolean(answers.q7_loveMost?.partnerA?.trim())}
+                  />
+                ) : (
                 <VoiceTextarea
                   id="q7-love-partner1"
                   label={`What ${p1} loves most about ${p2} *`}
@@ -2067,6 +2177,14 @@ export default function App() {
                   placeholder={`What makes ${p2} truly special to you?`}
                   rows={3}
                 />
+                )}
+                {lockedSlot === "partnerB" ? (
+                  <PartnerWillFillBox
+                    label={`What ${p2} loves most about ${p1} *`}
+                    name={p2}
+                    answered={Boolean(answers.q7_loveMost?.partnerB?.trim())}
+                  />
+                ) : (
                 <VoiceTextarea
                   id="q7-love-partner2"
                   label={`What ${p2} loves most about ${p1} *`}
@@ -2083,6 +2201,7 @@ export default function App() {
                   placeholder={`What makes ${p1} truly special to you?`}
                   rows={3}
                 />
+                )}
               </div>
             </div>
           )}
@@ -2165,7 +2284,7 @@ export default function App() {
             <div className="space-y-6">
               <QuestionHeader
                 title="Who are the most important people you want us to capture?"
-                helper="Add important people, upload family tree photos, or write notes separately for the Bride's Side and Groom's Side."
+                helper={usesNewRequirements(answers) ? "Add at least 5 important people for each side. Every person needs a name, a relationship and a photo." : "Add important people, upload family tree photos, or write notes separately for the Bride's Side and Groom's Side."}
                 required
               />
               <React.Suspense fallback={<ScreenSkeleton />}>
@@ -2176,6 +2295,7 @@ export default function App() {
                   splitModeEnabled={splitModeEnabled}
                   fillMode={fillMode}
                   activePartner={activePartner}
+                  requireMinimums={usesNewRequirements(answers)}
                   onChange={(nextQ10) =>
                     setAnswers((prev) => ({
                       ...prev,
@@ -2293,7 +2413,11 @@ export default function App() {
             <div className="space-y-6">
               <QuestionHeader
                 title="Are there any photographers, films, or Pinterest references you love?"
-                helper="Paste links, upload screenshots, or note names — share at least one reference below to continue."
+                helper={
+                  usesNewRequirements(answers)
+                    ? "Add at least 1 link (Pinterest, Instagram or video) and at least 3 reference photos. Notes are optional."
+                    : "Paste links, upload screenshots, or note names — share at least one reference below to continue."
+                }
                 required
               />
 
@@ -2457,6 +2581,7 @@ export default function App() {
                   splitModeEnabled={splitModeEnabled}
                   fillMode={fillMode}
                   activePartner={activePartner}
+                  requireMinimums={usesNewRequirements(answers)}
                   onChange={(nextWardrobe) =>
                     setAnswers((prev) => ({
                       ...prev,
@@ -2479,12 +2604,17 @@ export default function App() {
             <div className="space-y-6">
               <QuestionHeader
                 title="Do you have a wedding decor mood board or any visual references for your celebration?"
-                helper="Share Pinterest boards, reference images, colour palettes or decor ideas below (add at least one item to continue)."
+                helper={usesNewRequirements(answers) ? "The Wedding event needs at least 1 link and 3 images. Other events are optional, and each can be shared or split by side." : "Share Pinterest boards, reference images, colour palettes or decor ideas below (add at least one item to continue)."}
                 required
               />
 
               <React.Suspense fallback={<ScreenSkeleton />}>
                 <DecorQuestion
+                  partner1={answers.partner1}
+                  partner2={answers.partner2}
+                  fillMode={splitModeEnabled ? fillMode : "together"}
+                  activePartner={activePartner}
+                  requireMinimums={usesNewRequirements(answers)}
                   decorEvents={answers.decorEvents}
                   legacyDecorMoodBoard={answers.decorMoodBoard}
                   onChange={(nextEvents) =>
@@ -2501,6 +2631,20 @@ export default function App() {
                           updatedAt: nowIso,
                           updatedBy: activePartner,
                         };
+                      }
+                      // Keep removed/merged events as tombstones so the collaborative merge
+                      // does not bring them back from the other phone.
+                      for (const [oldId, oldEntry] of Object.entries(
+                        prev.decorEventsMap || {}
+                      )) {
+                        if (!stampedMap[oldId] && !oldEntry.deleted) {
+                          stampedMap[oldId] = {
+                            ...oldEntry,
+                            deleted: true,
+                            updatedAt: nowIso,
+                            updatedBy: activePartner,
+                          };
+                        }
                       }
                       return {
                         ...prev,
@@ -3333,6 +3477,16 @@ export default function App() {
                     }`}
                   />
                 </button>
+
+                {stepValidation.progress && (
+                  <p
+                    className="text-center text-sm font-medium text-[#8C7043]"
+                    data-testid="step-progress"
+                    aria-live="polite"
+                  >
+                    {stepValidation.progress}
+                  </p>
+                )}
 
                 {!stepValidation.isMandatory && (
                   <div className="flex justify-center">

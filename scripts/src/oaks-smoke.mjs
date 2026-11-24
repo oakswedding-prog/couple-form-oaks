@@ -43,23 +43,24 @@ try {
   await page.getByRole("button").filter({ hasText: "Fill separately on own phones" }).click();
   await page.getByRole("button", { name: "MigrationTest", exact: true }).waitFor();
   await page.getByPlaceholder("e.g. Honey, Meeru").fill("Test nickname one");
-  await page.getByPlaceholder("e.g. Captain, Aaru").fill("Test nickname two");
+  // Separate mode: the partner's box is locked and only the own part is required.
+  await page.getByText("PreviewOnly will fill this in.").first().waitFor();
+  assert.equal(await page.getByPlaceholder("e.g. Captain, Aaru").count(), 0);
+  // New drafts also need the couple photo, so Continue stays disabled and says why.
+  await page.getByText("Please add a photo of the two of you to continue").first().waitFor();
   await page.screenshot({ path: `${output}/question-one-mobile.jpg`, fullPage: true });
-  await page.getByRole("button", { name: "Continue", exact: true }).click();
-  await page.getByPlaceholder(/What does MigrationTest do/).waitFor();
+  // Reload: the chosen mode ("Separately") and the nickname must survive, not flip to Together.
   await page.reload({ waitUntil: "networkidle" });
-  // The original app may reopen directly at the saved step, or show Resume.
   const resume = page.getByRole("button", { name: /resume/i }).first();
-  if (await resume.isVisible()) await resume.click();
-  await page.getByPlaceholder(/What does MigrationTest do/).waitFor();
-  await page.getByRole("button", { name: /back/i }).click();
+  if (await resume.isVisible().catch(() => false)) await resume.click();
+  await page.getByRole("button", { name: "MigrationTest", exact: true }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Together" }).count(), 0);
   assert.equal(await page.getByPlaceholder("e.g. Honey, Meeru").inputValue(), "Test nickname one");
-  assert.equal(await page.getByPlaceholder("e.g. Captain, Aaru").inputValue(), "Test nickname two");
   await page.goto(`${origin}/admin`, { waitUntil: "networkidle" });
   await page.locator('input[type="password"]').waitFor();
   await page.screenshot({ path: `${output}/admin-login-mobile.jpg`, fullPage: true });
   assert.deepEqual(errors, [], "No uncaught browser errors");
-  console.log("PASS: mobile welcome, start, chapter, next/back, reload persistence, admin sign-in gate.");
+  console.log("PASS: mobile welcome, start, separate-mode locked partner box, required couple photo, mode survives reload, admin sign-in gate.");
   console.log("Cloud requests deliberately blocked: no live Firebase records, emails, or uploads created.");
 } finally {
   await context.close();

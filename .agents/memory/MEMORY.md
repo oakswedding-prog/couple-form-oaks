@@ -1,0 +1,1 @@
+- [Requirements gating](requirements-gating.md) — new minimums apply only to drafts stamped requirementsVersion=2; old drafts keep old rules
