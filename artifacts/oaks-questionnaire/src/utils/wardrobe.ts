@@ -27,6 +27,36 @@ export function createEmptyWardrobeSide(): WardrobeSideData {
   };
 }
 
+/** Return one normalized event label per photo without changing the saved photo order. */
+export function getWardrobePhotoEvents(side: Pick<WardrobeSideData, "photos" | "photoEvents">): string[] {
+  return side.photos.map((_, index) => side.photoEvents?.[index]?.trim() || "");
+}
+
+/** Keep labels attached to the same image when the uploader removes photos or appends new ones. */
+export function reconcileWardrobePhotoEvents(
+  previousPhotos: string[],
+  previousEvents: string[] | undefined,
+  nextPhotos: string[],
+): string[] {
+  const eventsByPhoto = new Map<string, string[]>();
+  previousPhotos.forEach((photo, index) => {
+    const events = eventsByPhoto.get(photo) || [];
+    events.push(previousEvents?.[index]?.trim() || "");
+    eventsByPhoto.set(photo, events);
+  });
+  return nextPhotos.map((photo) => eventsByPhoto.get(photo)?.shift() || "");
+}
+
+export function withWardrobePhotoEvents(
+  side: WardrobeSideData,
+  photoEvents: string[],
+): WardrobeSideData {
+  return {
+    ...side,
+    photoEvents: photoEvents.some((event) => event.trim()) ? photoEvents : undefined,
+  };
+}
+
 export function sanitizeWardrobeSide(raw: unknown): WardrobeSideData {
   if (!raw || typeof raw !== "object") {
     return createEmptyWardrobeSide();
@@ -38,12 +68,24 @@ export function sanitizeWardrobeSide(raw: unknown): WardrobeSideData {
     ? obj.images
     : [];
 
+  const photosWithEvents = rawPhotos
+    .map((photo, index) => ({
+      photo,
+      event: Array.isArray(obj.photoEvents) && typeof obj.photoEvents[index] === "string"
+        ? obj.photoEvents[index].trim()
+        : "",
+    }))
+    .filter(({ photo }) => typeof photo === "string" && photo.trim().length > 0);
+
   return {
     notes: typeof obj.notes === "string" ? obj.notes : "",
     links: Array.isArray(obj.links)
       ? obj.links.filter((l): l is string => typeof l === "string" && l.trim().length > 0)
       : [],
-    photos: rawPhotos.filter((p): p is string => typeof p === "string" && p.trim().length > 0),
+    photos: photosWithEvents.map(({ photo }) => photo as string),
+    ...(photosWithEvents.some(({ event }) => event)
+      ? { photoEvents: photosWithEvents.map(({ event }) => event) }
+      : {}),
   };
 }
 

@@ -12,9 +12,12 @@ import type {
   WardrobeSideData,
 } from "../types/questionnaire.ts";
 import {
+  getWardrobePhotoEvents,
   getGroupedWardrobe,
   hasWardrobeSideContent,
+  reconcileWardrobePhotoEvents,
   type WardrobeSideKey,
+  withWardrobePhotoEvents,
 } from "../utils/wardrobe.ts";
 import {
   MIN_WARDROBE_LINKS,
@@ -125,9 +128,13 @@ export const WardrobeQuestion: React.FC<WardrobeQuestionProps> = ({
       links: [...targetCurr.links, ...legacy.links],
       photos: [...targetCurr.photos, ...legacy.photos],
     };
+    const mergedWithEvents = withWardrobePhotoEvents(merged, [
+      ...getWardrobePhotoEvents(targetCurr),
+      ...getWardrobePhotoEvents(legacy),
+    ]);
     onChange({
-      bride: targetSide === "bride" ? merged : currentBride,
-      groom: targetSide === "groom" ? merged : currentGroom,
+      bride: targetSide === "bride" ? mergedWithEvents : currentBride,
+      groom: targetSide === "groom" ? mergedWithEvents : currentGroom,
     });
     onClearLegacy?.();
     setActiveTab(targetSide);
@@ -391,7 +398,10 @@ export const WardrobeQuestion: React.FC<WardrobeQuestionProps> = ({
             images={activeSideData.photos}
             onChange={(imgs) =>
               updateActiveSide((curr) => ({
-                ...curr,
+                ...withWardrobePhotoEvents(
+                  curr,
+                  reconcileWardrobePhotoEvents(curr.photos, curr.photoEvents, imgs),
+                ),
                 photos: imgs,
               }))
             }
@@ -400,6 +410,37 @@ export const WardrobeQuestion: React.FC<WardrobeQuestionProps> = ({
             uploadCategory={activeTab === "bride" ? "bride_outfit" : "groom_outfit"}
             buttonLabel="Add outfit photos or references"
           />
+          {activeSideData.photos.length > 0 && (
+            <div className="space-y-2 pt-2">
+              <p className="text-xs text-[#6B655D]">
+                Optionally label each reference by event. Unlabelled photos stay in this wardrobe group.
+              </p>
+              <datalist id={`q13-wardrobe-events-${activeTab}`}>
+                {["Mehendi", "Wedding", "Cocktail", "Sangeet", "Haldi", "Reception"].map((event) => (
+                  <option key={event} value={event} />
+                ))}
+              </datalist>
+              {activeSideData.photos.map((photo, index) => (
+                <div key={`${photo}_${index}`} className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <span className="text-xs text-[#6B655D] sm:w-28 shrink-0">Photo {index + 1}</span>
+                  <input
+                    type="text"
+                    list={`q13-wardrobe-events-${activeTab}`}
+                    value={activeSideData.photoEvents?.[index] || ""}
+                    onChange={(event) => {
+                      const photoEvents = getWardrobePhotoEvents(activeSideData);
+                      photoEvents[index] = event.target.value;
+                      updateActiveSide((curr) => withWardrobePhotoEvents(curr, photoEvents));
+                    }}
+                    maxLength={80}
+                    placeholder="Event name, e.g. Mehendi"
+                    aria-label={`Event label for outfit photo ${index + 1}`}
+                    className="w-full px-3 py-2 text-sm bg-white border border-[#E8E8E8] rounded-lg focus:outline-hidden focus:border-[#1A1A1A] min-h-[42px]"
+                  />
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

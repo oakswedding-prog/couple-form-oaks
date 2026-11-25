@@ -1,7 +1,7 @@
 import type { SubmissionRecord, FamilyMember, DecorEventBoard } from "../types/questionnaire.ts";
 import { getGroupedQ10People } from "../utils/familyPeople.ts";
 import { getGroupedDecorEvents } from "../utils/decorEvents.ts";
-import { getGroupedWardrobe } from "../utils/wardrobe.ts";
+import { getGroupedWardrobe, getWardrobePhotoEvents } from "../utils/wardrobe.ts";
 import { decorMapToEvents } from "../utils/splitModeHelpers.ts";
 import type { MoodboardDocument, MoodboardPage, MoodboardPerson, MoodboardSection } from "./types.ts";
 
@@ -91,11 +91,35 @@ export function buildMoodboardDocument(submission: SubmissionRecord): MoodboardD
   }
 
   const wardrobe = getGroupedWardrobe(a);
-  const boards = [
-    ...(wardrobe.legacyShared ? [{ heading: "Wedding outfit references", data: wardrobe.legacyShared }] : []),
-    { heading: `${p1} — Bride's wardrobe`, data: wardrobe.bride },
-    { heading: `${p2} — Groom's wardrobe`, data: wardrobe.groom },
-  ].filter(b => b.data.photos.length || b.data.links.length || b.data.notes.trim());
+  const boards: { heading: string; data: typeof wardrobe.bride }[] = [];
+  const addWardrobeBoards = (heading: string, data: typeof wardrobe.bride) => {
+    const events = getWardrobePhotoEvents(data);
+    const unlabelledPhotos: string[] = [];
+    const eventPhotos = new Map<string, { label: string; photos: string[] }>();
+    data.photos.forEach((photo, index) => {
+      const label = events[index];
+      if (!label) {
+        unlabelledPhotos.push(photo);
+        return;
+      }
+      const key = label.toLocaleLowerCase();
+      const group = eventPhotos.get(key) || { label, photos: [] };
+      group.photos.push(photo);
+      eventPhotos.set(key, group);
+    });
+    if (unlabelledPhotos.length || data.links.length || data.notes.trim()) {
+      boards.push({ heading, data: { ...data, photos: unlabelledPhotos } });
+    }
+    for (const { label, photos } of eventPhotos.values()) {
+      boards.push({
+        heading: `${heading} — ${label} Outfits`,
+        data: { ...data, photos, links: [], notes: "", photoEvents: undefined },
+      });
+    }
+  };
+  if (wardrobe.legacyShared) addWardrobeBoards("Wedding outfit references", wardrobe.legacyShared);
+  addWardrobeBoards(`${p1} — Bride's wardrobe`, wardrobe.bride);
+  addWardrobeBoards(`${p2} — Groom's wardrobe`, wardrobe.groom);
   // Preserve legacy references that coexist with newer partner-specific boards without inventing ownership.
   if (!wardrobe.legacyShared && a.weddingOutfits && (a.weddingOutfits.images?.length || a.weddingOutfits.links?.length || a.weddingOutfits.notes?.trim())) {
     const knownPhotos = new Set(boards.flatMap(b => b.data.photos));

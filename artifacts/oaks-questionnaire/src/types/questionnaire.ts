@@ -30,6 +30,8 @@ export interface WardrobeSideData {
   notes: string;
   links: string[];
   photos: string[];
+  /** Optional event name for each photo, stored at the matching photos index. */
+  photoEvents?: string[];
 }
 
 export interface DecorEventBoard {

@@ -40,7 +40,10 @@ test("moodboard uses actual photos, correct section order, legacy and split asse
       { id: "s-a", name: "Maya's Sangeet", splitSide: "partnerA", splitGroupId: "s", images: ["maya-sangeet.jpg"], links: [], notes: "" },
       { id: "s-b", name: "Leo's Sangeet", splitSide: "partnerB", splitGroupId: "s", images: ["leo-sangeet.jpg"], links: [], notes: "" },
     ],
-    wardrobe: { bride: { photos: ["bride-outfit.jpg"], links: [], notes: "Ivory silk" }, groom: { photos: ["groom-outfit.jpg"], links: [], notes: "" } },
+    wardrobe: {
+      bride: { photos: ["bride-outfit.jpg"], photoEvents: ["Mehendi"], links: [], notes: "Ivory silk" },
+      groom: { photos: ["groom-outfit.jpg"], photoEvents: ["Cocktail"], links: [], notes: "" },
+    },
     weddingOutfits: { images: ["legacy-outfit.jpg"], links: [], notes: "" },
     q12_references: { images: ["inspiration.jpg"], links: ["https://youtu.be/demo", "https://www.instagram.com/reel/abc/", "https://pinterest.com/pin/123"], notes: "" },
     q23_oneLastThing: { images: ["shared-extra.jpg"], notes: "" },
@@ -50,6 +53,12 @@ test("moodboard uses actual photos, correct section order, legacy and split asse
   const doc = buildMoodboardDocument(record);
   assert.deepEqual([...new Set(doc.pages.map(p => p.section))], ["cover", "decor", "wardrobe", "inspiration", "family"]);
   assert.equal(doc.pages.filter(p => p.section === "decor" && p.kind === "gallery")[0].title, "Mehendi");
+  const brideWardrobePage = doc.pages.find(p => p.title.includes("Maya") && p.title.includes("Mehendi Outfits"));
+  const groomWardrobePage = doc.pages.find(p => p.title.includes("Leo") && p.title.includes("Cocktail Outfits"));
+  assert.deepEqual(brideWardrobePage?.images.map(image => image.src), ["bride-outfit.jpg"]);
+  assert.deepEqual(groomWardrobePage?.images.map(image => image.src), ["groom-outfit.jpg"]);
+  const sharedLegacyPage = doc.pages.find(p => p.title === "Shared outfit references");
+  assert.deepEqual(sharedLegacyPage?.images.map(image => image.src), ["legacy-outfit.jpg"]);
   const allPeople = doc.pages.flatMap(p => p.people);
   assert.equal(allPeople.length, 38);
   assert.equal(new Set(allPeople.map(p => p.id)).size, 38);
@@ -142,9 +151,17 @@ test("images are contained at original aspect ratio and export hyperlinks allow 
   assert.equal(safeExternalLink("https://example.com"), "https://example.com/");
 });
 
-test("PDF and editable PPTX files contain every page and original photo; missing media fails explicitly", async () => {
-  const doc = buildMoodboardDocument(submission({ q12_references: { images:["test-pixel"], links:["https://example.com/reference"], notes:"Café reference" }, q10_people: {familyMembers:[{id:"1",name:"Zoë Müller",side:"bride",relationship:"Mother",mustCapture:true}],treeNotes:""} }));
+test("PDF and editable PPTX files contain every page, event labels, and original photos; missing media fails explicitly", async () => {
+  const doc = buildMoodboardDocument(submission({
+    q12_references: { images:["test-pixel"], links:["https://example.com/reference"], notes:"Café reference" },
+    wardrobe: { bride: { photos:["test-pixel"], photoEvents:["Mehendi"], links:[], notes:"" }, groom: { photos:[], links:[], notes:"" } },
+    q10_people: {familyMembers:[{id:"1",name:"Zoë Müller",side:"bride",relationship:"Mother",mustCapture:true}],treeNotes:""},
+  }));
   const scenes = doc.pages.map((p,i)=>buildMoodboardScene(p,i,doc.pages.length));
+  const wardrobePage = doc.pages.find(p => p.title.includes("Mehendi Outfits"))!;
+  assert.ok(buildMoodboardScene(wardrobePage, doc.pages.indexOf(wardrobePage), doc.pages.length).elements.some(
+    element => element.type === "text" && element.text.includes("Mehendi Outfits"),
+  ));
   const data = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAAD0lEQVQI12Nc2R7FwMAAAAgPAYyA+b7LAAAAAElFTkSuQmCC";
   const assets = new Map([["test-pixel",{ data, width:2, height:1, format:"PNG" as const }]]);
   const serif = readFileSync(new URL("../../public/fonts/OAKS-Serif.ttf", import.meta.url)).toString("base64");
@@ -158,6 +175,7 @@ test("PDF and editable PPTX files contain every page and original photo; missing
   const pdfText = execFileSync("pdftotext", [pdfPath, "-"]).toString();
   assert.match(pdfText, /Zoë Müller/);
   assert.match(pdfText, /Café reference/);
+  assert.match(pdfText, /Mehendi Outfits/);
   const pptx = renderMoodboardPptx(scenes, assets, doc.title);
   const bytes = await pptx.write({ outputType: "nodebuffer" });
   const pptxPath = `${out}/moodboard.pptx`;
@@ -167,6 +185,7 @@ test("PDF and editable PPTX files contain every page and original photo; missing
   assert.ok(entries.some(n=>n.startsWith("ppt/media/")));
   const allXml = execFileSync("unzip", ["-p",pptxPath,"ppt/slides/slide*.xml"]).toString();
   assert.match(allXml, /Zoë Müller/);
+  assert.match(allXml, /Mehendi Outfits/);
   assert.match(allXml, /<a:t>MOTHER/); // editable text, not a flattened screenshot
   assert.match(allXml, /<p:pic>/);
   assert.throws(() => renderMoodboardPdf(scenes, new Map(), {serif,sans}), /Image unavailable/);
