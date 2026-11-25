@@ -5,7 +5,6 @@ import {
   initializeApp,
   type App,
 } from "firebase-admin/app";
-import { getAuth, type DecodedIdToken } from "firebase-admin/auth";
 import {
   FieldValue,
   getFirestore,
@@ -16,12 +15,19 @@ import {
 } from "firebase-admin/firestore";
 
 const FIREBASE_PROJECT_ID = "oaks-couple-questionnaire";
+const FIREBASE_WEB_API_KEY = "AIzaSyDWpU42Owb-yd2YvrUPJyb9A5VC_UYZUtw";
 const ADMIN_EMAILS = new Set([
   "rahulratna88@gmail.com",
   "mywedding@oakswedding.com",
   "oaksoperations@gmail.com",
 ]);
 const MAX_ATOMIC_WRITES = 500;
+
+interface VerifiedFirebaseIdentity {
+  uid: string;
+  email?: string;
+  email_verified?: boolean;
+}
 
 export type NumberingAction =
   | "assign"
@@ -277,14 +283,9 @@ async function readSubmissionRecords(
 
 async function isAdminIdentity(
   db: Firestore,
-  decoded: DecodedIdToken
+  decoded: VerifiedFirebaseIdentity
 ): Promise<boolean> {
-  if (
-    decoded.firebase?.sign_in_provider === "anonymous" ||
-    typeof decoded.email !== "string"
-  ) {
-    return false;
-  }
+  if (typeof decoded.email !== "string") return false;
 
   const email = decoded.email.toLowerCase();
   if (decoded.email_verified === true && ADMIN_EMAILS.has(email)) return true;
@@ -303,6 +304,69 @@ function readBearerToken(authorization?: string): string {
     );
   }
   return match[1].trim();
+}
+
+async function verifyProductionIdToken(
+  token: string
+): Promise<VerifiedFirebaseIdentity> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${FIREBASE_WEB_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken: token }),
+        signal: AbortSignal.timeout(8_000),
+      }
+    );
+  } catch {
+    throw new NumberingServiceError(
+      503,
+      "identity_verification_unavailable",
+      "Sign-in verification is temporarily unavailable. Please try again."
+    );
+  }
+
+  const payload = (await response.json().catch(() => null)) as
+    | {
+        users?: Array<{
+          localId?: string;
+          email?: string;
+          emailVerified?: boolean;
+          disabled?: boolean;
+        }>;
+      }
+    | null;
+
+  if (!response.ok) {
+    if (response.status === 400 || response.status === 401) {
+      throw new NumberingServiceError(
+        401,
+        "invalid_authentication",
+        "Your sign-in expired. Please sign in again."
+      );
+    }
+    throw new NumberingServiceError(
+      503,
+      "identity_verification_unavailable",
+      "Sign-in verification is temporarily unavailable. Please try again."
+    );
+  }
+
+  const user = payload?.users?.[0];
+  if (!user?.localId || user.disabled) {
+    throw new NumberingServiceError(
+      401,
+      "invalid_authentication",
+      "Your sign-in expired. Please sign in again."
+    );
+  }
+  return {
+    uid: user.localId,
+    email: user.email,
+    email_verified: user.emailVerified === true,
+  };
 }
 
 function validateRequest(value: unknown): NumberingRequest {
@@ -382,10 +446,16 @@ function applyNumberingChanges(
 async function getAuthorizedContext(authorization?: string) {
   const app = getFirebaseApp();
   const token = readBearerToken(authorization);
-  let decoded: DecodedIdToken;
+  let decoded: VerifiedFirebaseIdentity;
   try {
-    decoded = await getAuth(app).verifyIdToken(token);
-  } catch {
+    if (process.env.FIREBASE_AUTH_EMULATOR_HOST) {
+      const { getAuth } = await import("firebase-admin/auth");
+      decoded = await getAuth(app).verifyIdToken(token);
+    } else {
+      decoded = await verifyProductionIdToken(token);
+    }
+  } catch (error) {
+    if (error instanceof NumberingServiceError) throw error;
     throw new NumberingServiceError(
       401,
       "invalid_authentication",

@@ -17,15 +17,14 @@ export default async function handler(req: any, res: any) {
     });
     return res.status(result.status).json(result.body);
   } catch (error) {
-    const detail =
-      error instanceof Error ? `${error.name}: ${error.message}` : "Unknown startup error";
+    console.error(
+      "The submission numbering function could not start.",
+      error instanceof Error ? error.name : "Unknown error"
+    );
     return res.status(500).json({
       success: false,
       code: "numbering_function_unavailable",
-      error:
-        req.headers?.["x-oaks-numbering-diagnostic"] === "check"
-          ? detail.slice(0, 240)
-          : "The secure numbering service is temporarily unavailable.",
+      error: "The secure numbering service is temporarily unavailable.",
     });
   }
 }
