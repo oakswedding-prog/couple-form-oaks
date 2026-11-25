@@ -213,7 +213,7 @@ service cloud.firestore {
     // Sequential Counter:
     // Used by post-save transactions to assign sequential submission numbers (#001, #002...)
     match /counters/{counterId} {
-      allow read, write: if isSignedIn();
+      allow read, write: if isAdmin();
     }
 
     // Online Drafts (document ID = 192-bit unguessable resume/invite token):
@@ -298,7 +298,9 @@ service cloud.firestore {
         );
       allow create: if isSignedIn()
         && request.resource.data.ownerUid == request.auth.uid
-        && !('privateNotes' in request.resource.data);
+        && !('privateNotes' in request.resource.data)
+        && !('sequenceNumber' in request.resource.data)
+        && !('displayId' in request.resource.data);
       allow update: if (
           isAdmin()
           && standardEventTransitionValid(resource.data, request.resource.data, submissionId, 'sangeet')
@@ -310,7 +312,19 @@ service cloud.firestore {
           )
         )
         || (
+          isAdmin()
+          && request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'sequenceNumber', 'displayId'
+          ])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'sequenceNumber', 'displayId'
+          ])
+        )
+        || (
           isSignedIn()
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'sequenceNumber', 'displayId'
+          ])
           && resource.data.get('finalized', false) != true
           && resource.data.get('linkLocked', false) != true
           && request.resource.data.get('privateNotes', null) == resource.data.get('privateNotes', null)

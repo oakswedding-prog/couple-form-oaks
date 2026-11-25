@@ -8,6 +8,18 @@ export interface SubmissionDeletionResult {
   deletedDraftCount: number;
   deletedErrorCount: number;
   deletedRelatedDocumentCount: number;
+  deletedDisplayId: string | null;
+  deletedSequenceNumber: number | null;
+  renumberedCount: number;
+  renumberedSubmissions: Array<{
+    id: string;
+    partner1: string;
+    partner2: string;
+    fromDisplayId: string | null;
+    toDisplayId: string | null;
+    fromSequenceNumber: number | null;
+    toSequenceNumber: number | null;
+  }>;
 }
 
 export interface SubmissionDeletionActions {
@@ -15,7 +27,14 @@ export interface SubmissionDeletionActions {
   deleteDrafts: () => Promise<number>;
   deleteSubmissionErrors: () => Promise<number>;
   deleteRelatedDocuments: () => Promise<number>;
-  deleteSubmissionRecord: () => Promise<void>;
+  deleteSubmissionRecord: () => Promise<
+    | {
+        deletedDisplayId?: string | null;
+        deletedSequenceNumber?: number | null;
+        changes?: SubmissionDeletionResult["renumberedSubmissions"];
+      }
+    | void
+  >;
 }
 
 export type SubmissionDeletionStep =
@@ -49,6 +68,10 @@ export async function runSubmissionDeletionPlan(
     deletedDraftCount: 0,
     deletedErrorCount: 0,
     deletedRelatedDocumentCount: 0,
+    deletedDisplayId: null,
+    deletedSequenceNumber: null,
+    renumberedCount: 0,
+    renumberedSubmissions: [],
   };
 
   const runCountedStep = async (
@@ -81,7 +104,13 @@ export async function runSubmissionDeletionPlan(
   );
 
   try {
-    await actions.deleteSubmissionRecord();
+    const deleted = await actions.deleteSubmissionRecord();
+    if (deleted) {
+      result.deletedDisplayId = deleted.deletedDisplayId ?? null;
+      result.deletedSequenceNumber = deleted.deletedSequenceNumber ?? null;
+      result.renumberedSubmissions = deleted.changes ?? [];
+      result.renumberedCount = result.renumberedSubmissions.length;
+    }
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new SubmissionDeletionError("submission record", detail);

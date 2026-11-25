@@ -59,6 +59,12 @@ import {
   describeDraftPartnerStatus,
   getDraftLinkInactiveReason,
 } from "../utils/splitModeHelpers.ts";
+import {
+  applyRenumberPreview,
+  getRenumberPreview,
+  type RenumberPreview,
+  type SubmissionNumberChange,
+} from "../lib/submissionNumbering.ts";
 import { getSubmissionErrors } from "../lib/errorLogger.ts";
 import { buildResumeUrl, isPrivatePreviewOrigin } from "../lib/coupleSession.ts";
 import { exportToPdf, exportToDocx } from "../utils/exportBrief.ts";
@@ -76,6 +82,22 @@ type ExtendedStatusFilter =
   | SubmissionStatus
   | "needs_attention"
   | "photos_pending";
+
+function applyNumberChanges(
+  submissions: SubmissionRecord[],
+  changes: SubmissionNumberChange[]
+): SubmissionRecord[] {
+  const changeById = new Map(changes.map((change) => [change.id, change]));
+  return submissions.map((submission) => {
+    const change = changeById.get(submission.id);
+    if (!change) return submission;
+    return {
+      ...submission,
+      sequenceNumber: change.toSequenceNumber ?? undefined,
+      displayId: change.toDisplayId ?? undefined,
+    };
+  });
+}
 
 const DELIVERY_BADGE_MAP: Record<
   SubmissionDeliveryState,
@@ -204,6 +226,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [submissionToDelete, setSubmissionToDelete] = useState<SubmissionRecord | null>(null);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [renumberPreview, setRenumberPreview] = useState<RenumberPreview | null>(null);
+  const [isRenumberDialogOpen, setIsRenumberDialogOpen] = useState(false);
+  const [isLoadingRenumberPreview, setIsLoadingRenumberPreview] = useState(false);
+  const [isApplyingRenumber, setIsApplyingRenumber] = useState(false);
+  const [renumberError, setRenumberError] = useState<string | null>(null);
 
   // Warm lazy chunks for AdminCoupleDetail and AdminWeddingChecklist during browser idle
   useEffect(() => {
@@ -455,7 +482,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         submissionToDelete.id,
         submissionToDelete
       );
-      setSubmissions((prev) => prev.filter((item) => item.id !== submissionToDelete.id));
+      setSubmissions((prev) =>
+        applyNumberChanges(
+          prev.filter((item) => item.id !== submissionToDelete.id),
+          result.renumberedSubmissions
+        )
+      );
       setAllDrafts((prev) =>
         prev.filter(
           (draft) =>
@@ -474,9 +506,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         prev.filter((log) => log.submissionId !== submissionToDelete.id)
       );
       const submissionLabel =
-        submissionToDelete.displayId || submissionToDelete.id;
+        result.deletedDisplayId ||
+        submissionToDelete.displayId ||
+        submissionToDelete.id;
       setRecoveryNotice(
-        `Deleted submission ${submissionLabel} and its ${result.deletedPhotoCount} photo${result.deletedPhotoCount === 1 ? "" : "s"}.`
+        `Deleted submission ${submissionLabel}, moved ${result.renumberedCount} later number${result.renumberedCount === 1 ? "" : "s"} into place, and removed ${result.deletedPhotoCount} photo${result.deletedPhotoCount === 1 ? "" : "s"}.`
       );
       setSubmissionToDelete(null);
     } catch (err: any) {
@@ -484,6 +518,51 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setDeleteError(err?.message || "Failed to delete submission. Please try again.");
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handleOpenRenumberPreview = async () => {
+    setIsLoadingRenumberPreview(true);
+    setRenumberError(null);
+    try {
+      const preview = await getRenumberPreview();
+      if (preview.changes.length === 0) {
+        setRecoveryNotice("Submission numbers are already consecutive and match submission time.");
+        return;
+      }
+      setRenumberPreview(preview);
+      setIsRenumberDialogOpen(true);
+    } catch (err: any) {
+      setRenumberError(err?.message || "Could not prepare a numbering preview.");
+    } finally {
+      setIsLoadingRenumberPreview(false);
+    }
+  };
+
+  const handleApplyRenumber = async () => {
+    if (!renumberPreview) return;
+    setIsApplyingRenumber(true);
+    setRenumberError(null);
+    try {
+      const result = await applyRenumberPreview(renumberPreview.revision);
+      setSubmissions((previous) => applyNumberChanges(previous, result.changes));
+      setRecoveryNotice(
+        `Renumbered ${result.changes.length} submission${result.changes.length === 1 ? "" : "s"} by original submission time. The counter now matches the highest number.`
+      );
+      setIsRenumberDialogOpen(false);
+      setRenumberPreview(null);
+    } catch (err: any) {
+      const message = err?.message || "Could not safely renumber submissions.";
+      setRenumberError(message);
+      if (message.includes("changed after the preview")) {
+        try {
+          setRenumberPreview(await getRenumberPreview());
+        } catch {
+          // Keep the stale preview visible with the error so the admin can retry manually.
+        }
+      }
+    } finally {
+      setIsApplyingRenumber(false);
     }
   };
 
@@ -852,6 +931,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <option value="newest_submitted">Sort: Newest submitted</option>
                   <option value="wedding_soonest">Sort: Wedding date (soonest)</option>
                 </select>
+                <button
+                  type="button"
+                  onClick={() => void handleOpenRenumberPreview()}
+                  disabled={isLoadingRenumberPreview || isApplyingRenumber}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-[#E5DDD2] bg-[#FAF7F2] px-3 py-2 text-xs font-medium text-[#5C492A] transition-colors hover:bg-[#F2ECE1] disabled:cursor-wait disabled:opacity-60"
+                  title="Preview and repair submission-number gaps"
+                >
+                  <RefreshCw
+                    className={`h-3.5 w-3.5 ${
+                      isLoadingRenumberPreview ? "animate-spin" : ""
+                    }`}
+                  />
+                  <span>
+                    {isLoadingRenumberPreview
+                      ? "Checking numbers…"
+                      : "Renumber all submissions"}
+                  </span>
+                </button>
               </div>
             </div>
 
@@ -1410,6 +1507,117 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 })}
               </div>
             )}
+          </div>
+        )}
+
+        {isRenumberDialogOpen && renumberPreview && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs"
+            onClick={() => {
+              if (!isApplyingRenumber) {
+                setIsRenumberDialogOpen(false);
+                setRenumberPreview(null);
+                setRenumberError(null);
+              }
+            }}
+          >
+            <section
+              className="w-full max-w-lg space-y-4 rounded-2xl border border-[#E5DDD2] bg-white p-6 shadow-2xl"
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="renumber-title"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2
+                    id="renumber-title"
+                    className="font-cormorant text-2xl font-semibold text-[#1A1A1A]"
+                  >
+                    Renumber all submissions?
+                  </h2>
+                  <p className="mt-1 text-xs leading-relaxed text-[#5F5F5F]">
+                    This will change numbers after the first gap so submissions run
+                    consecutively in their original submission-time order. Drafts
+                    and unsubmitted forms are not counted.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsRenumberDialogOpen(false);
+                    setRenumberPreview(null);
+                    setRenumberError(null);
+                  }}
+                  disabled={isApplyingRenumber}
+                  className="rounded-lg p-1.5 text-[#7A756D] transition-colors hover:bg-[#FAF7F2] hover:text-[#1A1A1A] disabled:opacity-50"
+                  aria-label="Close renumber preview"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="rounded-xl border border-[#E8DFD3] bg-[#FAF8F5] p-3">
+                <p className="mb-2 text-xs font-semibold text-[#4A453E]">
+                  Preview · {renumberPreview.changes.length} number
+                  {renumberPreview.changes.length === 1 ? " change" : " changes"}
+                  {" "}across {renumberPreview.submissionCount} submitted forms
+                </p>
+                <div className="max-h-52 space-y-1.5 overflow-y-auto">
+                  {renumberPreview.changes.slice(0, 8).map((change) => (
+                    <div
+                      key={change.id}
+                      className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2 text-xs"
+                    >
+                      <span className="min-w-0 truncate text-[#5F5F5F]">
+                        {change.partner1} &amp; {change.partner2}
+                      </span>
+                      <span className="shrink-0 font-semibold tabular-nums text-[#8C7043]">
+                        {change.fromDisplayId || "No number"} →{" "}
+                        {change.toDisplayId || "Unnumbered"}
+                      </span>
+                    </div>
+                  ))}
+                  {renumberPreview.changes.length > 8 && (
+                    <p className="px-1 pt-1 text-[11px] text-[#7A756D]">
+                      and {renumberPreview.changes.length - 8} more changes
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {renumberError && (
+                <div role="alert" className="rounded-xl bg-red-50 p-3 text-xs text-red-800">
+                  {renumberError}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 border-t border-[#F0EBE1] pt-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsRenumberDialogOpen(false);
+                    setRenumberPreview(null);
+                    setRenumberError(null);
+                  }}
+                  disabled={isApplyingRenumber}
+                  className="rounded-xl border border-[#E5DDD2] px-4 py-2 text-xs font-medium text-[#5F5F5F] hover:bg-[#FAF7F2] disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleApplyRenumber()}
+                  disabled={isApplyingRenumber}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-[#1A1A1A] px-4 py-2 text-xs font-medium text-white hover:bg-[#36312A] disabled:opacity-60"
+                >
+                  {isApplyingRenumber && (
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  )}
+                  {isApplyingRenumber ? "Updating numbers…" : "Confirm renumber"}
+                </button>
+              </div>
+            </section>
           </div>
         )}
 

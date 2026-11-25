@@ -59,6 +59,7 @@
     "docx": "^9.16.0",
     "embla-carousel-react": "^8.6.0",
     "firebase": "^13.4.0",
+    "firebase-admin": "^14.5.1",
     "framer-motion": "catalog:",
     "heic2any": "^0.0.4",
     "input-otp": "^1.4.2",

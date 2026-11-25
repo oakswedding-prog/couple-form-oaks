@@ -344,10 +344,11 @@ describe("Bulletproof Couple Questionnaire Reliability Suite (11 Scenarios)", ()
     assert.equal(computePersistedStep(8, 14), 8, "Explicitly navigating back to Step 8 updates saved step");
   });
 
-  // Scenario 8: Post-save failures (counter/number failure or email failure) NEVER turn a saved submission into an error
-  it("8. Post-save failure: main record still succeeds even if display counter & email notifications fail", async () => {
+  // Scenario 8: A number failure leaves the saved form intact and holds the unnumbered email.
+  it("8. Post-save numbering failure: main record stays saved and no unnumbered email is sent", async () => {
     const loggedErrors: Array<{ step: string; submissionId: string }> = [];
     const submissionId = generateStableSubmissionId();
+    let emailSent = false;
 
     const result = await executeBulletproofSubmit(
       {
@@ -367,6 +368,7 @@ describe("Bulletproof Couple Questionnaire Reliability Suite (11 Scenarios)", ()
           throw new Error("Draft update failed");
         },
         notifyStudioAndCouple: async () => {
+          emailSent = true;
           throw new Error("Resend 500 error");
         },
         logError: async (step, _err, subId) => {
@@ -386,9 +388,10 @@ describe("Bulletproof Couple Questionnaire Reliability Suite (11 Scenarios)", ()
       "Post-save numbering failure should be quietly logged"
     );
     assert.ok(
-      loggedErrors.some((e) => e.step === "post_save_notify_email"),
-      "Post-save email failure should be quietly logged"
+      loggedErrors.some((e) => e.step === "post_save_notify_missing_number"),
+      "The held email should be recorded for admin attention"
     );
+    assert.equal(emailSent, false, "Do not send a studio alert without the assigned number");
   });
 
   // Scenario 9: Dashboard visibility for submissions missing sequenceNumber, displayId, or status
@@ -1250,5 +1253,60 @@ describe("Bulletproof Couple Questionnaire Reliability Suite (11 Scenarios)", ()
     await new Promise((r) => setTimeout(r, 20));
     assert.ok(sentNotifyPayload);
     assert.equal((sentNotifyPayload as any).displayId, "#022");
+  });
+
+  it("22. New studio alerts wait for the trusted number and include that exact Firestore number", async () => {
+    const order: string[] = [];
+    let sentNotifyPayload: Record<string, unknown> | null = null;
+    let finishEmail!: () => void;
+    const emailSent = new Promise<void>((resolve) => {
+      finishEmail = resolve;
+    });
+
+    await executeBulletproofSubmit(
+      {
+        submissionId: "sub_numbered_before_email",
+        resumeToken: generateResumeToken(),
+        ownerUid: "numbering_test_uid",
+        answers: makeSampleAnswers(),
+      },
+      {
+        writeSubmissionDoc: async () => {},
+        assignDisplayNumber: async () => {
+          order.push("number");
+          return { sequenceNumber: 7, displayId: "#007" };
+        },
+        notifyStudioAndCouple: async (payload) => {
+          order.push("email");
+          sentNotifyPayload = payload;
+          finishEmail();
+        },
+        retryDelaysMs: [1],
+      }
+    );
+
+    await emailSent;
+    assert.deepEqual(order, ["number", "email"]);
+    assert.equal((sentNotifyPayload as any)?.displayId, "#007");
+  });
+
+  it("23. Firestore rules keep couple numbering writes blocked and counters admin-only", () => {
+    const rules = readFileSync("../../firestore.rules", "utf-8");
+    assert.match(
+      rules,
+      /match \/counters\/\{counterId\} \{\s*allow read, write: if isAdmin\(\);/
+    );
+    assert.ok(
+      rules.includes("!('sequenceNumber' in request.resource.data)"),
+      "Couples cannot create a submission with their own sequence number"
+    );
+    assert.ok(
+      rules.includes("!request.resource.data.diff(resource.data).affectedKeys().hasAny(["),
+      "Couple updates must not change the submission number fields"
+    );
+    assert.ok(
+      rules.includes("request.resource.data.diff(resource.data).affectedKeys().hasOnly(["),
+      "The dedicated admin numbering update is limited to number fields"
+    );
   });
 });

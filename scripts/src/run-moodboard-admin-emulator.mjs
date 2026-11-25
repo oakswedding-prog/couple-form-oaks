@@ -37,7 +37,7 @@ const result = spawnSync("pnpm", [
   configPath,
   "--only",
   "auth,firestore,storage",
-  "node scripts/src/moodboard-admin-smoke.mjs",
+  "node scripts/src/moodboard-admin-smoke.mjs && pnpm --filter @workspace/oaks-questionnaire test",
 ], {
   cwd: root,
   stdio: ["inherit", stdoutFd, stderrFd],
@@ -45,6 +45,8 @@ const result = spawnSync("pnpm", [
     ...process.env,
     VITE_USE_FIREBASE_EMULATORS: "true",
     VITE_FIREBASE_EMULATOR_PROJECT_ID: projectId,
+    FIRESTORE_EMULATOR_HOST: "127.0.0.1:28080",
+    FIREBASE_AUTH_EMULATOR_HOST: "127.0.0.1:29099",
   },
 });
 

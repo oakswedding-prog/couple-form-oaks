@@ -79,6 +79,7 @@ import {
 } from "./coupleSession.ts";
 import { logSubmissionError } from "./errorLogger.ts";
 import { markDraftSubmitted } from "./drafts.ts";
+import { assignNumberForSubmission, deleteSubmissionAndRenumber } from "./submissionNumbering.ts";
 import { buildNormalizedPhotoReport } from "../utils/photoStatusSummary.ts";
 import {
   runSubmissionDeletionPlan,
@@ -866,15 +867,54 @@ export async function executeBulletproofSubmit(
   }
 
   // MAIN RECORD IS NOW CONFIRMED SAVED!
-  // Fire studio alert + couple receipt immediately, alongside display numbering & draft completion.
-  // None of these can EVER turn a saved submission into an error for the couple.
+  // Number first so both studio and couple emails use the Firestore-assigned number.
+  // None of these post-save tasks can turn a saved submission into an error for the couple.
   const runPostSave = async () => {
+    let assignedDisplayId = existingDisplayId || "";
+    let numberingFailed = false;
+    if (deps.assignDisplayNumber) {
+      try {
+        const assigned = await deps.assignDisplayNumber(submissionId);
+        assignedDisplayId = assigned?.displayId || "";
+        if (!assignedDisplayId) {
+          numberingFailed = true;
+          await deps.logError?.(
+            "post_save_assign_number",
+            new Error("The numbering service returned no submission number."),
+            submissionId,
+            sanitized.totalCount
+          );
+        }
+      } catch (err) {
+        numberingFailed = true;
+        await deps.logError?.(
+          "post_save_assign_number",
+          err,
+          submissionId,
+          sanitized.totalCount
+        );
+      }
+    }
+
     const emailTask = (async () => {
       if (!deps.notifyStudioAndCouple) return;
+      if (numberingFailed || (deps.assignDisplayNumber && !assignedDisplayId)) {
+        const error = new Error(
+          "Email was held because a submission number could not be assigned."
+        );
+        await deps.logError?.(
+          "post_save_notify_missing_number",
+          error,
+          submissionId,
+          sanitized.totalCount
+        );
+        await deps.updateEmailStatus?.(submissionId, "failed").catch(() => {});
+        return;
+      }
       try {
         await deps.notifyStudioAndCouple({
           submissionId,
-          displayId: existingDisplayId || "",
+          displayId: assignedDisplayId,
           partner1: submissionData.partner1,
           partner2: submissionData.partner2,
           weddingDate: submissionData.weddingDate,
@@ -895,15 +935,6 @@ export async function executeBulletproofSubmit(
       }
     })();
 
-    const numberingTask = (async () => {
-      if (!deps.assignDisplayNumber) return;
-      try {
-        await deps.assignDisplayNumber(submissionId);
-      } catch (err) {
-        await deps.logError?.("post_save_assign_number", err, submissionId, sanitized.totalCount);
-      }
-    })();
-
     const draftTask = (async () => {
       if (!deps.markDraftDone) return;
       try {
@@ -913,7 +944,7 @@ export async function executeBulletproofSubmit(
       }
     })();
 
-    await Promise.allSettled([emailTask, numberingTask, draftTask]);
+    await Promise.allSettled([emailTask, draftTask]);
   };
 
   void runPostSave();
@@ -1036,24 +1067,13 @@ async function assignSequentialDisplayNumber(
   submissionId: string,
   shouldFinalize: boolean
 ): Promise<{ sequenceNumber: number; displayId: string } | null> {
-  const counterRef = doc(db, "counters", "submissions");
-  const nextSeq = await runTransaction(db, async (transaction) => {
-    const counterDoc = await transaction.get(counterRef);
-    const current = counterDoc.exists() ? Number(counterDoc.data()?.current || 0) : 0;
-    const next = current + 1;
-    transaction.set(counterRef, { current: next }, { merge: true });
-    return next;
-  });
-
-  const displayId = `#${String(nextSeq).padStart(3, "0")}`;
+  const number = await assignNumberForSubmission(submissionId);
   await updateDoc(doc(db, "submissions", submissionId), {
-    sequenceNumber: nextSeq,
-    displayId,
     finalized: shouldFinalize,
     updatedAt: new Date().toISOString(),
   });
 
-  return { sequenceNumber: nextSeq, displayId };
+  return number;
 }
 
 /**
@@ -1112,7 +1132,9 @@ export async function createSubmission(
     : null;
   const alreadyExistsWithNumber = Boolean(
     existingSubmissionData &&
-      typeof existingSubmissionData.sequenceNumber === "number"
+      typeof existingSubmissionData.sequenceNumber === "number" &&
+      typeof existingSubmissionData.displayId === "string" &&
+      existingSubmissionData.displayId.length > 0
   );
 
   const mergedParticipants = Array.from(
@@ -1853,7 +1875,7 @@ export async function deleteSubmission(
       }
       return deletedCount;
     },
-    deleteSubmissionRecord: () => deleteDoc(submissionRef),
+    deleteSubmissionRecord: () => deleteSubmissionAndRenumber(id),
   });
 
   removeFromLocalCache(id);

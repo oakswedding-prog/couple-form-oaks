@@ -308,8 +308,9 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
     setDeleteError(null);
     try {
       const result = await deleteSubmission(submission.id, submission);
-      const label = submission.displayId || submission.id;
-      const notice = `Deleted submission ${label} and its ${result.deletedPhotoCount} photo${result.deletedPhotoCount === 1 ? "" : "s"}.`;
+      const label =
+        result.deletedDisplayId || submission.displayId || submission.id;
+      const notice = `Deleted submission ${label}, moved ${result.renumberedCount} later number${result.renumberedCount === 1 ? "" : "s"} into place, and removed ${result.deletedPhotoCount} photo${result.deletedPhotoCount === 1 ? "" : "s"}.`;
       try {
         sessionStorage.setItem("oaks_submission_delete_notice", notice);
       } catch {

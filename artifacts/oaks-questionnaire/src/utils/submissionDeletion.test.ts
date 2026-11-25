@@ -45,7 +45,40 @@ test("submission cleanup removes dependencies before the parent and returns coun
     deletedDraftCount: 1,
     deletedErrorCount: 2,
     deletedRelatedDocumentCount: 4,
+    deletedDisplayId: null,
+    deletedSequenceNumber: null,
+    renumberedCount: 0,
+    renumberedSubmissions: [],
   });
+});
+
+test("atomic parent deletion returns the numbers that were moved down", async () => {
+  const order: string[] = [];
+  const actions = actionsWithOrder(order);
+  actions.deleteSubmissionRecord = async () => {
+    order.push("submission");
+    return {
+      deletedDisplayId: "#002",
+      deletedSequenceNumber: 2,
+      changes: [
+        {
+          id: "third",
+          partner1: "Third",
+          partner2: "Couple",
+          fromDisplayId: "#003",
+          toDisplayId: "#002",
+          fromSequenceNumber: 3,
+          toSequenceNumber: 2,
+        },
+      ],
+    };
+  };
+
+  const result = await runSubmissionDeletionPlan(actions);
+  assert.equal(result.deletedDisplayId, "#002");
+  assert.equal(result.deletedSequenceNumber, 2);
+  assert.equal(result.renumberedCount, 1);
+  assert.equal(result.renumberedSubmissions[0].toDisplayId, "#002");
 });
 
 test("a failed cleanup step keeps the main record and reports where to retry", async () => {
