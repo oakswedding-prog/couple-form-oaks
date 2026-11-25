@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const configPath = path.join(root, ".firebase-emulator.json");
 const logDir = path.join(root, "generated-artifacts/moodboard-admin-emulator");
+const projectId = "oaks-couple-questionnaire";
 mkdirSync(logDir, { recursive: true });
 const stdoutPath = path.join(logDir, "firebase.stdout.log");
 const stderrPath = path.join(logDir, "firebase.stderr.log");
@@ -31,7 +32,7 @@ const result = spawnSync("pnpm", [
   "firebase-tools@15.37.0",
   "emulators:exec",
   "--project",
-  "oaks-couple-questionnaire",
+  projectId,
   "--config",
   configPath,
   "--only",
@@ -40,7 +41,11 @@ const result = spawnSync("pnpm", [
 ], {
   cwd: root,
   stdio: ["inherit", stdoutFd, stderrFd],
-  env: process.env,
+  env: {
+    ...process.env,
+    VITE_USE_FIREBASE_EMULATORS: "true",
+    VITE_FIREBASE_EMULATOR_PROJECT_ID: projectId,
+  },
 });
 
 closeSync(stdoutFd);

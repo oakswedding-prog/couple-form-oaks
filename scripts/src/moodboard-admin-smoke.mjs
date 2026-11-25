@@ -6,7 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { chromium } from "@playwright/test";
 
 const projectId = "oaks-couple-questionnaire";
-const bucket = `${projectId}.firebasestorage.app`;
+const bucket = `${projectId}.appspot.com`;
 const authUrl = "http://127.0.0.1:29099/identitytoolkit.googleapis.com/v1";
 const firestoreUrl = `http://127.0.0.1:28080/v1/projects/${projectId}/databases/(default)/documents`;
 const storageUrl = `http://127.0.0.1:29199/v0/b/${bucket}/o`;
