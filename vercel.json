@@ -3,6 +3,11 @@
   "installCommand": "pnpm install --frozen-lockfile",
   "buildCommand": "pnpm run typecheck:libs && pnpm --filter @workspace/oaks-questionnaire run build",
   "outputDirectory": "artifacts/oaks-questionnaire/dist/public",
+  "functions": {
+    "api/numbering.ts": {
+      "includeFiles": "lib/submission-numbering/dist/**"
+    }
+  },
   "rewrites": [
     {
       "source": "/((?!api/).*)",
