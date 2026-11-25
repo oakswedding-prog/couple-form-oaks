@@ -332,6 +332,8 @@ export const SafeImageThumbnail: React.FC<SafeImageThumbnailProps> = ({
 
 interface ThumbnailGalleryProps {
   images: string[];
+  /** Optional per-image text, aligned by index; empty entries stay visually unlabeled. */
+  imageLabels?: readonly string[];
   titlePrefix: string;
   onOpenImage: (index: number) => void;
   emptyLabel?: string;
@@ -343,6 +345,7 @@ interface ThumbnailGalleryProps {
  */
 export const ThumbnailGallery: React.FC<ThumbnailGalleryProps> = ({
   images,
+  imageLabels,
   titlePrefix,
   onOpenImage,
   emptyLabel = "No images uploaded",
@@ -369,15 +372,25 @@ export const ThumbnailGallery: React.FC<ThumbnailGalleryProps> = ({
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-        {images.map((imgUrl, idx) => (
-          <SafeImageThumbnail
-            key={idx}
-            src={imgUrl}
-            alt={`${titlePrefix} ${idx + 1}`}
-            onClick={() => onOpenImage(idx)}
-            className="w-full aspect-square"
-          />
-        ))}
+        {images.map((imgUrl, idx) => {
+          const label = imageLabels?.[idx]?.trim();
+          const thumbnail = (
+            <SafeImageThumbnail
+              src={imgUrl}
+              alt={`${titlePrefix} ${idx + 1}`}
+              onClick={() => onOpenImage(idx)}
+              className="w-full aspect-square"
+            />
+          );
+          return label ? (
+            <div key={idx} className="min-w-0 space-y-1.5">
+              {thumbnail}
+              <p data-testid="thumbnail-image-label" className="text-[11px] leading-snug font-medium text-[#8C7043] px-0.5">{label}</p>
+            </div>
+          ) : (
+            <React.Fragment key={idx}>{thumbnail}</React.Fragment>
+          );
+        })}
       </div>
     </div>
   );

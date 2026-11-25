@@ -4,9 +4,9 @@
  */
 
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
-import { getStorage } from "firebase/storage";
+import { connectAuthEmulator, getAuth, GoogleAuthProvider } from "firebase/auth";
+import { connectFirestoreEmulator, getFirestore } from "firebase/firestore";
+import { connectStorageEmulator, getStorage } from "firebase/storage";
 
 export const firebaseConfig = {
   apiKey: "AIzaSyDWpU42Owb-yd2YvrUPJyb9A5VC_UYZUtw",
@@ -22,6 +22,14 @@ export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfi
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
+
+// Local end-to-end checks can exercise the real auth/data/storage paths without
+// touching production. Emulator routing is opt-in and never enabled in builds.
+if (import.meta.env.DEV && import.meta.env.VITE_USE_FIREBASE_EMULATORS === "true") {
+  connectAuthEmulator(auth, "http://127.0.0.1:29099", { disableWarnings: true });
+  connectFirestoreEmulator(db, "127.0.0.1", 28080);
+  connectStorageEmulator(storage, "127.0.0.1", 29199);
+}
 
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({

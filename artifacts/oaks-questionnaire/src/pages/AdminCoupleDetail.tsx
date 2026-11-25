@@ -68,7 +68,7 @@ import { CoupleLetterView } from "../components/CoupleLetterView.tsx";
 import { synthesizeCoupleLetter } from "../utils/coupleLetterGenerator.ts";
 import { exportToPdf, exportToDocx } from "../utils/exportBrief.ts";
 import { getGroupedQ10People } from "../utils/familyPeople.ts";
-import { getGroupedWardrobe } from "../utils/wardrobe.ts";
+import { getGroupedWardrobe, getWardrobePhotoEvents } from "../utils/wardrobe.ts";
 import { getGroupedDecorEvents } from "../utils/decorEvents.ts";
 import {
   LightboxModal,
@@ -1772,6 +1772,7 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
                   sideHeading: string,
                   sideData: typeof groupedWardrobeData.bride
                 ) => {
+                  const photoEvents = getWardrobePhotoEvents(sideData);
                   const hasSide =
                     Boolean(sideData.notes.trim()) ||
                     sideData.links.length > 0 ||
@@ -1815,6 +1816,7 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
 
                           <ThumbnailGallery
                             images={sideData.photos}
+                            imageLabels={photoEvents}
                             titlePrefix={sideHeading}
                             categoryLabel={`${sideHeading} — Photos &amp; References`}
                             emptyLabel={`No ${sideHeading.toLowerCase()} photos uploaded.`}
@@ -1822,7 +1824,9 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
                               const list: LightboxImage[] = sideData.photos.map(
                                 (img, i) => ({
                                   url: img,
-                                  title: `${sideHeading} Reference ${i + 1}`,
+                                  title: photoEvents[i]
+                                    ? `${sideHeading} — ${photoEvents[i]}`
+                                    : `${sideHeading} Reference ${i + 1}`,
                                   subtitle: `Wardrobe plans for ${p1} & ${p2}`,
                                 })
                               );
