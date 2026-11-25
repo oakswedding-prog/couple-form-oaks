@@ -5,11 +5,13 @@
   "type": "module",
   "scripts": {
     "hello": "tsx ./src/hello.ts",
+    "moodboard-emulator-smoke": "firebase emulators:exec --project demo-oaks-moodboard --only auth,firestore,storage --config ../firebase.json \"node src/moodboard-emulator-smoke.mjs\"",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
     "@playwright/test": "^1.65.1",
     "@types/node": "catalog:",
+    "firebase-tools": "^15.37.0",
     "tsx": "catalog:"
   }
 }

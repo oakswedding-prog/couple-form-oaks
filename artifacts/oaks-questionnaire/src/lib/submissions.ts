@@ -224,8 +224,7 @@ export function hasUnresolvedMediaPaths(record: SubmissionRecord | null | undefi
 
 async function resolveMediaListParallel(list: string[]): Promise<string[]> {
   if (!Array.isArray(list) || list.length === 0) return [];
-  const resolved = await Promise.all(list.map((item) => resolveMediaUrl(item)));
-  return resolved.filter(Boolean);
+  return Promise.all(list.map(async (item) => (await resolveMediaUrl(item)) || item));
 }
 
 /**
