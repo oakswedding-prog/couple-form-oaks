@@ -25,7 +25,11 @@ export const storage = getStorage(app);
 
 // Local end-to-end checks can exercise the real auth/data/storage paths without
 // touching production. Emulator routing is opt-in and never enabled in builds.
-if (import.meta.env.DEV && import.meta.env.VITE_USE_FIREBASE_EMULATORS === "true") {
+if (
+  typeof import.meta.env !== "undefined"
+  && import.meta.env.DEV
+  && import.meta.env.VITE_USE_FIREBASE_EMULATORS === "true"
+) {
   connectAuthEmulator(auth, "http://127.0.0.1:29099", { disableWarnings: true });
   connectFirestoreEmulator(db, "127.0.0.1", 28080);
   connectStorageEmulator(storage, "127.0.0.1", 29199);

@@ -1003,6 +1003,7 @@ export const AdminCoupleDetail: React.FC<AdminCoupleDetailProps> = ({
           <button
             type="button"
             onClick={() => selectTab("full")}
+            data-testid="tab-full-responses"
             className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-medium transition-all cursor-pointer whitespace-nowrap ${
               activeTab === "full"
                 ? "bg-[#1A1A1A] text-white shadow-xs"

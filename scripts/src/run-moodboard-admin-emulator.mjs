@@ -1,15 +1,20 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { writeFile, unlink } from "node:fs/promises";
+import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const emulatorDir = path.join(root, "generated-artifacts/moodboard-admin-emulator");
-const configPath = path.join(emulatorDir, "firebase.json");
-await mkdir(emulatorDir, { recursive: true });
+const configPath = path.join(root, ".firebase-emulator.json");
+const logDir = path.join(root, "generated-artifacts/moodboard-admin-emulator");
+mkdirSync(logDir, { recursive: true });
+const stdoutPath = path.join(logDir, "firebase.stdout.log");
+const stderrPath = path.join(logDir, "firebase.stderr.log");
+const stdoutFd = openSync(stdoutPath, "w");
+const stderrFd = openSync(stderrPath, "w");
 await writeFile(configPath, JSON.stringify({
-  firestore: { rules: "../../firestore.rules" },
-  storage: { rules: "../../storage.rules" },
+  firestore: { rules: "firestore.rules" },
+  storage: { rules: "storage.rules" },
   emulators: {
     auth: { host: "127.0.0.1", port: 29099 },
     firestore: { host: "127.0.0.1", port: 28080 },
@@ -34,9 +39,22 @@ const result = spawnSync("pnpm", [
   "node scripts/src/moodboard-admin-smoke.mjs",
 ], {
   cwd: root,
-  stdio: "inherit",
+  stdio: ["inherit", stdoutFd, stderrFd],
   env: process.env,
 });
 
-if (result.error) throw result.error;
-process.exitCode = result.status ?? 1;
+closeSync(stdoutFd);
+closeSync(stderrFd);
+const redactEmulatorOutput = (text = "") => text
+  .replace(/To verify the email address [^,]+, follow this link: [^\s]+/g, "Auth emulator generated a local verification link (redacted).")
+  .replace(/oobCode=[^&\s]+/g, "oobCode=[redacted]");
+process.stdout.write(redactEmulatorOutput(readFileSync(stdoutPath, "utf8")));
+process.stderr.write(redactEmulatorOutput(readFileSync(stderrPath, "utf8")));
+
+try {
+  if (result.error) throw result.error;
+  process.exitCode = result.status ?? 1;
+} finally {
+  await unlink(configPath).catch(() => {});
+  for (const logPath of [stdoutPath, stderrPath]) unlinkSync(logPath);
+}
