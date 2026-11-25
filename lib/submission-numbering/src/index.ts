@@ -25,6 +25,7 @@ const MAX_ATOMIC_WRITES = 500;
 export type NumberingAction =
   | "assign"
   | "preview-renumber"
+  | "check-delete"
   | "renumber"
   | "delete";
 
@@ -311,6 +312,7 @@ function validateRequest(value: unknown): NumberingRequest {
   const actions: NumberingAction[] = [
     "assign",
     "preview-renumber",
+    "check-delete",
     "renumber",
     "delete",
   ];
@@ -318,7 +320,7 @@ function validateRequest(value: unknown): NumberingRequest {
     throw new NumberingServiceError(400, "invalid_action", "Unknown numbering action.");
   }
   if (
-    (request.action === "assign" || request.action === "delete") &&
+    (request.action === "assign" || request.action === "delete" || request.action === "check-delete") &&
     (typeof request.submissionId !== "string" ||
       request.submissionId.length === 0 ||
       request.submissionId.length > 200)
@@ -398,10 +400,23 @@ export async function handleSubmissionNumberingRequest(input: {
 }): Promise<NumberingHttpResult> {
   try {
     const request = validateRequest(input.body);
-    const { app, db, decoded } = await getAuthorizedContext(input.authorization);
+    const { db, decoded } = await getAuthorizedContext(input.authorization);
     const admin = await isAdminIdentity(db, decoded);
     const collection = db.collection("submissions");
     const counterRef = db.collection("counters").doc("submissions");
+
+    if (request.action === "check-delete") {
+      if (!admin) {
+        throw new NumberingServiceError(403, "admin_required", "Admin access is required.");
+      }
+      const records = await readSubmissionRecords(db);
+      if (!records.some((record) => record.id === request.submissionId)) {
+        throw new NumberingServiceError(404, "submission_not_found", "Submission not found.");
+      }
+      const plan = buildNumberingPlan(records.filter((record) => record.id !== request.submissionId));
+      assertAtomicWriteLimit(plan.changes.length + 2);
+      return { status: 200, body: { success: true, action: request.action } };
+    }
 
     if (request.action === "preview-renumber") {
       if (!admin) {
@@ -555,7 +570,7 @@ export async function handleSubmissionNumberingRequest(input: {
       body: {
         success: true,
         action: request.action,
-        ...result,
+        number: result.number,
       },
     };
   } catch (error) {

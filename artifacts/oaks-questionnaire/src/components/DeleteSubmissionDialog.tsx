@@ -94,7 +94,7 @@ export const DeleteSubmissionDialog: React.FC<DeleteSubmissionDialogProps> = ({
           <span>
             This permanently deletes their answers, photos and resume link. This
             cannot be undone. It also removes private notes and archived event
-            records.
+            records. Later submission numbers will move down to close the gap.
           </span>
         </div>
 

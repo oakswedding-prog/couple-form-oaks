@@ -284,8 +284,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       }
     }
     loadData();
+    // Other admins can delete/renumber while this dashboard is open.
+    const refreshNumbers = () => {
+      if (document.visibilityState === "hidden") return;
+      void getSubmissions(true).then((fresh) => {
+        if (isMounted) setSubmissions(fresh);
+      }).catch(() => {});
+    };
+    window.addEventListener("focus", refreshNumbers);
+    const refreshTimer = window.setInterval(refreshNumbers, 30_000);
     return () => {
       isMounted = false;
+      window.removeEventListener("focus", refreshNumbers);
+      window.clearInterval(refreshTimer);
     };
   }, []);
 
@@ -526,10 +537,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setRenumberError(null);
     try {
       const preview = await getRenumberPreview();
-      if (preview.changes.length === 0) {
-        setRecoveryNotice("Submission numbers are already consecutive and match submission time.");
-        return;
-      }
       setRenumberPreview(preview);
       setIsRenumberDialogOpen(true);
     } catch (err: any) {
@@ -1510,6 +1517,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
         )}
 
+        {renumberError && !isRenumberDialogOpen && (
+          <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-sm text-red-800">
+            {renumberError}
+          </p>
+        )}
         {isRenumberDialogOpen && renumberPreview && (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs"
@@ -1564,6 +1576,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   {" "}across {renumberPreview.submissionCount} submitted forms
                 </p>
                 <div className="max-h-52 space-y-1.5 overflow-y-auto">
+                  {renumberPreview.changes.length === 0 && (
+                    <p className="text-xs text-[#5F5F5F]">
+                      No submission numbers need changing. Confirm to synchronize the counter.
+                    </p>
+                  )}
                   {renumberPreview.changes.slice(0, 8).map((change) => (
                     <div
                       key={change.id}

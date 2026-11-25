@@ -156,6 +156,7 @@ test(
       sequenceNumber: 3,
       displayId: "#003",
     });
+    assert.equal(nextAssigned.body.changes, undefined, "A couple must not receive other couples' records");
 
     const concurrentIds = ["numbering-test-e", "numbering-test-f"];
     for (const [index, id] of concurrentIds.entries()) {
@@ -194,5 +195,27 @@ test(
       ["sequenceNumber"]
     );
     assert.equal(adminNumberUpdate.status, 200);
+
+    await db.doc("submissions/numbering-test-c").update({
+      displayId: "#022", sequenceNumber: 22,
+    });
+    const preview = await handleSubmissionNumberingRequest({
+      authorization: `Bearer ${adminToken}`,
+      body: { action: "preview-renumber" },
+    });
+    assert.equal(preview.status, 200);
+    assert.ok((preview.body.changes as Array<{fromDisplayId: string}>).some((change) => change.fromDisplayId === "#022"));
+    const repaired = await handleSubmissionNumberingRequest({
+      authorization: `Bearer ${adminToken}`,
+      body: { action: "renumber", expectedRevision: preview.body.revision },
+    });
+    assert.equal(repaired.status, 200);
+    assert.equal((await db.doc("submissions/numbering-test-c").get()).data()?.displayId, "#002");
+    const stale = await handleSubmissionNumberingRequest({
+      authorization: `Bearer ${adminToken}`,
+      body: { action: "renumber", expectedRevision: preview.body.revision },
+    });
+    assert.equal(stale.status, 409, "Stale previews must not write");
+    assert.equal((await db.doc("submissions/numbering-test-c").get()).data()?.displayId, "#002");
   }
 );

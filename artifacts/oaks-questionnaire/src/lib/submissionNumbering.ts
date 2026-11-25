@@ -115,3 +115,7 @@ export async function deleteSubmissionAndRenumber(
     changes: response.changes ?? [],
   };
 }
+
+export async function checkSubmissionDeletionReady(submissionId: string): Promise<void> {
+  await requestNumbering({ action: "check-delete", submissionId });
+}

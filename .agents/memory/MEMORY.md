@@ -2,3 +2,4 @@
 - [Wedding moodboard intent](wedding-moodboard-intent.md) — retain the supplied visual sequence, not the alternate design or long discussion-summary prose
 - [Local Firebase emulators](firebase-emulator-testing.md) — use JDK 21 and non-default ports for isolated admin/export checks in this Replit workspace
 - [Vercel email settings drift](vercel-email-config.md) — live site has its own email key/sender; test live /api/notify, not just Replit
+- [Submission numbering safety](submission-numbering-safety.md) — gap-free numbers are mutable labels, not identities; coordinate server credentials, deployment, and rules

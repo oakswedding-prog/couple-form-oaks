@@ -8,6 +8,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const configPath = path.join(root, ".firebase-emulator.json");
 const logDir = path.join(root, "generated-artifacts/moodboard-admin-emulator");
 const projectId = "oaks-couple-questionnaire";
+const numberingOnly = process.argv.includes("--numbering-only");
 mkdirSync(logDir, { recursive: true });
 const stdoutPath = path.join(logDir, "firebase.stdout.log");
 const stderrPath = path.join(logDir, "firebase.stderr.log");
@@ -37,7 +38,9 @@ const result = spawnSync("pnpm", [
   configPath,
   "--only",
   "auth,firestore,storage",
-  "node scripts/src/moodboard-admin-smoke.mjs && pnpm --filter @workspace/oaks-questionnaire test",
+  numberingOnly
+    ? "pnpm --filter @workspace/oaks-questionnaire exec tsx --test src/utils/submissionNumberingEmulator.test.ts"
+    : "node scripts/src/moodboard-admin-smoke.mjs",
 ], {
   cwd: root,
   stdio: ["inherit", stdoutFd, stderrFd],

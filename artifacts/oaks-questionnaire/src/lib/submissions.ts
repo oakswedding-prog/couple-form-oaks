@@ -79,7 +79,7 @@ import {
 } from "./coupleSession.ts";
 import { logSubmissionError } from "./errorLogger.ts";
 import { markDraftSubmitted } from "./drafts.ts";
-import { assignNumberForSubmission, deleteSubmissionAndRenumber } from "./submissionNumbering.ts";
+import { assignNumberForSubmission, checkSubmissionDeletionReady, deleteSubmissionAndRenumber } from "./submissionNumbering.ts";
 import { buildNormalizedPhotoReport } from "../utils/photoStatusSummary.ts";
 import {
   runSubmissionDeletionPlan,
@@ -1130,13 +1130,6 @@ export async function createSubmission(
   const existingSubmissionData = existingDocSnap?.exists()
     ? (existingDocSnap.data() as Partial<SubmissionRecord>)
     : null;
-  const alreadyExistsWithNumber = Boolean(
-    existingSubmissionData &&
-      typeof existingSubmissionData.sequenceNumber === "number" &&
-      typeof existingSubmissionData.displayId === "string" &&
-      existingSubmissionData.displayId.length > 0
-  );
-
   const mergedParticipants = Array.from(
     new Set([
       ...(existingSubmissionData?.participantUids || []),
@@ -1166,12 +1159,6 @@ export async function createSubmission(
           const { createdAt: _ignoredCreatedAt, privateNotes: _ignoredNotes, ...updateFields } = payload;
           await updateDoc(targetRef, {
             ...updateFields,
-            ...(existingSubmissionData.displayId
-              ? { displayId: existingSubmissionData.displayId }
-              : {}),
-            ...(typeof existingSubmissionData.sequenceNumber === "number"
-              ? { sequenceNumber: existingSubmissionData.sequenceNumber }
-              : {}),
             ...(existingSubmissionData.status
               ? { status: existingSubmissionData.status }
               : {}),
@@ -1189,9 +1176,12 @@ export async function createSubmission(
           await setDoc(targetRef, payload);
         }
       },
-      assignDisplayNumber: alreadyExistsWithNumber
-        ? undefined
-        : async (id) => assignSequentialDisplayNumber(id, !hasPendingOrFailed),
+      assignDisplayNumber: async (id) => {
+        // Read the current trusted number even on a partner's later submission:
+        // another admin may have deleted and renumbered an earlier record.
+        if (existingSubmissionData) return assignNumberForSubmission(id);
+        return assignSequentialDisplayNumber(id, !hasPendingOrFailed);
+      },
       markDraftDone: async (token, id, submittedAt) => {
         await markDraftSubmitted(token, id, submittedAt);
       },
@@ -1803,6 +1793,9 @@ export async function deleteSubmission(
   id: string,
   knownRecord?: Partial<SubmissionRecord>
 ): Promise<SubmissionDeletionResult> {
+  // Fail before removing any photos or linked records if the trusted numbering
+  // service is unconfigured, unavailable, unauthorized, or over its atomic limit.
+  await checkSubmissionDeletionReady(id);
   const submissionRef = doc(db, "submissions", id);
   let submissionData: Partial<SubmissionRecord> = knownRecord || {};
   try {

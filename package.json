@@ -12,7 +12,8 @@
   "dependencies": {
     "@google/genai": "^3.6.1",
     "@replit/connectors-sdk": "^0.7.0",
-    "@workspace/submission-numbering": "workspace:*"
+    "@workspace/submission-numbering": "workspace:*",
+    "firebase-admin": "^14.5.1"
   },
   "devDependencies": {
     "@types/node": "catalog:",
