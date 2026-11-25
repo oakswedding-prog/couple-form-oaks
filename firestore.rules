@@ -271,13 +271,14 @@ service cloud.firestore {
 
     // Error Diagnostics Log:
     // - Signed-in couples can ONLY create error logs (no personal answers, no resume token).
-    // - Only verified studio admins can read; nobody can update or delete.
+    // - Only verified studio admins can read or delete; nobody can update.
     match /submissionErrors/{errorId} {
       allow create: if isSignedIn()
         && !('answers' in request.resource.data)
         && !('resumeToken' in request.resource.data);
       allow read: if isAdmin();
-      allow update, delete: if false;
+      allow update: if false;
+      allow delete: if isAdmin();
     }
 
     // Submissions:
@@ -337,8 +338,8 @@ service cloud.firestore {
       }
 
       // Custom Production Events:
-      // - Editable & deletable ONLY before submission
-      // - Permanently read-only & non-deletable once submitted == true or archived
+      // - Only admins may read or change production data.
+      // - Admin deletion is allowed for full submission cleanup.
       match /productionEvents/{eventId} {
         allow read: if isAdmin();
         allow create: if isAdmin()
@@ -357,13 +358,12 @@ service cloud.firestore {
             request.resource.data.submitted != true
             || hasValidSubmissionPayload(request.resource.data, eventId)
           );
-        allow delete: if isAdmin()
-          && resource.data.get('submitted', false) != true
-          && !('submission' in resource.data && resource.data.submission != null)
-          && !isEventArchived(submissionId, eventId);
+        // Admin cleanup may remove all related data when deleting a submission.
+        // Couples still have no write or delete access to production events.
+        allow delete: if isAdmin();
       }
 
-      // Immutable Event Submission Receipts (write-once permanent archive):
+      // Immutable Event Submission Receipts (write-once except admin full cleanup):
       // - Stores Event Name, Submitted By, Submission Date, Submission Time,
       //   Final Checklist Data, and Final File Details for both standard and custom events.
       match /eventSubmissions/{eventId} {
@@ -371,7 +371,8 @@ service cloud.firestore {
         allow create: if isAdmin()
           && !exists(/databases/$(database)/documents/submissions/$(submissionId)/eventSubmissions/$(eventId))
           && isValidEventSubmissionRecord(request.resource.data, eventId);
-        allow update, delete: if false;
+        allow update: if false;
+        allow delete: if isAdmin();
       }
     }
   }

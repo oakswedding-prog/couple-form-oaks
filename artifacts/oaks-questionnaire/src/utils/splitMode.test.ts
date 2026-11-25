@@ -215,6 +215,51 @@ describe("Together or Separately Filling + Phase 0 Security Hardening Suite", ()
     assert.match(rules, /request\.resource\.data\.get\('status',\s*null\)\s*==\s*resource\.data\.get\('status',\s*null\)/);
   });
 
+  test("admin cleanup can delete linked records without granting couples delete access", () => {
+    const rootDir = process.cwd();
+    const firestore = fs.readFileSync(
+      path.resolve(rootDir, "../../firestore.rules"),
+      "utf8"
+    );
+    const storage = fs.readFileSync(
+      path.resolve(rootDir, "../../storage.rules"),
+      "utf8"
+    );
+    const blockFor = (collectionName: string, nextMarker: string) => {
+      const start = firestore.indexOf(`match /${collectionName}/`);
+      const end = firestore.indexOf(nextMarker, start);
+      assert.ok(start >= 0, `rules should match ${collectionName}`);
+      return firestore.slice(start, end < 0 ? undefined : end);
+    };
+
+    const errors = blockFor(
+      "submissionErrors",
+      "// Submissions:"
+    );
+    assert.match(errors, /allow delete:\s*if isAdmin\(\);/);
+    assert.match(errors, /allow update:\s*if false;/);
+
+    const productionEvents = blockFor(
+      "productionEvents",
+      "// Immutable Event Submission Receipts"
+    );
+    assert.match(productionEvents, /allow delete:\s*if isAdmin\(\);/);
+    const eventReceipts = blockFor(
+      "eventSubmissions",
+      "    }\n  }\n}"
+    );
+    assert.match(eventReceipts, /allow delete:\s*if isAdmin\(\);/);
+
+    assert.match(
+      storage,
+      /match\s+\/submissions\/\{allPaths=\*\*\}[\s\S]*?allow read,\s*update,\s*delete:\s*if isAdmin\(\);/
+    );
+    assert.match(
+      firestore,
+      /match\s+\/submissions\/\{submissionId\}[\s\S]*?allow delete:\s*if isAdmin\(\);/
+    );
+  });
+
   test("4. Link lifecycle: active vs locked vs revoked vs expired (> 7 days) checks work accurately", () => {
     const now = Date.parse("2026-11-23T12:00:00.000Z");
     const activeDraft: Partial<DraftRecord> = {

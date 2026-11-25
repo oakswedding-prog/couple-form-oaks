@@ -14,6 +14,8 @@ const outputDir = "generated-artifacts/moodboard-admin-smoke";
 const appUrl = "http://127.0.0.1:4178";
 const submissionId = `moodboard-admin-${randomUUID()}`;
 const legacySubmissionId = `moodboard-legacy-${randomUUID()}`;
+const cleanupResumeToken = `delete-test-resume-${randomUUID()}`;
+const cleanupErrorId = `delete-test-error-${randomUUID()}`;
 const password = `emulator-${randomUUID()}`;
 
 async function requestJson(url, options = {}) {
@@ -55,11 +57,12 @@ async function uploadPhoto(coupleToken, objectPath, png) {
   });
 }
 
-async function seedSubmission(id, coupleToken, coupleUid, answers) {
+async function seedSubmission(id, coupleToken, coupleUid, answers, resumeToken) {
   const record = {
     id,
     ownerUid: coupleUid,
     participantUids: [coupleUid],
+    ...(resumeToken ? { resumeToken } : {}),
     partner1: "Maya",
     partner2: "Leo",
     weddingDate: "2027-02-14",
@@ -77,6 +80,31 @@ async function seedSubmission(id, coupleToken, coupleUid, answers) {
       fields: Object.fromEntries(Object.entries(record).map(([key, value]) => [key, toFirestoreValue(value)])),
     }),
   });
+}
+
+async function seedFirestoreDocument(collectionPath, documentId, token, data) {
+  return requestJson(
+    `${firestoreUrl}/${collectionPath}?documentId=${encodeURIComponent(documentId)}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        fields: Object.fromEntries(
+          Object.entries(data).map(([key, value]) => [key, toFirestoreValue(value)])
+        ),
+      }),
+    }
+  );
+}
+
+async function assertFirestoreDocumentMissing(documentPath, token) {
+  const response = await fetch(`${firestoreUrl}/${documentPath}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  assert.equal(response.status, 404, `${documentPath} should be deleted`);
 }
 
 async function waitForApp() {
@@ -153,7 +181,24 @@ const answers = {
   decorEvents: [],
   q12_references: { images: [], links: [], notes: "" },
 };
-await seedSubmission(submissionId, couple.idToken, coupleUid, answers);
+await seedSubmission(
+  submissionId,
+  couple.idToken,
+  coupleUid,
+  answers,
+  cleanupResumeToken
+);
+await seedFirestoreDocument("drafts", cleanupResumeToken, couple.idToken, {
+  submissionId,
+  ownerUid: coupleUid,
+  status: "draft",
+  currentStep: 1,
+});
+await seedFirestoreDocument("submissionErrors", cleanupErrorId, couple.idToken, {
+  submissionId,
+  step: "post_save_notify_email",
+  errorCode: "test/delete",
+});
 await seedSubmission(legacySubmissionId, couple.idToken, coupleUid, {
   partner1: "Maya",
   partner2: "Leo",
@@ -249,6 +294,104 @@ try {
   assert.ok(legacyWardrobeText.some(text => /Wedding outfit references/i.test(text)),
     "A saved legacy shared wardrobe stays in a shared board without guessed ownership");
 
+  await seedFirestoreDocument(
+    `submissions/${submissionId}/adminMeta`,
+    "main",
+    verifiedAdmin.idToken,
+    { privateNotes: "test-only private note", status: "new" }
+  );
+  const now = new Date().toISOString();
+  await seedFirestoreDocument(
+    `submissions/${submissionId}/productionEvents`,
+    "delete-test-event",
+    verifiedAdmin.idToken,
+    {
+      id: "delete-test-event",
+      name: "Delete test event",
+      isCustom: true,
+      items: {},
+      fileDetails: [],
+      submitted: false,
+      createdAt: now,
+      updatedAt: now,
+    }
+  );
+  await seedFirestoreDocument(
+    `submissions/${submissionId}/eventSubmissions`,
+    "wedding",
+    verifiedAdmin.idToken,
+    {
+      eventId: "wedding",
+      eventName: "Wedding",
+      isCustom: false,
+      submittedBy: adminEmail,
+      submissionDate: "2026-11-25",
+      submissionTime: "12:00",
+      submittedAt: now,
+      items: {},
+      fileDetails: [],
+    }
+  );
+
+  const coupleDeleteAttempt = await fetch(
+    `${firestoreUrl}/submissions/${submissionId}`,
+    { method: "DELETE", headers: { Authorization: `Bearer ${couple.idToken}` } }
+  );
+  assert.equal(coupleDeleteAttempt.status, 403, "Couples must not delete submissions");
+  const couplePhotoDeleteAttempt = await fetch(
+    `${storageUrl}/${encodeURIComponent(photoPaths[0])}`,
+    { method: "DELETE", headers: { Authorization: `Firebase ${couple.idToken}` } }
+  );
+  assert.equal(couplePhotoDeleteAttempt.status, 403, "Couples must not delete Storage files");
+
+  await page.goto(`${appUrl}/admin/couple/${submissionId}`, { waitUntil: "domcontentloaded" });
+  await page.getByTitle("Delete this submission").first().click();
+  const confirmation = page.locator("#delete-submission-confirmation");
+  const permanentDeleteButton = page.getByRole("button", { name: "Delete permanently" });
+  assert.equal(await permanentDeleteButton.isDisabled(), true,
+    "Permanent delete stays disabled until typed confirmation");
+  await confirmation.fill("Maya & Leo");
+  assert.equal(await permanentDeleteButton.isDisabled(), false);
+  await permanentDeleteButton.click();
+  await page.waitForURL("**/admin", { timeout: 30000 });
+  await page.getByText(/Deleted submission .* and its 3 photos/i).waitFor({ timeout: 15000 });
+
+  await assertFirestoreDocumentMissing(`submissions/${submissionId}`, verifiedAdmin.idToken);
+  await assertFirestoreDocumentMissing(`drafts/${cleanupResumeToken}`, verifiedAdmin.idToken);
+  await assertFirestoreDocumentMissing(`submissionErrors/${cleanupErrorId}`, verifiedAdmin.idToken);
+  await assertFirestoreDocumentMissing(
+    `submissions/${submissionId}/adminMeta/main`,
+    verifiedAdmin.idToken
+  );
+  await assertFirestoreDocumentMissing(
+    `submissions/${submissionId}/productionEvents/delete-test-event`,
+    verifiedAdmin.idToken
+  );
+  await assertFirestoreDocumentMissing(
+    `submissions/${submissionId}/eventSubmissions/wedding`,
+    verifiedAdmin.idToken
+  );
+  const remainingStorage = await requestJson(
+    `${storageUrl}?prefix=${encodeURIComponent(`submissions/${submissionId}/`)}`,
+    { headers: { Authorization: `Firebase ${verifiedAdmin.idToken}` } }
+  );
+  assert.equal(remainingStorage.items?.length || 0, 0, "Submission Storage folder must be empty");
+
+  await page.goto(`${appUrl}/admin`, { waitUntil: "domcontentloaded" });
+  await page.getByTitle("Delete Maya & Leo's submission").click();
+  const dashboardConfirmation = page.locator("#delete-submission-confirmation");
+  const dashboardDeleteButton = page.getByRole("button", { name: "Delete permanently" });
+  await dashboardConfirmation.fill("DELETE");
+  await dashboardDeleteButton.click();
+  await page.getByText(/Deleted submission .* and its 1 photo/i).waitFor({ timeout: 15000 });
+  await assertFirestoreDocumentMissing(`submissions/${legacySubmissionId}`, verifiedAdmin.idToken);
+  const remainingLegacyStorage = await requestJson(
+    `${storageUrl}?prefix=${encodeURIComponent(`submissions/${legacySubmissionId}/`)}`,
+    { headers: { Authorization: `Firebase ${verifiedAdmin.idToken}` } }
+  );
+  assert.equal(remainingLegacyStorage.items?.length || 0, 0,
+    "Dashboard deletion must clean up the legacy Storage folder");
+
   assert.deepEqual(pageErrors, [], "No uncaught errors occurred in the authenticated admin page");
 
   await page.screenshot({ path: `${outputDir}/admin-wardrobe.jpg`, fullPage: true });
@@ -256,6 +399,9 @@ try {
   console.log("PASS: Firebase Auth, Firestore, and Storage emulators served a real signed-in admin session.");
   console.log("PASS: the saved couple loaded, both moodboard exports downloaded, and wardrobe labels rendered without labeling the legacy photo.");
   console.log("PASS: legacy shared outfit data stays shared and is not assigned to either partner.");
+  console.log("PASS: admin deletion removed three Storage files, the resume draft, error and related Firestore records.");
+  console.log("PASS: dashboard deletion used the typed DELETE confirmation and cleaned up the legacy photo.");
+  console.log("PASS: couple deletion was denied by Firestore and Storage rules.");
   console.log("All records, users, and images were created only in local emulators; no production requests were made.");
 } finally {
   if (browser) await browser.close();

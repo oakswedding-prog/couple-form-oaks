@@ -16,7 +16,6 @@ import {
   Clock,
   Sparkles,
   Trash2,
-  AlertTriangle,
   X,
   ClipboardList,
   RefreshCw,
@@ -30,6 +29,7 @@ import {
   Send,
 } from "lucide-react";
 import { ShareLinkMenu } from "../components/ShareLinkMenu.tsx";
+import { DeleteSubmissionDialog } from "../components/DeleteSubmissionDialog.tsx";
 import {
   DraftRecord,
   SubmissionDeliveryState,
@@ -174,6 +174,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Background error log records (used only to flag "Email not sent" on Needs attention badges)
   const [errorLogs, setErrorLogs] = useState<SubmissionErrorRecord[]>([]);
   const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      const notice = sessionStorage.getItem("oaks_submission_delete_notice");
+      if (notice) {
+        setRecoveryNotice(notice);
+        sessionStorage.removeItem("oaks_submission_delete_notice");
+      }
+    } catch {
+      // The delete confirmation remains available if session storage is disabled.
+    }
+  }, []);
 
   // Filters & Sorting
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -439,8 +451,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setIsDeleting(true);
     setDeleteError(null);
     try {
-      await deleteSubmission(submissionToDelete.id);
+      const result = await deleteSubmission(
+        submissionToDelete.id,
+        submissionToDelete
+      );
       setSubmissions((prev) => prev.filter((item) => item.id !== submissionToDelete.id));
+      setAllDrafts((prev) =>
+        prev.filter(
+          (draft) =>
+            draft.submissionId !== submissionToDelete.id &&
+            draft.id !== submissionToDelete.resumeToken
+        )
+      );
+      setDrafts((prev) =>
+        prev.filter(
+          (draft) =>
+            draft.submissionId !== submissionToDelete.id &&
+            draft.id !== submissionToDelete.resumeToken
+        )
+      );
+      setErrorLogs((prev) =>
+        prev.filter((log) => log.submissionId !== submissionToDelete.id)
+      );
+      const submissionLabel =
+        submissionToDelete.displayId || submissionToDelete.id;
+      setRecoveryNotice(
+        `Deleted submission ${submissionLabel} and its ${result.deletedPhotoCount} photo${result.deletedPhotoCount === 1 ? "" : "s"}.`
+      );
       setSubmissionToDelete(null);
     } catch (err: any) {
       console.error("Failed to delete submission:", err);
@@ -1376,107 +1413,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
         )}
 
-        {/* Delete Confirmation Modal */}
-        {submissionToDelete && (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-150"
-            onClick={() => {
-              if (!isDeleting) {
-                setSubmissionToDelete(null);
-                setDeleteError(null);
-              }
-            }}
-          >
-            <div
-              className="bg-white rounded-2xl max-w-md w-full border border-[#E5DDD2] shadow-2xl p-6 space-y-4 animate-in zoom-in-95 duration-150"
-              onClick={(e) => e.stopPropagation()}
-              role="dialog"
-              aria-modal="true"
-            >
-              <div className="flex items-start justify-between">
-                <div className="w-12 h-12 rounded-full bg-red-50 border border-red-200 flex items-center justify-center text-red-600 shrink-0">
-                  <Trash2 className="w-6 h-6" />
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!isDeleting) {
-                      setSubmissionToDelete(null);
-                      setDeleteError(null);
-                    }
-                  }}
-                  disabled={isDeleting}
-                  className="p-1.5 rounded-lg text-[#7A756D] hover:text-[#1A1A1A] hover:bg-[#FAF7F2] transition-colors cursor-pointer disabled:opacity-50"
-                  title="Cancel"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <div className="space-y-1.5">
-                <h3 className="font-cormorant text-2xl font-semibold text-[#1A1A1A]">
-                  Delete Submission?
-                </h3>
-                <p className="text-xs text-[#5F5F5F] leading-relaxed">
-                  Are you sure you want to permanently delete the submitted form for{" "}
-                  <strong className="text-[#1A1A1A] font-semibold">
-                    {submissionToDelete.partner1} &amp; {submissionToDelete.partner2}
-                  </strong>{" "}
-                  (
-                  <span className="font-mono text-[#8C7043] font-bold">
-                    {submissionToDelete.displayId || "Unnumbered"}
-                  </span>
-                  )?
-                </p>
-              </div>
-
-              <div className="bg-red-50/80 border border-red-200 rounded-xl p-3 text-xs text-red-900 leading-relaxed flex items-start gap-2.5">
-                <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-                <span>
-                  <strong>Warning:</strong> This cannot be undone. All questionnaire responses, editorial briefs, interview questions, cheat sheets, and media will be permanently removed.
-                </span>
-              </div>
-
-              {deleteError && (
-                <div className="p-2.5 bg-red-100 text-red-800 text-xs rounded-xl font-medium">
-                  {deleteError}
-                </div>
-              )}
-
-              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#F0EBE1]">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSubmissionToDelete(null);
-                    setDeleteError(null);
-                  }}
-                  disabled={isDeleting}
-                  className="px-4 py-2 text-xs font-medium text-[#5F5F5F] hover:text-[#1A1A1A] hover:bg-[#FAF7F2] rounded-xl border border-[#E5DDD2] transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleConfirmDelete}
-                  disabled={isDeleting}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-white bg-red-600 hover:bg-red-700 rounded-xl transition-colors cursor-pointer shadow-xs disabled:opacity-60"
-                >
-                  {isDeleting ? (
-                    <>
-                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      <span>Deleting...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Yes, Confirm Delete</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        <DeleteSubmissionDialog
+          submission={submissionToDelete}
+          isDeleting={isDeleting}
+          error={deleteError}
+          onCancel={() => {
+            if (!isDeleting) {
+              setSubmissionToDelete(null);
+              setDeleteError(null);
+            }
+          }}
+          onConfirm={() => void handleConfirmDelete()}
+        />
       </main>
       <ShareLinkMenu
         open={shareTarget !== null}

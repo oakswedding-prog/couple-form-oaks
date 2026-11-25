@@ -12,13 +12,20 @@ import {
   updateDoc,
   deleteDoc,
   query,
+  where,
   orderBy,
   runTransaction,
   serverTimestamp,
   onSnapshot,
   Timestamp,
 } from "firebase/firestore";
-import { ref, getDownloadURL, listAll } from "firebase/storage";
+import {
+  ref,
+  getDownloadURL,
+  listAll,
+  deleteObject,
+  type StorageReference,
+} from "firebase/storage";
 import { db, storage, auth } from "./firebase.ts";
 import {
   QuestionnaireAnswers,
@@ -73,6 +80,10 @@ import {
 import { logSubmissionError } from "./errorLogger.ts";
 import { markDraftSubmitted } from "./drafts.ts";
 import { buildNormalizedPhotoReport } from "../utils/photoStatusSummary.ts";
+import {
+  runSubmissionDeletionPlan,
+  type SubmissionDeletionResult,
+} from "../utils/submissionDeletion.ts";
 import { LINK_EXPIRY_MS } from "../config/splitMode.ts";
 import {
   buildMissingSummaryForPartner,
@@ -1357,6 +1368,9 @@ export async function listOrphanedStorageFolders(
   await Promise.all(
     rootListing.prefixes.map(async (folderRef) => {
       const folderName = folderRef.name;
+      // A submission is kept until every photo has been removed. Therefore a
+      // partially failed intentional deletion stays linked here and can never
+      // appear as a recoverable orphan. On success, the folder is empty/gone.
       if (knownIds.has(folderName) || referencedFolders.has(folderName)) {
         return;
       }
@@ -1671,13 +1685,179 @@ export async function updateSubmissionCheatSheet(
   await updateDoc(submissionRef, { cheatSheet });
 }
 
+async function listStorageFilesRecursive(
+  folderRef: StorageReference
+): Promise<StorageReference[]> {
+  const listing = await listAll(folderRef);
+  const nestedFiles = await Promise.all(
+    listing.prefixes.map((prefix) => listStorageFilesRecursive(prefix))
+  );
+  return [...listing.items, ...nestedFiles.flat()];
+}
+
+async function deleteStorageFilesForSubmission(
+  submissionId: string
+): Promise<number> {
+  const files = await listStorageFilesRecursive(
+    ref(storage, `submissions/${submissionId}`)
+  );
+  let deletedCount = 0;
+  const failures: string[] = [];
+
+  // Keep concurrent Storage mutations bounded for submissions with many photos.
+  for (let start = 0; start < files.length; start += 20) {
+    const batch = files.slice(start, start + 20);
+    const results = await Promise.allSettled(
+      batch.map((fileRef) => deleteObject(fileRef))
+    );
+    results.forEach((result, index) => {
+      if (result.status === "fulfilled") {
+        deletedCount += 1;
+        return;
+      }
+      const error = result.reason as { code?: string; message?: string };
+      // A retry or another admin may already have removed the object.
+      if (error?.code === "storage/object-not-found") {
+        deletedCount += 1;
+        return;
+      }
+      failures.push(
+        `${batch[index].fullPath}: ${error?.message || error?.code || "delete failed"}`
+      );
+    });
+  }
+
+  if (failures.length > 0) {
+    throw new Error(
+      `${deletedCount} of ${files.length} files removed; ${failures.length} still failed. ${failures
+        .slice(0, 3)
+        .join("; ")}`
+    );
+  }
+  return deletedCount;
+}
+
+async function deleteDocumentReferences(
+  documentRefs: Array<{ id: string; ref: ReturnType<typeof doc> }>,
+  label: string
+): Promise<number> {
+  let deletedCount = 0;
+  const failures: string[] = [];
+  for (let start = 0; start < documentRefs.length; start += 100) {
+    const batch = documentRefs.slice(start, start + 100);
+    const results = await Promise.allSettled(
+      batch.map((document) => deleteDoc(document.ref))
+    );
+    results.forEach((result, index) => {
+      if (result.status === "fulfilled") {
+        deletedCount += 1;
+      } else {
+        failures.push(
+          `${label}/${batch[index].id}: ${
+            result.reason instanceof Error
+              ? result.reason.message
+              : String(result.reason)
+          }`
+        );
+      }
+    });
+  }
+  if (failures.length > 0) {
+    throw new Error(
+      `${deletedCount} of ${documentRefs.length} ${label} documents removed; ${failures.length} failed. ${failures
+        .slice(0, 3)
+        .join("; ")}`
+    );
+  }
+  return deletedCount;
+}
+
 /**
- * Admin: Permanently delete a submission.
+ * Admin: Permanently remove a couple's submission and all linked data.
+ * Dependencies are cleaned first; the main record is always deleted last so
+ * partial failures remain visible and can be retried from the dashboard.
  */
-export async function deleteSubmission(id: string): Promise<void> {
-  removeFromLocalCache(id);
+export async function deleteSubmission(
+  id: string,
+  knownRecord?: Partial<SubmissionRecord>
+): Promise<SubmissionDeletionResult> {
   const submissionRef = doc(db, "submissions", id);
-  await deleteDoc(submissionRef);
+  let submissionData: Partial<SubmissionRecord> = knownRecord || {};
+  try {
+    const snapshot = await getDoc(submissionRef);
+    if (snapshot.exists()) {
+      submissionData = {
+        ...knownRecord,
+        ...(snapshot.data() as Partial<SubmissionRecord>),
+        id,
+      };
+    } else if (!knownRecord) {
+      throw new Error("Submission record no longer exists.");
+    }
+  } catch (error) {
+    if (!knownRecord) {
+      throw new Error(
+        `Could not verify the submission before cleanup: ${
+          error instanceof Error ? error.message : String(error)
+        }. No data was deleted.`
+      );
+    }
+  }
+
+  const result = await runSubmissionDeletionPlan({
+    deleteStorageFiles: () => deleteStorageFilesForSubmission(id),
+    deleteDrafts: async () => {
+      const matchingDrafts = await getDocs(
+        query(collection(db, "drafts"), where("submissionId", "==", id))
+      );
+      const draftRefs = new Map(
+        matchingDrafts.docs.map((draft) => [draft.id, { id: draft.id, ref: draft.ref }])
+      );
+
+      const resumeToken = submissionData.resumeToken;
+      if (resumeToken && !draftRefs.has(resumeToken)) {
+        const tokenRef = doc(db, "drafts", resumeToken);
+        const tokenSnapshot = await getDoc(tokenRef);
+        if (tokenSnapshot.exists()) {
+          draftRefs.set(resumeToken, { id: resumeToken, ref: tokenRef });
+        }
+      }
+      return deleteDocumentReferences([...draftRefs.values()], "drafts");
+    },
+    deleteSubmissionErrors: async () => {
+      const matchingErrors = await getDocs(
+        query(collection(db, "submissionErrors"), where("submissionId", "==", id))
+      );
+      return deleteDocumentReferences(
+        matchingErrors.docs.map((error) => ({ id: error.id, ref: error.ref })),
+        "submissionErrors"
+      );
+    },
+    deleteRelatedDocuments: async () => {
+      let deletedCount = 0;
+      for (const collectionName of [
+        "adminMeta",
+        "productionEvents",
+        "eventSubmissions",
+      ]) {
+        const related = await getDocs(
+          collection(db, "submissions", id, collectionName)
+        );
+        deletedCount += await deleteDocumentReferences(
+          related.docs.map((relatedDoc) => ({
+            id: relatedDoc.id,
+            ref: relatedDoc.ref,
+          })),
+          `submissions/${id}/${collectionName}`
+        );
+      }
+      return deletedCount;
+    },
+    deleteSubmissionRecord: () => deleteDoc(submissionRef),
+  });
+
+  removeFromLocalCache(id);
+  return result;
 }
 
 function stripUndefinedDeep<T>(value: T): T {
