@@ -79,7 +79,7 @@ import {
 } from "./coupleSession.ts";
 import { logSubmissionError } from "./errorLogger.ts";
 import { markDraftSubmitted } from "./drafts.ts";
-import { assignNumberForSubmission, checkSubmissionDeletionReady, deleteSubmissionAndRenumber } from "./submissionNumbering.ts";
+import { assignNumberForSubmission, checkSubmissionDeletionReady, deleteSubmissionAndRenumber, type SubmissionNumberChange } from "./submissionNumbering.ts";
 import { buildNormalizedPhotoReport } from "../utils/photoStatusSummary.ts";
 import {
   runSubmissionDeletionPlan,
@@ -1228,6 +1228,26 @@ export async function createSubmission(
 const SESSION_CACHE_KEY = "oaks_submissions_cache_v1";
 let memorySubmissionsCache: SubmissionRecord[] | null = null;
 
+export function cacheSubmissionNumberChanges(changes: SubmissionNumberChange[]): void {
+  const cached = memorySubmissionsCache ?? loadFromSessionCache();
+  if (!cached) return;
+  const byId = new Map(changes.map((change) => [change.id, change]));
+  memorySubmissionsCache = cached.map((record) => {
+    const change = byId.get(record.id);
+    if (!change) return record;
+    const next = { ...record };
+    if (change.toDisplayId === null || change.toSequenceNumber === null) {
+      delete next.displayId;
+      delete next.sequenceNumber;
+    } else {
+      next.displayId = change.toDisplayId;
+      next.sequenceNumber = change.toSequenceNumber;
+    }
+    return next;
+  });
+  saveToSessionCache(memorySubmissionsCache);
+}
+
 function saveToSessionCache(records: SubmissionRecord[]) {
   try {
     sessionStorage.setItem(SESSION_CACHE_KEY, JSON.stringify(records));
@@ -1871,6 +1891,7 @@ export async function deleteSubmission(
     deleteSubmissionRecord: () => deleteSubmissionAndRenumber(id),
   });
 
+  cacheSubmissionNumberChanges(result.renumberedSubmissions);
   removeFromLocalCache(id);
   return result;
 }

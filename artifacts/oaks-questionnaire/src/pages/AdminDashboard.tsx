@@ -39,6 +39,7 @@ import {
 } from "../types/questionnaire.ts";
 import {
   getCachedSubmissions,
+  cacheSubmissionNumberChanges,
   getSubmissions,
   prefetchSubmissionMedia,
   updateSubmissionStatus,
@@ -552,6 +553,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setRenumberError(null);
     try {
       const result = await applyRenumberPreview(renumberPreview.revision);
+      cacheSubmissionNumberChanges(result.changes);
       setSubmissions((previous) => applyNumberChanges(previous, result.changes));
       setRecoveryNotice(
         `Renumbered ${result.changes.length} submission${result.changes.length === 1 ? "" : "s"} by original submission time. The counter now matches the highest number.`
