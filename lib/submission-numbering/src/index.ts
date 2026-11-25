@@ -12,6 +12,7 @@ import {
   type DocumentData,
   type DocumentReference,
   type Firestore,
+  type Transaction,
 } from "firebase-admin/firestore";
 
 const FIREBASE_PROJECT_ID = "oaks-couple-questionnaire";
@@ -256,7 +257,7 @@ function buildNumberingPlan(records: NumberingRecord[]): NumberingPlan {
 
 async function readSubmissionRecords(
   db: Firestore,
-  transaction?: FirebaseFirestore.Transaction
+  transaction?: Transaction
 ): Promise<NumberingRecord[]> {
   const collection = db.collection("submissions");
   const snapshot = transaction
@@ -356,7 +357,7 @@ function assertAtomicWriteLimit(writeCount: number): void {
 }
 
 function applyNumberingChanges(
-  transaction: FirebaseFirestore.Transaction,
+  transaction: Transaction,
   records: NumberingRecord[],
   plan: NumberingPlan
 ): void {
