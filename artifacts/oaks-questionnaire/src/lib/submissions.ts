@@ -670,11 +670,14 @@ export async function parseNotifyApiResponse(res: {
   }
 
   const errorsList: string[] = Array.isArray(parsed.errors) ? parsed.errors : [];
+  // Only the studio alert decides success; a couple-receipt-only issue is not a studio failure.
+  const studioFailed = Boolean(parsed.studio && parsed.studio.sent === false);
   const failed =
     !res.ok ||
     parsed.success === false ||
-    errorsList.length > 0 ||
-    parsed.notified === false;
+    parsed.notified === false ||
+    studioFailed ||
+    (errorsList.length > 0 && !parsed.studio);
 
   if (failed) {
     const detail =
@@ -1100,11 +1103,6 @@ export async function createSubmission(
     existingSubmissionData &&
       typeof existingSubmissionData.sequenceNumber === "number"
   );
-  // Guard against duplicate studio email when both partners finish at the exact same second
-  const submittedWithinLastMinute = Boolean(
-    existingSubmissionData?.submittedAt &&
-      Math.abs(Date.now() - Date.parse(existingSubmissionData.submittedAt)) < 60_000
-  );
 
   const mergedParticipants = Array.from(
     new Set([
@@ -1164,16 +1162,15 @@ export async function createSubmission(
       markDraftDone: async (token, id, submittedAt) => {
         await markDraftSubmitted(token, id, submittedAt);
       },
-      notifyStudioAndCouple: submittedWithinLastMinute
-        ? undefined
-        : async (body) => {
-            const res = await fetch("/api/notify", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(body),
-            });
-            await parseNotifyApiResponse(res);
-          },
+      // Every submission (together, or each partner separately) alerts the studio.
+      notifyStudioAndCouple: async (body) => {
+        const res = await fetch(`${import.meta.env.BASE_URL}api/notify`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        await parseNotifyApiResponse(res);
+      },
       updateEmailStatus: async (id, emailNotificationStatus) => {
         await updateDoc(doc(db, "submissions", id), {
           emailNotificationStatus,

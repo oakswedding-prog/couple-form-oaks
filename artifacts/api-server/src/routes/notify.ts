@@ -165,29 +165,57 @@ export default async function handler(req: any, res: any) {
           : []),
       ].join("\n");
 
-      const response = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${resendApiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          from: fromAddress,
-          to: recipients,
-          reply_to: replyToAddress,
-          subject: `New Questionnaire: ${partner1 || "Partner 1"} & ${partner2 || "Partner 2"}${displayId ? ` (${displayId})` : ""}`,
-          html: studioHtml,
-          text: studioText,
-        }),
-      });
+      // Send to each studio address separately so one rejected address can never
+      // stop the alert from reaching the other studio inbox.
+      const studioSubject = `New Questionnaire: ${partner1 || "Partner 1"} & ${partner2 || "Partner 2"}${displayId ? ` (${displayId})` : ""}`;
+      const perRecipient = await Promise.all(
+        recipients.map(async (recipient: string) => {
+          try {
+            const response = await fetch("https://api.resend.com/emails", {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${resendApiKey}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                from: fromAddress,
+                to: [recipient],
+                reply_to: replyToAddress,
+                subject: studioSubject,
+                html: studioHtml,
+                text: studioText,
+              }),
+            });
+            if (response.ok) return { recipient, ok: true, status: response.status };
+            const errText = (await response.text()).slice(0, 260);
+            return {
+              recipient,
+              ok: false,
+              status: response.status,
+              error: errText || `Resend returned ${response.status}`,
+            };
+          } catch (err: any) {
+            return {
+              recipient,
+              ok: false,
+              status: 502,
+              error: (err?.message || "Network error calling Resend").slice(0, 260),
+            };
+          }
+        })
+      );
 
-      studioStatus.status = response.status;
-      if (response.ok) {
-        studioStatus.sent = true;
-      } else {
-        const errText = (await response.text()).slice(0, 260);
-        studioStatus.error = errText || `Resend returned ${response.status}`;
-        errors.push(`studio(${response.status}): ${studioStatus.error}`);
+      const failures = perRecipient.filter((r) => !r.ok);
+      studioStatus.sent = failures.length === 0;
+      studioStatus.status = failures.length === 0 ? 200 : failures[0].status;
+      if (failures.length > 0) {
+        studioStatus.error = failures
+          .map((f) => `${f.recipient}: ${f.error}`)
+          .join(" | ")
+          .slice(0, 500);
+        for (const f of failures) {
+          errors.push(`studio(${f.status}) ${f.recipient}: ${f.error}`);
+        }
       }
     } catch (err: any) {
       studioStatus.status = 502;
@@ -266,8 +294,9 @@ export default async function handler(req: any, res: any) {
     }
   }
 
-  const allAttemptedSucceeded =
-    studioStatus.sent && (coupleStatus.skipped || coupleStatus.sent);
+  // The studio alert decides success. A couple-receipt problem is still reported in
+  // `couple` / `errors`, but must not mark the studio alert as "Email not sent".
+  const allAttemptedSucceeded = studioStatus.sent;
 
   const responsePayload: NotifyResponseBody = {
     success: allAttemptedSucceeded,
@@ -280,9 +309,7 @@ export default async function handler(req: any, res: any) {
 
   if (!allAttemptedSucceeded) {
     const httpStatus =
-      (studioStatus.status && studioStatus.status >= 400 ? studioStatus.status : 0) ||
-      (coupleStatus.status && coupleStatus.status >= 400 ? coupleStatus.status : 0) ||
-      502;
+      (studioStatus.status && studioStatus.status >= 400 ? studioStatus.status : 0) || 502;
     return res.status(httpStatus).json(responsePayload);
   }
 

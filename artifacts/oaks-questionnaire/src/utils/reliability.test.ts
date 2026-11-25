@@ -591,15 +591,53 @@ describe("Bulletproof Couple Questionnaire Reliability Suite (11 Scenarios)", ()
       assert.equal(ok.jsonBody.success, true);
       assert.equal(ok.jsonBody.notified, true);
       assert.equal(ok.jsonBody.coupleReceiptSent, true);
-      assert.equal(sentPayloads.length, 2);
+      // One studio email per studio address + one couple receipt
+      assert.equal(sentPayloads.length, 3);
+      assert.deepEqual(sentPayloads[0].to, ["mywedding@oakswedding.com"]);
+      assert.deepEqual(sentPayloads[1].to, ["team@oakswedding.com"]);
       // Studio email checks
       assert.equal(sentPayloads[0].from, "OAKS Wedding <hello@mail.oakswedding.com>");
       assert.equal(sentPayloads[0].reply_to, "mywedding@oakswedding.com");
       assert.ok(String(sentPayloads[0].html).includes("Photos: 7 uploaded, 3 not added by couple, 0 failed"));
       assert.ok(String(sentPayloads[0].text).includes("Photos: 7 uploaded, 3 not added by couple, 0 failed"));
       // Couple receipt checks
-      assert.deepEqual(sentPayloads[1].to, ["couple@example.com"]);
-      assert.equal(sentPayloads[1].reply_to, "mywedding@oakswedding.com");
+      assert.deepEqual(sentPayloads[2].to, ["couple@example.com"]);
+      assert.equal(sentPayloads[2].reply_to, "mywedding@oakswedding.com");
+
+      // 2b. One studio address rejected: the other studio address still receives it,
+      // and the response is reported as a studio failure so the dashboard flags it.
+      const partialTargets: string[] = [];
+      globalThis.fetch = (async (_url: any, init: any) => {
+        const body = JSON.parse(init.body);
+        partialTargets.push(body.to[0]);
+        if (body.to[0] === "team@oakswedding.com") {
+          return new Response(JSON.stringify({ message: "rejected" }), { status: 422 });
+        }
+        return new Response(JSON.stringify({ id: "ok" }), { status: 200 });
+      }) as typeof fetch;
+      const partialRes = await runHandler({ submissionId: "sub_partial", partner1: "A", partner2: "B" });
+      assert.ok(partialTargets.includes("mywedding@oakswedding.com"));
+      assert.ok(partialTargets.includes("team@oakswedding.com"));
+      assert.equal(partialRes.statusCode, 422);
+      assert.equal(partialRes.jsonBody.notified, false);
+
+      // 2c. Couple receipt failure alone does not mark the studio alert as failed
+      globalThis.fetch = (async (_url: any, init: any) => {
+        const body = JSON.parse(init.body);
+        if (body.to[0] === "couple@example.com") {
+          return new Response(JSON.stringify({ message: "bad couple" }), { status: 422 });
+        }
+        return new Response(JSON.stringify({ id: "ok" }), { status: 200 });
+      }) as typeof fetch;
+      const coupleFailRes = await runHandler({
+        submissionId: "sub_couplefail",
+        partner1: "A",
+        partner2: "B",
+        email: "couple@example.com",
+      });
+      assert.equal(coupleFailRes.statusCode, 200);
+      assert.equal(coupleFailRes.jsonBody.notified, true);
+      assert.equal(coupleFailRes.jsonBody.coupleReceiptSent, false);
 
       // 3. Resend failure returns non-200 status and explicit errors array
       globalThis.fetch = (async () =>
