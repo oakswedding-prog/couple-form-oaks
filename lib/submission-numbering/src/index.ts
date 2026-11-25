@@ -409,12 +409,19 @@ export async function handleSubmissionNumberingRequest(input: {
       if (!admin) {
         throw new NumberingServiceError(403, "admin_required", "Admin access is required.");
       }
-      const records = await readSubmissionRecords(db);
+      const [records, counter] = await Promise.all([
+        readSubmissionRecords(db),
+        counterRef.get(),
+      ]);
       if (!records.some((record) => record.id === request.submissionId)) {
         throw new NumberingServiceError(404, "submission_not_found", "Submission not found.");
       }
-      const plan = buildNumberingPlan(records.filter((record) => record.id !== request.submissionId));
-      assertAtomicWriteLimit(plan.changes.length + 2);
+      const plan = buildNumberingPlan(
+        records.filter((record) => record.id !== request.submissionId)
+      );
+      const counterNeedsWrite =
+        !counter.exists || Number(counter.data()?.current || 0) !== plan.count;
+      assertAtomicWriteLimit(plan.changes.length + 1 + (counterNeedsWrite ? 1 : 0));
       return { status: 200, body: { success: true, action: request.action } };
     }
 
