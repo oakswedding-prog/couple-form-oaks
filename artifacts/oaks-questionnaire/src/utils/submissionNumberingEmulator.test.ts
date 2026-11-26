@@ -7,12 +7,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
-import { handleSubmissionNumberingRequest } from "@workspace/submission-numbering";
+import { getStorage } from "firebase-admin/storage";
+import {
+  handleSubmissionNumberingRequest,
+  readAdminMoodboardImage,
+} from "@workspace/submission-numbering";
 
 const projectId = "oaks-couple-questionnaire";
 const firestoreEmulator = process.env.FIRESTORE_EMULATOR_HOST;
 const authEmulator = process.env.FIREBASE_AUTH_EMULATOR_HOST;
-const shouldRun = Boolean(firestoreEmulator && authEmulator);
+const storageEmulator = process.env.FIREBASE_STORAGE_EMULATOR_HOST;
+const shouldRun = Boolean(firestoreEmulator && authEmulator && storageEmulator);
 
 async function signUpTestUser(email: string, password: string): Promise<{
   uid: string;
@@ -84,6 +89,31 @@ test(
     });
     const coupleToken = couple.idToken;
     const adminToken = admin.idToken;
+    const imagePath = "submissions/numbering-image-test/admin/moodboard.png";
+    const originalImageBytes = Buffer.from([137, 80, 78, 71, 0, 1, 2, 3, 255]);
+    const imageFile = getStorage(seedApp)
+      .bucket("oaks-couple-questionnaire.firebasestorage.app")
+      .file(imagePath);
+    await imageFile.save(originalImageBytes, {
+      metadata: { contentType: "image/png" },
+    });
+    const proxiedImage = await readAdminMoodboardImage({
+      authorization: `Bearer ${adminToken}`,
+      source: imagePath,
+    });
+    assert.deepEqual(proxiedImage.bytes, originalImageBytes);
+    assert.equal(proxiedImage.contentType, "image/png");
+    await assert.rejects(
+      readAdminMoodboardImage({
+        authorization: `Bearer ${coupleToken}`,
+        source: imagePath,
+      }),
+      (error: unknown) =>
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "admin_required"
+    );
+    await imageFile.delete();
 
     const dates = [
       "2026-11-01T10:00:00.000Z",

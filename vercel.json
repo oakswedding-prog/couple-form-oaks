@@ -6,6 +6,9 @@
   "functions": {
     "api/numbering.ts": {
       "includeFiles": "lib/submission-numbering/dist/**"
+    },
+    "api/moodboard-image.ts": {
+      "includeFiles": "lib/submission-numbering/dist/**"
     }
   },
   "rewrites": [

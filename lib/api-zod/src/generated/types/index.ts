@@ -16,6 +16,7 @@ export * from './generationInput';
 export * from './generationInputAnswers';
 export * from './getLiveToken200';
 export * from './healthStatus';
+export * from './moodboardImageRequest';
 export * from './notificationInput';
 export * from './notificationReport';
 export * from './serviceErrorResponse';

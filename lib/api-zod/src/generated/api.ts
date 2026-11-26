@@ -124,6 +124,20 @@ export const NotifySubmissionResponse = zod.object({
 
 
 /**
+ * @summary Read a moodboard image for an authorized studio export
+ */
+export const downloadMoodboardImageBodySourceMax = 4096;
+
+
+
+export const DownloadMoodboardImageBody = zod.object({
+  "source": zod.string().min(1).max(downloadMoodboardImageBodySourceMax)
+})
+
+export const DownloadMoodboardImageResponse = zod.unknown()
+
+
+/**
  * Returns server health status
  * @summary Health check
  */

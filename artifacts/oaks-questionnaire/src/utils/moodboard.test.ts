@@ -153,9 +153,10 @@ test("images are contained at original aspect ratio and export hyperlinks allow 
 
 test("PDF and editable PPTX files contain every page, event labels, and original photos; missing media fails explicitly", async () => {
   const doc = buildMoodboardDocument(submission({
-    q12_references: { images:["test-pixel"], links:["https://example.com/reference"], notes:"Café reference" },
-    wardrobe: { bride: { photos:["test-pixel"], photoEvents:["Mehendi"], links:[], notes:"" }, groom: { photos:[], links:[], notes:"" } },
-    q10_people: {familyMembers:[{id:"1",name:"Zoë Müller",side:"bride",relationship:"Mother",mustCapture:true}],treeNotes:""},
+    couplePhotoUrl: "couple-pixel",
+    q12_references: { images:["test-pixel", "reference-pixel"], links:["https://example.com/reference"], notes:"Café reference" },
+    wardrobe: { bride: { photos:["wardrobe-pixel"], photoEvents:["Mehendi"], links:[], notes:"" }, groom: { photos:[], links:[], notes:"" } },
+    q10_people: {familyMembers:[{id:"1",name:"Zoë Müller",side:"bride",relationship:"Mother",mustCapture:true,photoUrl:"family-pixel"}],treeNotes:""},
   }));
   const scenes = doc.pages.map((p,i)=>buildMoodboardScene(p,i,doc.pages.length));
   const wardrobePage = doc.pages.find(p => p.title.includes("Mehendi Outfits"))!;
@@ -163,7 +164,10 @@ test("PDF and editable PPTX files contain every page, event labels, and original
     element => element.type === "text" && element.text.includes("Mehendi Outfits"),
   ));
   const data = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAAD0lEQVQI12Nc2R7FwMAAAAgPAYyA+b7LAAAAAElFTkSuQmCC";
-  const assets = new Map([["test-pixel",{ data, width:2, height:1, format:"PNG" as const }]]);
+  const assets = new Map(
+    ["couple-pixel", "test-pixel", "reference-pixel", "wardrobe-pixel", "family-pixel"]
+      .map(src => [src, { data, width:2, height:1, format:"PNG" as const }] as const)
+  );
   const serif = readFileSync(new URL("../../public/fonts/OAKS-Serif.ttf", import.meta.url)).toString("base64");
   const sans = readFileSync(new URL("../../public/fonts/OAKS-Sans.ttf", import.meta.url)).toString("base64");
   const pdf = renderMoodboardPdf(scenes, assets, {serif,sans});
@@ -184,6 +188,11 @@ test("PDF and editable PPTX files contain every page, event labels, and original
   assert.equal(entries.filter(n => /^ppt\/slides\/slide\d+\.xml$/.test(n)).length, doc.pages.length);
   assert.ok(entries.some(n=>n.startsWith("ppt/media/")));
   const allXml = execFileSync("unzip", ["-p",pptxPath,"ppt/slides/slide*.xml"]).toString();
+  const expectedImagePlacements = scenes.reduce(
+    (count, scene) => count + scene.elements.filter(element => element.type === "image").length,
+    0
+  );
+  assert.equal((allXml.match(/<p:pic>/g) || []).length, expectedImagePlacements);
   assert.match(allXml, /Zoë Müller/);
   assert.match(allXml, /Mehendi Outfits/);
   assert.match(allXml, /<a:t>MOTHER/); // editable text, not a flattened screenshot

@@ -13,9 +13,15 @@ import {
   type Firestore,
   type Transaction,
 } from "firebase-admin/firestore";
+import { getStorage } from "firebase-admin/storage";
 
 const FIREBASE_PROJECT_ID = "oaks-couple-questionnaire";
 const FIREBASE_WEB_API_KEY = "AIzaSyDWpU42Owb-yd2YvrUPJyb9A5VC_UYZUtw";
+const DEFAULT_STORAGE_BUCKET = "oaks-couple-questionnaire.firebasestorage.app";
+const STORAGE_BUCKETS = new Set([
+  DEFAULT_STORAGE_BUCKET,
+  "oaks-couple-questionnaire.appspot.com",
+]);
 const ADMIN_EMAILS = new Set([
   "rahulratna88@gmail.com",
   "mywedding@oakswedding.com",
@@ -463,6 +469,105 @@ async function getAuthorizedContext(authorization?: string) {
     );
   }
   return { app, db: getFirestore(app), decoded };
+}
+
+export function parseFirebaseMoodboardImageSource(source: string): {
+  bucket: string;
+  objectPath: string;
+} {
+  const decode = (value: string) => {
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      throw new NumberingServiceError(400, "invalid_media_source", "Invalid image source.");
+    }
+  };
+  const value = source.trim();
+  let bucket = DEFAULT_STORAGE_BUCKET;
+  let objectPath = value;
+
+  if (value.startsWith("gs://")) {
+    const match = value.match(/^gs:\/\/([^/]+)\/(.+)$/);
+    if (!match) {
+      throw new NumberingServiceError(400, "invalid_media_source", "Invalid image source.");
+    }
+    bucket = match[1];
+    objectPath = match[2];
+  } else if (/^https?:\/\//i.test(value)) {
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      throw new NumberingServiceError(400, "invalid_media_source", "Invalid image source.");
+    }
+    if (url.protocol !== "https:") {
+      throw new NumberingServiceError(400, "invalid_media_source", "Invalid image source.");
+    }
+    if (url.hostname === "firebasestorage.googleapis.com") {
+      const match = url.pathname.match(/^\/v0\/b\/([^/]+)\/o\/(.+)$/);
+      if (!match) {
+        throw new NumberingServiceError(400, "invalid_media_source", "Invalid image source.");
+      }
+      bucket = decode(match[1]);
+      objectPath = decode(match[2]);
+    } else if (url.hostname === "storage.googleapis.com") {
+      const downloadMatch = url.pathname.match(/^\/download\/storage\/v1\/b\/([^/]+)\/o\/(.+)$/);
+      const directMatch = url.pathname.match(/^\/([^/]+)\/(.+)$/);
+      const match = downloadMatch || directMatch;
+      if (!match) {
+        throw new NumberingServiceError(400, "invalid_media_source", "Invalid image source.");
+      }
+      bucket = decode(match[1]);
+      objectPath = decode(match[2]);
+    } else {
+      throw new NumberingServiceError(400, "invalid_media_source", "Image is not in Firebase Storage.");
+    }
+  }
+
+  const segments = objectPath.split("/");
+  if (
+    !STORAGE_BUCKETS.has(bucket) ||
+    !objectPath.startsWith("submissions/") ||
+    objectPath.length > 1024 ||
+    objectPath.includes("\\") ||
+    segments.some((segment) => !segment || segment === "." || segment === "..") ||
+    /[\u0000-\u001f]/.test(objectPath)
+  ) {
+    throw new NumberingServiceError(403, "media_not_allowed", "This image cannot be exported.");
+  }
+  return { bucket, objectPath };
+}
+
+export async function readAdminMoodboardImage(input: {
+  authorization?: string;
+  source: string;
+}): Promise<{ bytes: Buffer; contentType: string }> {
+  const { app, db, decoded } = await getAuthorizedContext(input.authorization);
+  if (!(await isAdminIdentity(db, decoded))) {
+    throw new NumberingServiceError(403, "admin_required", "Admin access is required.");
+  }
+
+  const { bucket, objectPath } = parseFirebaseMoodboardImageSource(input.source);
+  const file = getStorage(app).bucket(bucket).file(objectPath);
+  try {
+    const [metadata] = await file.getMetadata();
+    const contentType = metadata.contentType || "";
+    if (!contentType.toLowerCase().startsWith("image/")) {
+      throw new NumberingServiceError(415, "not_an_image", "The selected file is not an image.");
+    }
+    const [bytes] = await file.download();
+    if (metadata.size && bytes.byteLength !== Number(metadata.size)) {
+      throw new NumberingServiceError(502, "incomplete_image", "The original image could not be read completely.");
+    }
+    return { bytes, contentType };
+  } catch (error) {
+    if (error instanceof NumberingServiceError) throw error;
+    const code = (error as { code?: number | string })?.code;
+    if (code === 404 || code === "404") {
+      throw new NumberingServiceError(404, "image_not_found", "The original image could not be found.");
+    }
+    throw new NumberingServiceError(502, "image_unavailable", "The original image could not be downloaded.");
+  }
 }
 
 export async function handleSubmissionNumberingRequest(input: {

@@ -32,6 +32,7 @@ import type {
   GenerationBody,
   GetLiveToken200,
   HealthStatus,
+  MoodboardImageRequest,
   NotificationInput,
   NotificationReport,
   ServiceErrorResponse
@@ -579,6 +580,94 @@ export const useNotifySubmission = <TError = ErrorType<NotificationReport>,
         TContext
       > => {
       return useMutation(getNotifySubmissionMutationOptions(options), queryClient);
+    }
+
+export const getDownloadMoodboardImageUrl = () => {
+
+
+
+
+  return `/api/moodboard-image`
+}
+
+/**
+ * @summary Read a moodboard image for an authorized studio export
+ */
+export const downloadMoodboardImage = async (moodboardImageRequest: MoodboardImageRequest, options?: Parameters<typeof customFetch>[1]): Promise<Blob> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<Blob>(getDownloadMoodboardImageUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(moodboardImageRequest)
+  }
+);}
+
+
+
+
+
+export const getDownloadMoodboardImageMutationKey = () => ['downloadMoodboardImage'] as const;
+
+export const getDownloadMoodboardImageMutationOptions = <TError = ErrorType<ServiceErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof downloadMoodboardImage>>, TError,DownloadMoodboardImageMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof downloadMoodboardImage>>, TError,DownloadMoodboardImageMutationVariables, TContext> => {
+
+const mutationKey = getDownloadMoodboardImageMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof downloadMoodboardImage>>, DownloadMoodboardImageMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  downloadMoodboardImage(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DownloadMoodboardImageMutationResult = NonNullable<Awaited<ReturnType<typeof downloadMoodboardImage>>>
+    export type DownloadMoodboardImageMutationBody = BodyType<MoodboardImageRequest>
+    export type DownloadMoodboardImageMutationError = ErrorType<ServiceErrorResponse>
+    export type DownloadMoodboardImageMutationVariables = {data: BodyType<MoodboardImageRequest>}
+
+    /**
+ * @summary Read a moodboard image for an authorized studio export
+ */
+export const useDownloadMoodboardImage = <TError = ErrorType<ServiceErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof downloadMoodboardImage>>, TError,DownloadMoodboardImageMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof downloadMoodboardImage>>,
+        TError,
+        DownloadMoodboardImageMutationVariables,
+        TContext
+      > => {
+      return useMutation(getDownloadMoodboardImageMutationOptions(options), queryClient);
     }
 
 export const getHealthCheckUrl = () => {

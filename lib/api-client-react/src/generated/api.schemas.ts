@@ -31,6 +31,14 @@ export interface NotificationInput {
   pendingPhotoCount?: number;
 }
 
+export interface MoodboardImageRequest {
+  /**
+     * @minLength 1
+     * @maxLength 4096
+     */
+  source: string;
+}
+
 export interface EmailAttempt {
   sent: boolean;
   skipped?: boolean;
