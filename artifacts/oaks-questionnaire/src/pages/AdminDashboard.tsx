@@ -1098,7 +1098,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       </div>
 
                       {/* Actions: Responsive grid keeps every control inside the card */}
-                      <div className="grid min-w-0 grid-cols-2 gap-2 border-t border-[#F0EBE1] pt-3 sm:grid-cols-3 xl:col-span-2 xl:grid-cols-6 xl:pt-2">
+                      <div className="grid min-w-0 grid-cols-4 gap-1.5 border-t border-[#F0EBE1] pt-3 sm:grid-cols-3 sm:gap-2 xl:col-span-2 xl:grid-cols-6 xl:pt-2">
                         {/* Status Dropdown (Desktop only) */}
                         <div className="relative hidden min-w-0 md:block">
                           <select
@@ -1142,7 +1142,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         </button>
 
                         {/* Download Dropdown Menu */}
-                        <div className="relative min-w-0 w-full">
+                        <div className="relative hidden min-w-0 w-full sm:block">
                           <button
                             type="button"
                             onClick={() =>
@@ -1189,18 +1189,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           type="button"
                           disabled={copyingResumeId === couple.id}
                           onClick={() => void handleCopyCoupleResumeLink(couple)}
-                          className="min-h-10 w-full min-w-0 rounded-xl px-2 py-2 text-xs font-medium text-[#5C492A] bg-[#FAF7F2] hover:bg-[#F2ECE1] border border-[#E5DDD2] transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 disabled:opacity-60"
+                          className="min-h-10 w-full min-w-0 rounded-xl px-1.5 py-2 text-xs font-medium text-[#5C492A] bg-[#FAF7F2] hover:bg-[#F2ECE1] border border-[#E5DDD2] transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 disabled:opacity-60 sm:px-2"
                           title={`Copy resume link for ${couple.partner1} & ${couple.partner2}`}
+                          aria-label={copiedResumeId === couple.id ? "Resume link copied" : "Copy resume link"}
                         >
                           {copiedResumeId === couple.id ? (
                             <>
                               <Check className="w-3.5 h-3.5 shrink-0 text-emerald-600" />
-                              <span className="text-emerald-700">Copied</span>
+                              <span className="hidden text-emerald-700 sm:inline">Copied</span>
                             </>
                           ) : (
                             <>
                               <Link2 className="w-3.5 h-3.5 shrink-0 text-[#8C7043]" />
-                              <span className="lg:hidden">Copy link</span>
+                              <span className="hidden sm:inline lg:hidden">Copy link</span>
                               <span className="hidden lg:inline">Copy resume link</span>
                             </>
                           )}
@@ -1210,11 +1211,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           type="button"
                           disabled={preparingShareId === couple.id}
                           onClick={() => void handleShareCoupleLink(couple)}
-                          className="min-h-10 w-full min-w-0 rounded-xl px-2 py-2 text-xs font-medium text-[#5C492A] bg-[#FAF7F2] hover:bg-[#F2ECE1] border border-[#E5DDD2] transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 disabled:opacity-60"
+                          className="min-h-10 w-full min-w-0 rounded-xl px-1.5 py-2 text-xs font-medium text-[#5C492A] bg-[#FAF7F2] hover:bg-[#F2ECE1] border border-[#E5DDD2] transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 disabled:opacity-60 sm:px-2"
                           title={`Send link to ${couple.partner1} & ${couple.partner2} (WhatsApp, email)`}
+                          aria-label={preparingShareId === couple.id ? "Preparing share link" : "Send link"}
                         >
                           <Send className="w-3.5 h-3.5 shrink-0 text-[#8C7043]" />
-                          <span>Send link</span>
+                          <span className="hidden sm:inline">Send link</span>
                         </button>
 
                         {/* Delete Button */}
@@ -1224,11 +1226,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             setDeleteError(null);
                             setSubmissionToDelete(couple);
                           }}
-                          className="col-span-2 sm:col-span-1 min-h-10 w-full min-w-0 inline-flex items-center justify-center gap-1.5 rounded-xl px-2 py-2 text-xs font-medium text-red-600 bg-red-50/70 hover:bg-red-100 hover:text-red-700 border border-red-200/70 transition-colors cursor-pointer"
+                          className="min-h-10 w-full min-w-0 inline-flex items-center justify-center gap-1.5 rounded-xl px-1.5 py-2 text-xs font-medium text-red-600 bg-red-50/70 hover:bg-red-100 hover:text-red-700 border border-red-200/70 transition-colors cursor-pointer sm:px-2"
                           title={`Delete ${couple.partner1} & ${couple.partner2}'s submission`}
+                          aria-label={`Delete ${couple.partner1} & ${couple.partner2}'s submission`}
                         >
                           <Trash2 className="w-3.5 h-3.5 shrink-0" />
-                          <span>Delete</span>
+                          <span className="hidden sm:inline">Delete</span>
                         </button>
                       </div>
                     </div>
