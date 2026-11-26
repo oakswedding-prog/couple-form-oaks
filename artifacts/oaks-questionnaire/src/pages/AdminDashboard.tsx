@@ -39,7 +39,6 @@ import {
 } from "../types/questionnaire.ts";
 import {
   getCachedSubmissions,
-  cacheSubmissionNumberChanges,
   getSubmissions,
   prefetchSubmissionMedia,
   updateSubmissionStatus,
@@ -60,12 +59,7 @@ import {
   describeDraftPartnerStatus,
   getDraftLinkInactiveReason,
 } from "../utils/splitModeHelpers.ts";
-import {
-  applyRenumberPreview,
-  getRenumberPreview,
-  type RenumberPreview,
-  type SubmissionNumberChange,
-} from "../lib/submissionNumbering.ts";
+import type { SubmissionNumberChange } from "../lib/submissionNumbering.ts";
 import { getSubmissionErrors } from "../lib/errorLogger.ts";
 import { buildResumeUrl, isPrivatePreviewOrigin } from "../lib/coupleSession.ts";
 import { exportToPdf, exportToDocx } from "../utils/exportBrief.ts";
@@ -227,11 +221,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [submissionToDelete, setSubmissionToDelete] = useState<SubmissionRecord | null>(null);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [renumberPreview, setRenumberPreview] = useState<RenumberPreview | null>(null);
-  const [isRenumberDialogOpen, setIsRenumberDialogOpen] = useState(false);
-  const [isLoadingRenumberPreview, setIsLoadingRenumberPreview] = useState(false);
-  const [isApplyingRenumber, setIsApplyingRenumber] = useState(false);
-  const [renumberError, setRenumberError] = useState<string | null>(null);
 
   // Warm lazy chunks for AdminCoupleDetail and AdminWeddingChecklist during browser idle
   useEffect(() => {
@@ -530,48 +519,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setDeleteError(err?.message || "Failed to delete submission. Please try again.");
     } finally {
       setIsDeleting(false);
-    }
-  };
-
-  const handleOpenRenumberPreview = async () => {
-    setIsLoadingRenumberPreview(true);
-    setRenumberError(null);
-    try {
-      const preview = await getRenumberPreview();
-      setRenumberPreview(preview);
-      setIsRenumberDialogOpen(true);
-    } catch (err: any) {
-      setRenumberError(err?.message || "Could not prepare a numbering preview.");
-    } finally {
-      setIsLoadingRenumberPreview(false);
-    }
-  };
-
-  const handleApplyRenumber = async () => {
-    if (!renumberPreview) return;
-    setIsApplyingRenumber(true);
-    setRenumberError(null);
-    try {
-      const result = await applyRenumberPreview(renumberPreview.revision);
-      cacheSubmissionNumberChanges(result.changes);
-      setSubmissions((previous) => applyNumberChanges(previous, result.changes));
-      setRecoveryNotice(
-        `Renumbered ${result.changes.length} submission${result.changes.length === 1 ? "" : "s"} by original submission time. The counter now matches the highest number.`
-      );
-      setIsRenumberDialogOpen(false);
-      setRenumberPreview(null);
-    } catch (err: any) {
-      const message = err?.message || "Could not safely renumber submissions.";
-      setRenumberError(message);
-      if (message.includes("changed after the preview")) {
-        try {
-          setRenumberPreview(await getRenumberPreview());
-        } catch {
-          // Keep the stale preview visible with the error so the admin can retry manually.
-        }
-      }
-    } finally {
-      setIsApplyingRenumber(false);
     }
   };
 
@@ -930,34 +877,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </div>
 
               {/* Sort Dropdown */}
-              <div className="flex items-center gap-2">
+              <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
                 <ArrowUpDown className="w-4 h-4 text-[#7A756D] shrink-0" />
                 <select
                   value={sortBy}
                   onChange={(e: any) => setSortBy(e.target.value)}
-                  className="text-xs bg-[#FAF8F5] border border-[#E8DFD3] rounded-xl px-3 py-2 text-[#1A1A1A] font-medium focus:outline-hidden"
+                  className="min-w-0 max-w-full flex-1 text-xs bg-[#FAF8F5] border border-[#E8DFD3] rounded-xl px-3 py-2 text-[#1A1A1A] font-medium focus:outline-hidden sm:flex-none"
                 >
                   <option value="newest_submitted">Sort: Newest submitted</option>
                   <option value="wedding_soonest">Sort: Wedding date (soonest)</option>
                 </select>
-                <button
-                  type="button"
-                  onClick={() => void handleOpenRenumberPreview()}
-                  disabled={isLoadingRenumberPreview || isApplyingRenumber}
-                  className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-[#E5DDD2] bg-[#FAF7F2] px-3 py-2 text-xs font-medium text-[#5C492A] transition-colors hover:bg-[#F2ECE1] disabled:cursor-wait disabled:opacity-60"
-                  title="Preview and repair submission-number gaps"
-                >
-                  <RefreshCw
-                    className={`h-3.5 w-3.5 ${
-                      isLoadingRenumberPreview ? "animate-spin" : ""
-                    }`}
-                  />
-                  <span>
-                    {isLoadingRenumberPreview
-                      ? "Checking numbers…"
-                      : "Renumber all submissions"}
-                  </span>
-                </button>
               </div>
             </div>
 
@@ -1012,7 +941,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </div>
             )}
 
-            {/* Submissions List: Table on desktop, Cards on mobile */}
+            {/* Submission cards */}
             {!isLoading && !error && filteredSubmissions.length > 0 && (
               <div className="space-y-3">
                 {filteredSubmissions.slice(0, visibleCount).map((couple) => {
@@ -1026,22 +955,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   return (
                     <div
                       key={couple.id}
-                      className="bg-white border border-[#E5DDD2] hover:border-[#C4A474] rounded-2xl p-4 sm:p-5 shadow-2xs transition-all space-y-3.5 md:space-y-0 md:flex md:items-center md:justify-between md:gap-4"
+                      className="grid min-w-0 grid-cols-1 gap-3 rounded-2xl border border-[#E5DDD2] bg-white p-4 shadow-2xs transition-all hover:border-[#C4A474] sm:p-5 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center xl:gap-x-5"
                     >
                       {/* Card Top / Left: ID, Names, and Status Dropdown on mobile */}
-                      <div className="flex items-start justify-between gap-3 md:items-center">
-                        <div className="flex items-start sm:items-center gap-3">
+                      <div className="flex min-w-0 items-start justify-between gap-3 xl:col-start-1 xl:row-start-1 xl:items-center">
+                        <div className="flex min-w-0 items-start gap-3 sm:items-center">
                           <span className="font-mono text-xs font-bold text-[#8C7043] bg-[#FAF7F2] px-2.5 py-1.5 rounded-lg border border-[#E8DFD3] shrink-0">
                             {couple.displayId || "Unnumbered"}
                           </span>
-                          <div>
+                          <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
-                              <h2 className="font-cormorant text-xl sm:text-2xl font-semibold text-[#1A1A1A] leading-tight">
+                              <h2 className="break-words font-cormorant text-xl sm:text-2xl font-semibold text-[#1A1A1A] leading-tight">
                                 {couple.partner1 || "Partner 1"} &amp;{" "}
                                 {couple.partner2 || "Partner 2"}
                               </h2>
                               {deliveryState === "needs_attention" && attentionReasons.length > 0 ? (
-                                <div className="relative group inline-flex items-center gap-1.5 flex-wrap">
+                                <div className="relative group inline-flex min-w-0 items-center gap-1.5 flex-wrap">
                                   <button
                                     type="button"
                                     onClick={() =>
@@ -1053,12 +982,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                     <span>{deliveryBadge.label}</span>
                                     <Info className="w-3 h-3" />
                                   </button>
-                                  <span className="text-[11px] font-medium text-red-700">
+                                  <span className="min-w-0 break-words text-[11px] font-medium text-red-700">
                                     {attentionReasons.join(" · ")}
                                   </span>
 
                                   <div
-                                    className={`absolute left-0 top-full mt-1.5 z-30 w-64 bg-white border border-red-200 rounded-xl shadow-lg p-3 text-left ${
+                                    className={`absolute left-0 top-full mt-1.5 z-30 w-64 max-w-[calc(100vw-3rem)] bg-white border border-red-200 rounded-xl shadow-lg p-3 text-left ${
                                       isReasonsOpen
                                         ? "block"
                                         : "hidden group-hover:block"
@@ -1122,7 +1051,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         </div>
 
                         {/* Status Dropdown (Top right on mobile) */}
-                        <div className="shrink-0 md:hidden">
+                        <div className="max-w-[6.5rem] shrink-0 md:hidden">
                           <select
                             value={effectiveStatus}
                             onChange={(e) =>
@@ -1131,7 +1060,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                 e.target.value as SubmissionStatus
                               )
                             }
-                            className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border cursor-pointer focus:outline-hidden ${
+                            className={`w-full min-w-0 text-[11px] font-semibold px-2 py-1 rounded-full border cursor-pointer focus:outline-hidden ${
                               effectiveStatus === "new"
                                 ? "bg-[#FFF9EE] text-[#B08D57] border-[#E5C388]"
                                 : effectiveStatus === "reviewed"
@@ -1147,7 +1076,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       </div>
 
                       {/* Middle: Wedding Date & Countdown */}
-                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs xl:col-start-2 xl:row-start-1">
                         <div className="inline-flex items-center gap-1.5 bg-[#FAF8F5] border border-[#E5DDD2] px-3 py-1.5 rounded-xl">
                           <Calendar className="w-3.5 h-3.5 text-[#8C7043]" />
                           <span className="font-medium text-[#1A1A1A]">
@@ -1168,10 +1097,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         )}
                       </div>
 
-                      {/* Actions: Balanced full-width on mobile, flex on desktop */}
-                      <div className="flex items-center gap-2 pt-2 md:pt-0 border-t md:border-t-0 border-[#F0EBE1]">
+                      {/* Actions: Responsive grid keeps every control inside the card */}
+                      <div className="grid min-w-0 grid-cols-2 gap-2 border-t border-[#F0EBE1] pt-3 sm:grid-cols-3 xl:col-span-2 xl:grid-cols-6 xl:pt-2">
                         {/* Status Dropdown (Desktop only) */}
-                        <div className="hidden md:block relative shrink-0">
+                        <div className="relative hidden min-w-0 md:block">
                           <select
                             value={effectiveStatus}
                             onChange={(e) =>
@@ -1180,7 +1109,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                 e.target.value as SubmissionStatus
                               )
                             }
-                            className={`text-xs font-semibold px-3 py-1.5 rounded-full border cursor-pointer focus:outline-hidden ${
+                            className={`min-h-10 w-full min-w-0 text-xs font-semibold px-3 py-1.5 rounded-full border cursor-pointer focus:outline-hidden ${
                               effectiveStatus === "new"
                                 ? "bg-[#FFF9EE] text-[#B08D57] border-[#E5C388]"
                                 : effectiveStatus === "reviewed"
@@ -1206,14 +1135,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             void import("./AdminCoupleDetail.tsx");
                             void prefetchSubmissionMedia(couple);
                           }}
-                          className="flex-1 md:flex-initial inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold text-[#1A1A1A] bg-[#FAF8F5] hover:bg-[#1A1A1A] hover:text-white border border-[#E5DDD2] transition-colors cursor-pointer"
+                          className="inline-flex min-h-10 w-full min-w-0 items-center justify-center gap-1.5 px-2 py-2 rounded-xl text-xs font-semibold text-[#1A1A1A] bg-[#FAF8F5] hover:bg-[#1A1A1A] hover:text-white border border-[#E5DDD2] transition-colors cursor-pointer"
                         >
-                          <Eye className="w-3.5 h-3.5" />
+                          <Eye className="w-3.5 h-3.5 shrink-0" />
                           <span>View</span>
                         </button>
 
                         {/* Download Dropdown Menu */}
-                        <div className="relative flex-1 md:flex-initial">
+                        <div className="relative min-w-0 w-full">
                           <button
                             type="button"
                             onClick={() =>
@@ -1221,9 +1150,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                 activeDownloadMenuId === couple.id ? null : couple.id
                               )
                             }
-                            className="w-full md:w-auto inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-[#8C7043] bg-white hover:bg-[#FAF7F2] border border-[#E8DFD3] transition-colors cursor-pointer"
+                            className="w-full min-h-10 min-w-0 inline-flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl text-xs font-semibold text-[#8C7043] bg-white hover:bg-[#FAF7F2] border border-[#E8DFD3] transition-colors cursor-pointer"
                           >
-                            <Download className="w-3.5 h-3.5" />
+                            <Download className="w-3.5 h-3.5 shrink-0" />
                             <span>Download</span>
                           </button>
 
@@ -1260,17 +1189,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           type="button"
                           disabled={copyingResumeId === couple.id}
                           onClick={() => void handleCopyCoupleResumeLink(couple)}
-                          className="p-2 md:px-3 md:py-2 rounded-xl text-xs font-medium text-[#5C492A] bg-[#FAF7F2] hover:bg-[#F2ECE1] border border-[#E5DDD2] transition-colors cursor-pointer shrink-0 inline-flex items-center justify-center gap-1.5 disabled:opacity-60"
+                          className="min-h-10 w-full min-w-0 rounded-xl px-2 py-2 text-xs font-medium text-[#5C492A] bg-[#FAF7F2] hover:bg-[#F2ECE1] border border-[#E5DDD2] transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 disabled:opacity-60"
                           title={`Copy resume link for ${couple.partner1} & ${couple.partner2}`}
                         >
                           {copiedResumeId === couple.id ? (
                             <>
-                              <Check className="w-3.5 h-3.5 text-emerald-600" />
-                              <span className="hidden lg:inline text-emerald-700">Copied</span>
+                              <Check className="w-3.5 h-3.5 shrink-0 text-emerald-600" />
+                              <span className="text-emerald-700">Copied</span>
                             </>
                           ) : (
                             <>
-                              <Link2 className="w-3.5 h-3.5 text-[#8C7043]" />
+                              <Link2 className="w-3.5 h-3.5 shrink-0 text-[#8C7043]" />
+                              <span className="lg:hidden">Copy link</span>
                               <span className="hidden lg:inline">Copy resume link</span>
                             </>
                           )}
@@ -1280,11 +1210,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           type="button"
                           disabled={preparingShareId === couple.id}
                           onClick={() => void handleShareCoupleLink(couple)}
-                          className="p-2 md:px-3 md:py-2 rounded-xl text-xs font-medium text-[#5C492A] bg-[#FAF7F2] hover:bg-[#F2ECE1] border border-[#E5DDD2] transition-colors cursor-pointer shrink-0 inline-flex items-center justify-center gap-1.5 disabled:opacity-60"
+                          className="min-h-10 w-full min-w-0 rounded-xl px-2 py-2 text-xs font-medium text-[#5C492A] bg-[#FAF7F2] hover:bg-[#F2ECE1] border border-[#E5DDD2] transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 disabled:opacity-60"
                           title={`Send link to ${couple.partner1} & ${couple.partner2} (WhatsApp, email)`}
                         >
-                          <Send className="w-3.5 h-3.5 text-[#8C7043]" />
-                          <span className="hidden lg:inline">Send link</span>
+                          <Send className="w-3.5 h-3.5 shrink-0 text-[#8C7043]" />
+                          <span>Send link</span>
                         </button>
 
                         {/* Delete Button */}
@@ -1294,11 +1224,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             setDeleteError(null);
                             setSubmissionToDelete(couple);
                           }}
-                          className="p-2 md:px-3 md:py-2 rounded-xl text-xs font-medium text-red-600 bg-red-50/70 hover:bg-red-100 hover:text-red-700 border border-red-200/70 transition-colors cursor-pointer shrink-0"
+                          className="col-span-2 sm:col-span-1 min-h-10 w-full min-w-0 inline-flex items-center justify-center gap-1.5 rounded-xl px-2 py-2 text-xs font-medium text-red-600 bg-red-50/70 hover:bg-red-100 hover:text-red-700 border border-red-200/70 transition-colors cursor-pointer"
                           title={`Delete ${couple.partner1} & ${couple.partner2}'s submission`}
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          <span className="hidden sm:inline ml-1">Delete</span>
+                          <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                          <span>Delete</span>
                         </button>
                       </div>
                     </div>
@@ -1516,127 +1446,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 })}
               </div>
             )}
-          </div>
-        )}
-
-        {renumberError && !isRenumberDialogOpen && (
-          <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-sm text-red-800">
-            {renumberError}
-          </p>
-        )}
-        {isRenumberDialogOpen && renumberPreview && (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs"
-            onClick={() => {
-              if (!isApplyingRenumber) {
-                setIsRenumberDialogOpen(false);
-                setRenumberPreview(null);
-                setRenumberError(null);
-              }
-            }}
-          >
-            <section
-              className="w-full max-w-lg space-y-4 rounded-2xl border border-[#E5DDD2] bg-white p-6 shadow-2xl"
-              role="alertdialog"
-              aria-modal="true"
-              aria-labelledby="renumber-title"
-              onClick={(event) => event.stopPropagation()}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h2
-                    id="renumber-title"
-                    className="font-cormorant text-2xl font-semibold text-[#1A1A1A]"
-                  >
-                    Renumber all submissions?
-                  </h2>
-                  <p className="mt-1 text-xs leading-relaxed text-[#5F5F5F]">
-                    This will change numbers after the first gap so submissions run
-                    consecutively in their original submission-time order. Drafts
-                    and unsubmitted forms are not counted.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsRenumberDialogOpen(false);
-                    setRenumberPreview(null);
-                    setRenumberError(null);
-                  }}
-                  disabled={isApplyingRenumber}
-                  className="rounded-lg p-1.5 text-[#7A756D] transition-colors hover:bg-[#FAF7F2] hover:text-[#1A1A1A] disabled:opacity-50"
-                  aria-label="Close renumber preview"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-
-              <div className="rounded-xl border border-[#E8DFD3] bg-[#FAF8F5] p-3">
-                <p className="mb-2 text-xs font-semibold text-[#4A453E]">
-                  Preview · {renumberPreview.changes.length} number
-                  {renumberPreview.changes.length === 1 ? " change" : " changes"}
-                  {" "}across {renumberPreview.submissionCount} submitted forms
-                </p>
-                <div className="max-h-52 space-y-1.5 overflow-y-auto">
-                  {renumberPreview.changes.length === 0 && (
-                    <p className="text-xs text-[#5F5F5F]">
-                      No submission numbers need changing. Confirm to synchronize the counter.
-                    </p>
-                  )}
-                  {renumberPreview.changes.slice(0, 8).map((change) => (
-                    <div
-                      key={change.id}
-                      className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2 text-xs"
-                    >
-                      <span className="min-w-0 truncate text-[#5F5F5F]">
-                        {change.partner1} &amp; {change.partner2}
-                      </span>
-                      <span className="shrink-0 font-semibold tabular-nums text-[#8C7043]">
-                        {change.fromDisplayId || "No number"} →{" "}
-                        {change.toDisplayId || "Unnumbered"}
-                      </span>
-                    </div>
-                  ))}
-                  {renumberPreview.changes.length > 8 && (
-                    <p className="px-1 pt-1 text-[11px] text-[#7A756D]">
-                      and {renumberPreview.changes.length - 8} more changes
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              {renumberError && (
-                <div role="alert" className="rounded-xl bg-red-50 p-3 text-xs text-red-800">
-                  {renumberError}
-                </div>
-              )}
-
-              <div className="flex justify-end gap-2 border-t border-[#F0EBE1] pt-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsRenumberDialogOpen(false);
-                    setRenumberPreview(null);
-                    setRenumberError(null);
-                  }}
-                  disabled={isApplyingRenumber}
-                  className="rounded-xl border border-[#E5DDD2] px-4 py-2 text-xs font-medium text-[#5F5F5F] hover:bg-[#FAF7F2] disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleApplyRenumber()}
-                  disabled={isApplyingRenumber}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-[#1A1A1A] px-4 py-2 text-xs font-medium text-white hover:bg-[#36312A] disabled:opacity-60"
-                >
-                  {isApplyingRenumber && (
-                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                  )}
-                  {isApplyingRenumber ? "Updating numbers…" : "Confirm renumber"}
-                </button>
-              </div>
-            </section>
           </div>
         )}
 

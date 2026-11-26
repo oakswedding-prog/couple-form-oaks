@@ -1,0 +1,22 @@
+:root {
+  --accent: #B08D57;
+  --text-primary: #1A1A1A;
+  --text-secondary: #5F5F5F;
+  --surface-card: #FAFAFA;
+  --surface-border: #E8E8E8;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+  background: #FAF8F5;
+  color: #1A1A1A;
+  font-family: Inter, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-cormorant {
+  font-family: "Cormorant Garamond", Georgia, serif;
+}
